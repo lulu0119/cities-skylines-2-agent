@@ -39,7 +39,7 @@ public sealed class CitySim
 
     public string SetTaxRate(double rate)
     {
-        _state.TaxRate = Math.Clamp(rate, 0, 30);
+        _state.TaxRate = Math.Max(0, Math.Min(30, rate));
         _state.Happiness = Math.Max(0, _state.Happiness - (_state.TaxRate - 11) * 2);
         return Overview();
     }

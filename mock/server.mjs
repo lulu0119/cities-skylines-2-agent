@@ -57,17 +57,27 @@ const handleChat = async (req, res, body) => {
   const action = planNext(messages, tools)
 
   if (!stream) {
-    const content = action.text ?? '请继续。'
+    const id = `mock_${Math.random().toString(36).slice(2, 10)}`
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({
-      id: 'mock-nonstream',
+      id,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: body.model ?? 'mock-gpt',
       choices: [{
         index: 0,
-        message: { role: 'assistant', content },
-        finish_reason: 'stop',
+        message: action.tool != null
+          ? {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{
+                id: `call_${id}`,
+                type: 'function',
+                function: { name: action.tool, arguments: action.args },
+              }],
+            }
+          : { role: 'assistant', content: action.text },
+        finish_reason: action.tool != null ? 'tool_calls' : 'stop',
       }],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     }))

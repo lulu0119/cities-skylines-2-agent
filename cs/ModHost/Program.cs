@@ -21,7 +21,7 @@ internal static class Program
         var apiKey = Environment.GetEnvironmentVariable("CS2POC_API_KEY") ?? "sk-mock";
         var baseUrl = Environment.GetEnvironmentVariable("CS2POC_BASE_URL") ?? "http://127.0.0.1:8787/v1";
         var model = Environment.GetEnvironmentVariable("CS2POC_MODEL") ?? "mock-gpt";
-        var prompt = args.Length > 0 ? string.Join(' ', args) : "建一条路，然后跑 4 小时模拟";
+        var prompt = args.Length > 0 ? string.Join(" ", args) : "建一条路，然后跑 4 小时模拟";
 
         var client = new ChatClient(model, new ApiKeyCredential(apiKey), new OpenAIClientOptions
         {

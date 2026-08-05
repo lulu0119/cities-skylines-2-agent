@@ -37,10 +37,19 @@ cd web && node smoke.mjs
 
 ```bash
 cd cs/ModHost
-dotnet run --project . -- "建一条路，然后跑 4 小时模拟"
+dotnet run -f net10.0 --project . -- "建一条路，然后跑 4 小时模拟"
 ```
 
 默认打本地 mock；用 `CS2POC_BASE_URL` / `CS2POC_MODEL` / `CS2POC_API_KEY` 切换真实端点。
+
+## 验证结果（2026-08-05）
+
+- ✅ **浏览器 bundle**：`@apeira/core` 打进 Vite 产物，gzip 约 71 KB。
+- ✅ **Node 冒烟**（`web/smoke.mjs`）：读状态 → 建路 → 跑模拟 → 总结，多轮工具调用闭环。
+- ✅ **无头 Chromium e2e**（`web/e2e.mjs`）：页面里发「建一条路，然后跑 4 小时模拟」，渲染 3 次工具调用并流式输出最终回答。
+- ✅ **C# agent loop**（`cs/ModHost`，net10.0 实跑）：OpenAI .NET SDK 非流式 + function calling，同样的三步工具循环跑通。
+- ✅ **net472 编译兼容检查**：`dotnet build -f net472` 通过；过程中抓到并修复了两个真实兼容问题（`Math.Clamp` 和 `string.Join(char)` 在 net472 不存在）。
+- ❓ **仍未验证**：Gameface 是 Chromium 受限子集，`fetch`/`ReadableStream` 是否可用必须进游戏实测；CS2 模组进程内 HTTPS 到模型 API 的 TLS 兼容性也需实测（兜底：手写最小 HTTP 客户端，参考 CS2MCP）。
 
 ## 目前结论（POC 范围）
 
