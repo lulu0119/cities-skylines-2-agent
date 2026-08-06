@@ -27,43 +27,69 @@ Gameface UI (chat)  ↔  Cohtml bindings  ↔  C# agent loop + ToolQueueSystem (
 
 ## Design philosophy
 
-Work from [A Philosophy of Software Design](https://github.com/alysivji/notes/blob/main/software-engineering/philosophy_of_software_design.md) (Ousterhout). Reduce complexity; working code is not enough.
+Follow [A Philosophy of Software Design](https://github.com/alysivji/notes/blob/main/software-engineering/philosophy_of_software_design.md) (Ousterhout). Goal: reduce complexity.
 
-| Principle | Practice here |
-| --- | --- |
-| **Deep modules** | Small interface, lots of behavior behind it. Prefer one `Enqueue(Action)` / one chat→agent entry over many smoke-era special APIs. |
-| **Information hiding** | Hide Mono/Unity/UIUpdate/tool-pipeline details inside tool & queue modules; callers see intents (“build road”), not frame state machines. |
-| **Different layer, different abstraction** | UI = messages & bindings; agent = turns & tools; queue = “run on sim thread”; game tools = ECS/native apply. No pass-through wrappers that only rename. |
-| **Pull complexity downward** | Absorb TLS, retries, paused-queue, and tool errors inside C# modules so the chat UI stays thin. |
-| **Define errors out of existence** | Prefer APIs that cannot be misused (e.g. all tool work must go through the queue) over scattering try/catch and special cases. |
-| **Design it twice** | For new seams (agent loop, tool surface, settings), sketch at least two shapes before coding. |
-| **Obvious + consistent** | Match existing `Mod/` naming and Gameface patterns; comments for *why* and non-obvious invariants, not narration. |
-| **Strategic change** | When touching code, leave the module deeper or clearer — not a tactical patch that leaks another special case. |
+- **Complexity** — anything in the structure that makes the system hard to understand or modify (change amplification, cognitive load, unknown unknowns). It accumulates in small chunks; don’t shrug off “a little” complexity per change.
+- **Working code isn’t enough** — prefer a strategic mindset (invest in clean design) over a purely tactical “get it working fast” mindset.
 
-Use the **codebase-design** skill vocabulary when designing seams: *module*, *interface*, *depth*, *seam*, *adapter*, *leverage*, *locality*. One adapter = hypothetical seam; two adapters = real seam.
+### Deep modules
+
+- A module = **interface** (everything a caller must know to use it correctly — formal *and* informal) + **implementation** (what fulfills that promise).
+- Depth = benefit / cost: lots of functionality behind a **simple** interface. Best modules: interface much simpler than implementation.
+- Abstraction can fail two ways: expose unimportant details (interface too fat), or omit important details (obscurity).
+- Avoid **classitis**: many tiny classes that are each “simple” but whose *accumulated* interfaces explode complexity.
+
+### Information hiding
+
+- Hide design decisions in the implementation so they do not appear in the interface; that lowers cognitive load and localizes change.
+- **`private` is not information hiding** by itself — hiding means callers (and other modules) do not need the knowledge at all.
+- **Leakage** = the same knowledge reflected in multiple modules (even when not in a public signature, e.g. two places assuming the same format). Merge tightly coupled leakers, or pull the shared knowledge into one module.
+- Prefer modules organized around *what knowledge they own*, not around the time-order of steps (**temporal decomposition**).
+- Make the common case simple; do **not** hide information that callers truly need — expose what must be known, hide the rest.
+
+### Define errors out of existence
+
+- Exceptions (uncommon conditions that divert normal control flow) are a major source of complexity; handling them is harder than normal-case code and often breeds secondary exceptions.
+- Too many exceptions = over-defensive style that **punts** to every caller; exceptions are part of the interface — keep them few. Reduce how many *places* must handle them.
+- Prefer designing the API so the error case **does not exist** for callers (or is rare).
+- **Mask** at a lower level when higher layers need not know (pulls complexity down; deepens the lower module).
+- **Aggregate**: one handler for many exceptions (e.g. abort current request, clean up, continue) rather than distinct handlers everywhere.
+- Some errors are not worth handling — fail fast with diagnostics rather than elaborate recovery.
+- Design **special cases out of existence** so the normal path covers them without extra `if`s.
+- Do not take this too far: hide what is unimportant; **expose** what the caller must know.
+
+### Comments
+
+- If callers must read the method body to use it, there is **no abstraction** — comments carry design knowledge the code cannot.
+- Comment what is **not obvious** from the code (don’t parrot names). Separate **interface** comments from **implementation** comments.
+- Lower-level comments add **precision**; higher-level comments add **intuition** (what/why). Implementation comments: what and why, not line-by-line how.
+
+### Other principles
+
+- **General-purpose deeper than special-purpose** — simplest interface that covers current needs beats a pile of narrow methods.
+- **Different layer, different abstraction** — adjacent layers should not repeat the same abstraction; avoid pass-through methods/variables that add no value.
+- **Pull complexity downward** — put complexity in lower-level modules when that simplifies higher-level code; don’t shove hard choices onto every caller via config knobs.
+- **Together vs apart** — merge when it simplifies the interface or removes duplication; separate general-purpose from special-purpose code.
+- **Design it twice** — try more than one design and pick the cleaner one; don’t ship the first idea by default.
+- **Names** — precise, consistent, create a clear image; inconsistency and vagueness add obscurity.
+- **Obviousness** — readers should quickly see how the code works and what a change requires.
+- **Consistency** — same meaning, same style, same patterns throughout.
+- **Modifying existing code** — stay strategic: improve design while changing behavior; keep comments near the code they describe (not only in the commit log).
+
+For seam/module design vocabulary in this repo, use the **codebase-design** skill.
 
 ## Recommended skills
 
-Use these eagerly when the task matches:
-
-| Skill | When |
-| --- | --- |
-| **research** | CS2 / Paradox / Coherent / NuGet / reference-repo facts; write dated notes under `docs/research/` (or `guide/` / `ops/`) with primary-source citations. |
-| **diagnosing-bugs** | In-game failures, UI bind issues, queue/pause bugs, HTTPS/TLS, toolchain — build a tight feedback loop first (`Player.log`, `Logs/`, deploy + reload). |
-| **codebase-design** | New modules or reshaping agent / tools / UI↔C# seams; deepen before adding surface area. |
+- `research`
+- `diagnosing-bugs`
+- `codebase-design`
 
 ## Reference projects
 
-Study these; **copy patterns, not whole stacks**. Cite them in design notes when you adopt an idea.
-
-| Project | Steal |
-| --- | --- |
-| [shinohara-rin/airicraft](https://github.com/shinohara-rin/airicraft) | Pure in-game agent architecture (mod process owns the loop + tools); packaging and “agent in the game” product shape. |
-| [mayor-modder/Cities2-MCP](https://github.com/mayor-modder/Cities2-MCP) | CS2 bridge: `UIUpdate` / tool queue, paused simulation, native tool apply pipeline (Apache-2.0 — reuse carefully with attribution). |
-| [shinohara-rin/action-plan-advisor](https://github.com/shinohara-rin/action-plan-advisor) | Planning / action-advice structure for multi-step goals (how to decompose mayor intents without bloating the UI). |
-| [moeru-ai/apeira](https://github.com/moeru-ai/apeira) | Turn / tool / event lifecycle for a small agent runtime (shape to mirror in C#, not a dependency). |
-
-In-repo POC analogues: `archive/cs/ModHost` (C# tool loop), `archive/web` + `archive/mock` (browser-only).
+- https://github.com/shinohara-rin/airicraft
+- https://github.com/mayor-modder/Cities2-MCP
+- https://github.com/shinohara-rin/action-plan-advisor
+- https://github.com/moeru-ai/apeira
 
 ## Commits
 
