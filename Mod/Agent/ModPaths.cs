@@ -21,9 +21,11 @@ namespace CitiesSkylines2Agent.Agent
                 {
                     return env;
                 }
+                // LocalLow is a sibling of Local, not Local\Low.
                 string localLow = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Low",
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "AppData",
+                    "LocalLow",
                     "Colossal Order",
                     "Cities Skylines II");
                 return localLow;

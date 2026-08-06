@@ -100,6 +100,10 @@
 		<None Include="$(ModTargetsFile)" Link="Properties\Mod.targets" />
 	</ItemGroup>
 
+	<!-- Official ModPostProcessor requires a full Unity Editor install + ScriptAssemblies.
+	     This mod has no Burst jobs; skip so local builds work without Unity. -->
+	<Target Name="RunModPostProcessor" />
+
 	<!-- UI webpack writes into $(CSII_USERDATAPATH)\Mods\$(mod.json id); run after DeployWIP so it is not wiped. -->
 	<Target Name="BuildUI" AfterTargets="DeployWIP" Condition="'$(NeedBuild)' == 'true'">
 		<Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\UI" />
