@@ -103,6 +103,11 @@ const inputStyle: CSSProperties = {
 const sendStyle: CSSProperties = {
   flex: "0 0 auto",
   height: "36px",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "0 14px",
+  lineHeight: "normal",
 };
 
 const roleLabel: Record<ChatRole, string> = {
