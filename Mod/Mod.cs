@@ -3,6 +3,7 @@ using Colossal.Logging;
 using Game;
 using Game.Modding;
 using Game.SceneFlow;
+using CitiesSkylines2Agent.Agent;
 
 namespace CitiesSkylines2Agent
 {
@@ -10,6 +11,7 @@ namespace CitiesSkylines2Agent
     {
         public static ILog log = LogManager.GetLogger($"{nameof(CitiesSkylines2Agent)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
         private Setting m_Setting;
+        private AgentLoop m_AgentLoop;
 
         public void OnLoad(UpdateSystem updateSystem)
         {
@@ -24,14 +26,23 @@ namespace CitiesSkylines2Agent
             m_Setting.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(m_Setting));
             AssetDatabase.global.LoadSettings(nameof(CitiesSkylines2Agent), m_Setting, new Setting(this));
+            Setting.Instance = m_Setting;
+
+            m_AgentLoop = AgentLoop.EnsureCreated();
 
             // UIUpdate keeps running while the simulation is paused.
             updateSystem.UpdateAt<ToolQueueSystem>(SystemUpdatePhase.UIUpdate);
+            updateSystem.UpdateAt<CS2MCP.BridgeSystem>(SystemUpdatePhase.UIUpdate);
+            updateSystem.UpdateAt<CS2MCP.BridgeToolSystem>(SystemUpdatePhase.ToolUpdate);
+            updateSystem.UpdateAt<AgentUISystem>(SystemUpdatePhase.UIUpdate);
         }
 
         public void OnDispose()
         {
             log.Info(nameof(OnDispose));
+            m_AgentLoop?.Dispose();
+            m_AgentLoop = null;
+            Setting.Instance = null;
             if (m_Setting != null)
             {
                 m_Setting.UnregisterInOptionsUI();
