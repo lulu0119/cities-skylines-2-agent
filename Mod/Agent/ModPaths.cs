@@ -38,8 +38,6 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string StateDirectory => Path.Combine(ModDataDirectory, "state");
 
-        public static string PlanFile => Path.Combine(StateDirectory, "plan.json");
-
         public static string ContextBlocksFile => Path.Combine(StateDirectory, "context-blocks.json");
 
         public static void EnsureDirectories()

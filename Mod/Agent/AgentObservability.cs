@@ -166,11 +166,6 @@ namespace CitiesSkylines2Agent.Agent
             });
         }
 
-        public void Plan(string action, JsonObject plan)
-        {
-            Record("plan", new JsonObject { ["action"] = action, ["plan"] = plan ?? new JsonObject() });
-        }
-
         public void Error(string source, string message)
         {
             Record("error", new JsonObject

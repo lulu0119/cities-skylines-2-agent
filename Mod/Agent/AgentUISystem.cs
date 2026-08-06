@@ -8,9 +8,9 @@ namespace CitiesSkylines2Agent.Agent
 {
     /// <summary>
     /// Bridges the agent loop to Gameface: publishes agent state and a live
-    /// event stream (deltas, tool cards, plan cards, status), and receives
-    /// player commands (send / approve / interrupt). Registered at UIUpdate so
-    /// it keeps running while the simulation is paused.
+    /// event stream (deltas, tool cards, status), and receives player commands
+    /// (send / interrupt). Registered at UIUpdate so it keeps running while the
+    /// simulation is paused.
     /// </summary>
     public sealed partial class AgentUISystem : UISystemBase
     {
@@ -51,11 +51,9 @@ namespace CitiesSkylines2Agent.Agent
                 "send",
                 OnSend,
                 ValueReaders.Create<string>()));
-            AddBinding(new TriggerBinding(Group, "approve", OnApprove));
             AddBinding(new TriggerBinding(Group, "interrupt", OnInterrupt));
 
             PushState();
-            loop.ResumePlanIfNeeded();
         }
 
         private void OnSend(string text)
@@ -64,11 +62,6 @@ namespace CitiesSkylines2Agent.Agent
             {
                 AgentLoop.EnsureCreated().Send(text);
             }
-        }
-
-        private void OnApprove()
-        {
-            AgentLoop.EnsureCreated().ApprovePlan();
         }
 
         private void OnInterrupt()

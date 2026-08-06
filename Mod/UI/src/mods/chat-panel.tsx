@@ -14,23 +14,6 @@ type UiMessage = {
   streaming?: boolean;
 };
 
-type PlanStep = {
-  index: number;
-  title: string;
-  detail: string;
-  status: string;
-  result: string;
-};
-
-type Plan = {
-  id: string;
-  goal: string;
-  status: string;
-  currentStep: number;
-  approvalNote: string;
-  steps: PlanStep[];
-};
-
 type StateMessage = {
   role: string;
   text: string;
@@ -43,16 +26,14 @@ type AgentState = {
   pendingInputs: number;
   session: string;
   turn: string;
-  plan: Plan | null;
   contextBlocks: unknown[];
   messages: StateMessage[];
 };
 
 type AgentEvent = {
-  kind: "delta" | "tool" | "plan" | "status" | "user" | "error" | "compact" | "turn";
+  kind: "delta" | "tool" | "status" | "user" | "error" | "compact" | "turn";
   text: string;
   tool?: string;
-  plan?: Plan | null;
   status?: string;
 };
 
@@ -87,13 +68,6 @@ const toolStyle: CSSProperties = {
   padding: "4px 8px",
   borderRadius: "4px",
   backgroundColor: "rgba(120, 160, 220, 0.15)",
-};
-
-const planStyle: CSSProperties = {
-  ...lineStyle,
-  padding: "6px 8px",
-  borderRadius: "4px",
-  backgroundColor: "rgba(220, 180, 90, 0.15)",
 };
 
 const statusStyle: CSSProperties = {
@@ -146,7 +120,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const [status, setStatus] = useState("Idle");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(0);
-  const [plan, setPlan] = useState<Plan | null>(null);
   const [session, setSession] = useState("");
   const stateJson = useValue(state$);
   const nextId = useRef(0);
@@ -199,10 +172,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
         });
         setBusy(true);
         break;
-      case "plan":
-        setPlan(event.plan ?? null);
-        setStatus("WaitingApproval");
-        break;
       case "status":
         setStatus(event.status ?? event.text);
         setBusy(event.status === "Thinking" || event.status === "Working");
@@ -251,7 +220,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
       setStatus(parsed.status);
       setBusy(parsed.busy);
       setPending(parsed.pendingInputs ?? 0);
-      setPlan(parsed.plan ?? null);
       setMessages(
         (parsed.messages ?? [])
           .filter((message) => message.role !== "system")
@@ -328,18 +296,12 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
                 {messages.map((message) => (
                   <MessageLine key={message.id} message={message} />
                 ))}
-                {plan && <PlanCard plan={plan} />}
               </div>
-              {(plan?.status === "Proposed" || busy) && (
+              {busy && (
                 <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  {plan?.status === "Proposed" && (
-                    <Button variant="primary" onSelect={() => trigger(mod.id, "approve")}>
-                      Approve plan
-                    </Button>
-                  )}
-                  {busy && (
-                    <Button onSelect={() => trigger(mod.id, "interrupt")}>Interrupt</Button>
-                  )}
+                  <Button variant="primary" onSelect={() => trigger(mod.id, "interrupt")}>
+                    Interrupt
+                  </Button>
                 </div>
               )}
             </Panel>
@@ -383,17 +345,3 @@ const MessageLine = ({ message }: { message: UiMessage }) => {
   );
 };
 
-const PlanCard = ({ plan }: { plan: Plan }) => {
-  return (
-    <div style={planStyle}>
-      <strong>Plan ({plan.status}): {plan.goal}</strong>
-      {plan.approvalNote && <div style={{ opacity: 0.85 }}>{plan.approvalNote}</div>}
-      {plan.steps.map((step) => (
-        <div key={step.index} style={{ opacity: step.status === "Done" ? 0.6 : 1 }}>
-          {step.index + 1}. {step.title} — {step.status}
-          {step.result ? ` (${step.result})` : ""}
-        </div>
-      ))}
-    </div>
-  );
-};

@@ -22,7 +22,6 @@ namespace CitiesSkylines2Agent.Agent
         Idle,
         Thinking,
         Working,
-        WaitingApproval,
         Interrupted,
         Error,
     }
@@ -30,10 +29,9 @@ namespace CitiesSkylines2Agent.Agent
     /// <summary>UI-facing event emitted by the agent loop.</summary>
     public sealed class AgentUiEvent
     {
-        public string Kind;      // status|delta|tool|plan|user|error|compact|turn
+        public string Kind;      // status|delta|tool|user|error|compact|turn
         public string Text;
         public string Tool;
-        public string PlanJson;
         public AgentStatus Status;
 
         public string ToJsonString()
@@ -48,10 +46,6 @@ namespace CitiesSkylines2Agent.Agent
             {
                 obj["tool"] = Tool;
             }
-            if (PlanJson != null)
-            {
-                obj["plan"] = JsonNode.Parse(PlanJson) ?? new JsonObject();
-            }
             return obj.ToJsonString();
         }
     }
@@ -59,7 +53,6 @@ namespace CitiesSkylines2Agent.Agent
     internal sealed class AgentInput
     {
         public string Text;
-        public bool IsResume;
     }
 
     /// <summary>
@@ -69,18 +62,17 @@ namespace CitiesSkylines2Agent.Agent
     /// </summary>
     public sealed class AgentLoop : IDisposable
     {
-        private const string SystemPrompt = @"You are the in-game AI city mayor assistant for Cities: Skylines 2, running inside the game process. Your goal is to help the player manage the city and to autonomously execute approved structured plans over long horizons.
+        private const string SystemPrompt = @"You are the in-game AI city mayor assistant for Cities: Skylines 2, running inside the game process. Your goal is to help the player manage the city and to autonomously execute tasks over long horizons.
 
 Working style:
 1. Observe briefly first (cs2_game_state / cs2_city_overview / cs2_demand / cs2_screenshot), then act. Do not repeat the same read tool more than twice without a write. cs2_terrain / cs2_gridmap require a map range and return compact 8×8 samples (not full arrays).
-2. For complex tasks, call agent_propose_plan to submit a structured plan; after the player approves it, execute it step by step (agent_plan_step_done updates progress).
-3. Writing operations (build / demolish / change taxes / change policies) must happen while the game is paused; the bridge auto-pauses before writes.
-4. Before destructive actions (cs2_demolish), list the targets and explain why, unless the approved plan explicitly covers that step.
-5. Use cs2_screenshot to verify your work; use cs2_set_camera to inspect the city.
-6. When you need a player decision (plan approval, major spending, demolishing something outside the plan), ask explicitly and do not act until confirmed.
-7. End every turn with a concise summary (what was done, results, next steps).
-8. Use cs2_run_simulation to advance time; it blocks until the timed run finishes and auto-pauses. Never poll cs2_game_state in a loop waiting for simulation.
-9. Prefer place / road / zone tools that change the city over endless prefab listing and state reads. For roads: short segments on owned land near existing nodes; e1/e2 are elevation meters, never entity ids.
+2. Writing operations (build / demolish / change taxes / change policies) must happen while the game is paused; the bridge auto-pauses before writes.
+3. Before destructive actions (cs2_demolish), list the targets and explain why.
+4. Use cs2_screenshot to verify your work; use cs2_set_camera to inspect the city.
+5. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
+6. End every turn with a concise summary (what was done, results, next steps).
+7. Use cs2_run_simulation to advance time; it blocks until the timed run finishes and auto-pauses. Never poll cs2_game_state in a loop waiting for simulation.
+8. Prefer place / road / zone tools that change the city over endless prefab listing and state reads. For roads: short segments on owned land near existing nodes; e1/e2 are elevation meters, never entity ids.
 
 Context blocks (map pins / selected networks) arrive as system messages and are the player's precise positions or targets; prefer them over guessing.";
 
@@ -168,26 +160,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             EnsureLoop();
         }
 
-        /// <summary>Resume a persisted in-progress plan after restart.</summary>
-        public void ResumePlanIfNeeded()
-        {
-            PlanStatus status = PlanStore.Current.Status;
-            if (status == PlanStatus.Approved || status == PlanStatus.InProgress)
-            {
-                m_Pending.Writer.TryWrite(new AgentInput { Text = "Continue the restored plan: " + PlanStore.Current.Goal, IsResume = true });
-                EnsureLoop();
-            }
-        }
-
-        public void ApprovePlan()
-        {
-            PlanStore.Approve();
-            m_Observability.Plan("approve", PlanStore.Current.ToJson());
-            Emit(new AgentUiEvent { Kind = "plan", PlanJson = PlanStore.Current.ToJsonString() });
-            m_Pending.Writer.TryWrite(new AgentInput { Text = "The plan is approved. Start executing it." });
-            EnsureLoop();
-        }
-
         public void Interrupt()
         {
             m_TurnCts?.Cancel();
@@ -240,7 +212,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     ["pendingInputs"] = m_Pending.Reader.Count,
                     ["session"] = m_SessionId,
                     ["turn"] = m_TurnId,
-                    ["plan"] = PlanStore.Current.ToJson(),
                     ["contextBlocks"] = JsonNode.Parse(ContextBlockStore.ToJsonString()),
                     ["messages"] = messages,
                 }.ToJsonString();
@@ -262,7 +233,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             {
                 m_History.Add(new ChatMessage(ChatRole.System, SystemPrompt));
             }
-            bool resumed = false;
             while (!m_LoopCts.IsCancellationRequested)
             {
                 AgentInput first;
@@ -289,12 +259,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnIdenticalToolCount = 0;
                 Stopwatch turnTimer = Stopwatch.StartNew();
 
-                if (!resumed)
-                {
-                    resumed = true;
-                    ResumePlanIntoHistory();
-                }
-
                 try
                 {
                     bool busy = true;
@@ -309,7 +273,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                                 lock (m_Lock)
                                 {
                                     m_History.Add(new ChatMessage(
-                                        input.IsResume ? ChatRole.System : ChatRole.User,
+                                        ChatRole.User,
                                         input.Text));
                                 }
                             }
@@ -380,22 +344,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 Status = AgentStatus.Idle;
                 Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Idle });
                 Emit(new AgentUiEvent { Kind = "turn", Text = m_TurnId });
-            }
-        }
-
-        private void ResumePlanIntoHistory()
-        {
-            PlanState plan = PlanStore.Current;
-            if (plan == null || plan.Status == PlanStatus.None)
-            {
-                return;
-            }
-            lock (m_Lock)
-            {
-                m_History.Add(new ChatMessage(
-                    ChatRole.System,
-                    "Restored persisted plan (state from before restart):\n" + plan.ToJsonString() +
-                    "\nContinue from this state; do not propose a new plan."));
             }
         }
 
@@ -618,15 +566,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             {
                 switch (name)
                 {
-                    case "agent_propose_plan":
-                        return ProposePlan(argumentsJson);
-                    case "agent_approve_plan":
-                        PlanStore.Approve();
-                        m_Observability.Plan("approve", PlanStore.Current.ToJson());
-                        Emit(new AgentUiEvent { Kind = "plan", PlanJson = PlanStore.Current.ToJsonString() });
-                        return Ok("{\"status\":\"" + PlanStore.Current.Status + "\"}");
-                    case "agent_plan_step_done":
-                        return UpdatePlanStep(argumentsJson);
                     case "agent_list_context_blocks":
                         return Ok(ContextBlockStore.ToJsonString());
                     case "agent_add_context_block":
@@ -641,68 +580,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             {
                 m_Observability.Error("meta-tool", e.ToString());
                 return Ok("{\"error\":\"" + JsonEncodedText.Encode(e.Message).ToString() + "\"}");
-            }
-        }
-
-        private ToolInvocationResult ProposePlan(string argumentsJson)
-        {
-            using (JsonDocument document = JsonDocument.Parse(argumentsJson))
-            {
-                JsonElement root = document.RootElement;
-                string goal = root.TryGetProperty("goal", out JsonElement goalElement)
-                    ? goalElement.GetString()
-                    : "Unnamed goal";
-                string approvalNote = root.TryGetProperty("approvalNote", out JsonElement noteElement)
-                    ? noteElement.GetString()
-                    : "";
-                var steps = new List<PlanStep>();
-                if (root.TryGetProperty("steps", out JsonElement stepsElement) &&
-                    stepsElement.ValueKind == JsonValueKind.Array)
-                {
-                    int index = 0;
-                    foreach (JsonElement stepElement in stepsElement.EnumerateArray())
-                    {
-                        steps.Add(new PlanStep
-                        {
-                            Index = index++,
-                            Title = GetString(stepElement, "title", "Step " + index),
-                            Detail = GetString(stepElement, "detail", ""),
-                        });
-                    }
-                }
-                PlanStore.Propose(goal, approvalNote, steps);
-                m_Observability.Plan("propose", PlanStore.Current.ToJson());
-                Emit(new AgentUiEvent { Kind = "plan", PlanJson = PlanStore.Current.ToJsonString() });
-                Emit(new AgentUiEvent
-                {
-                    Kind = "status",
-                    Status = AgentStatus.WaitingApproval,
-                    Text = "等待玩家批准计划",
-                });
-                return Ok("{\"status\":\"proposed\",\"plan\":" + PlanStore.Current.ToJsonString() + "}");
-            }
-        }
-
-        private ToolInvocationResult UpdatePlanStep(string argumentsJson)
-        {
-            using (JsonDocument document = JsonDocument.Parse(argumentsJson))
-            {
-                JsonElement root = document.RootElement;
-                int index = root.TryGetProperty("index", out JsonElement indexElement)
-                    ? indexElement.GetInt32()
-                    : -1;
-                string statusText = GetString(root, "status", "Done");
-                string note = GetString(root, "note", "");
-                bool parsed = Enum.TryParse(statusText, true, out PlanStepStatus status);
-                if (!parsed)
-                {
-                    status = PlanStepStatus.Done;
-                }
-                PlanStore.MarkStep(index, status, note);
-                m_Observability.Plan("step", PlanStore.Current.ToJson());
-                Emit(new AgentUiEvent { Kind = "plan", PlanJson = PlanStore.Current.ToJsonString() });
-                return Ok("{\"status\":\"" + PlanStore.Current.Status + "\",\"plan\":" +
-                          PlanStore.Current.ToJsonString() + "}");
             }
         }
 
@@ -1129,37 +1006,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     tool.Parameters,
                     null));
             }
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_propose_plan",
-                "Submit a structured task plan and wait for player approval. Complex tasks must call this tool first.",
-                JsonDocument.Parse(@"{
-  ""type"":""object"",
-  ""properties"":{
-    ""goal"":{""type"":""string"",""description"":""Overall goal""},
-    ""approvalNote"":{""type"":""string"",""description"":""Things the player should note, e.g. demolitions or large spending""},
-    ""steps"":{""type"":""array"",""items"":{""type"":""object"",""properties"":{""title"":{""type"":""string""},""detail"":{""type"":""string""}},""required"":[""title""]}}
-  },
-  ""required"":[""goal"",""steps""]
-}").RootElement.Clone(),
-                null));
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_approve_plan",
-                "Approve the currently pending plan (call after the player confirmed), then start executing it.",
-                JsonDocument.Parse("{\"type\":\"object\",\"properties\":{}}").RootElement.Clone(),
-                null));
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_plan_step_done",
-                "Update the status and result of one plan step.",
-                JsonDocument.Parse(@"{
-  ""type"":""object"",
-  ""properties"":{
-    ""index"":{""type"":""integer"",""description"":""Step index, starting at 0""},
-    ""status"":{""type"":""string"",""enum"":[""Done"",""Failed"",""Skipped""]},
-    ""note"":{""type"":""string"",""description"":""Result note""}
-  },
-  ""required"":[""index"",""status""]
-}").RootElement.Clone(),
-                null));
             tools.Add(AIFunctionFactory.CreateDeclaration(
                 "agent_list_context_blocks",
                 "List the named context blocks the player created (map pins / selected networks).",
