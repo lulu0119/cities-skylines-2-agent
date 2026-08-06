@@ -4,3 +4,11 @@ bin/
 obj/
 .DS_Store
 *.log
+Mod/UI/node_modules/
+Mod/UI/build/
+Library/
+Temp/
+Logs/
+UserSettings/
+Packages/
+ProjectSettings/
