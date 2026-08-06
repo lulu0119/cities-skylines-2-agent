@@ -33,12 +33,29 @@ Unity ECS / 游戏原生 Tool 管线
 
 ## 快速开始（游戏内 mod）
 
+环境要求——**不需要官方工具链全绿**（参考实际配置的 Windows 环境）：
+
+**需要**
+- 游戏本体（Cities: Skylines II）
+- .NET SDK 8+：`dotnet build`（新终端需能直接找到 `dotnet`）
+- Node.js：仅改 UI 时需要
+- 从游戏目录 `Cities2_Data/Content/Game/.ModdingToolchain` 拷 `Mod.props` / `Mod.targets` 到 `%LocalLow%\Colossal Order\Cities Skylines II\.cache\Modding\`，并按需设置 `CSII_*` 用户环境变量（`CSII_TOOLPATH`、`CSII_USERDATAPATH`、`CSII_MANAGEDPATH` 等，详见 [Windows onboarding](docs/guide/2026-08-06-windows-onboarding.md)）
+
+**不需要**
+- Unity Editor / Unity Hub / License / Unity Mod Project：本 mod 是 C# + Gameface UI，无 Burst 作业，官方 ModPostProcessor 已在 csproj 中跳过
+- `dotnet new csiimod` / `create-csii-ui-mod` 脚手架
+- 游戏内「自动安装」的一整排工具链不必全绿
+
 ```bash
 cd Mod
 dotnet build
 ```
 
-进游戏启用 **CitiesSkylines2Agent**，进存档；右下聊天壳（`GameBottomRight` + `Portal`）。仅 UI：`cd Mod/UI && npm run build`。
+构建输出会部署到 `%LocalLow%\Colossal Order\Cities Skylines II\Mods\CitiesSkylines2Agent\`（DLL + 合并依赖 + UI）。
+
+仅改 UI：`cd Mod/UI && npm run build`（需设置 `CSII_USERDATAPATH`）。
+
+进游戏启用 **CitiesSkylines2Agent**，进存档；右下聊天壳（`GameBottomRight` + `Portal`）。调试可加启动参数 `-developerMode`。
 
 离线 POC（可选）：见 [`archive/README.md`](./archive/README.md)。
 
