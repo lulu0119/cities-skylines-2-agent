@@ -499,7 +499,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 }
 
                 UpdateTokenEstimate(response, toolCalls.Count);
-                EmitGeneration(response, toolCalls, timer.ElapsedMilliseconds);
+                EmitGeneration(response, toolCalls, CollectReasoning(updates), timer.ElapsedMilliseconds);
                 return new ModelRound
                 {
                     Text = response.Text ?? "",
@@ -991,7 +991,27 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             return text.Substring(0, maxChars) + "…";
         }
 
-        private void EmitGeneration(ChatResponse response, List<FunctionCallContent> toolCalls, long elapsedMs)
+        private static string CollectReasoning(List<ChatResponseUpdate> updates)
+        {
+            if (updates == null || updates.Count == 0)
+            {
+                return "";
+            }
+            var builder = new StringBuilder();
+            foreach (ChatResponseUpdate update in updates)
+            {
+                foreach (AIContent content in update.Contents)
+                {
+                    if (content is TextReasoningContent reasoning && !string.IsNullOrEmpty(reasoning.Text))
+                    {
+                        builder.Append(reasoning.Text);
+                    }
+                }
+            }
+            return builder.ToString().Trim();
+        }
+
+        private void EmitGeneration(ChatResponse response, List<FunctionCallContent> toolCalls, string reasoning, long elapsedMs)
         {
             var calls = new JsonArray();
             foreach (FunctionCallContent call in toolCalls)
@@ -1012,6 +1032,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             m_Observability.Generation(
                 response.ModelId ?? Setting.StaticModel,
                 SummarizeHistory(m_History),
+                reasoning,
                 calls,
                 usage,
                 elapsedMs);

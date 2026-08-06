@@ -110,12 +110,13 @@ namespace CitiesSkylines2Agent.Agent
             });
         }
 
-        public void Generation(string model, string messageSummary, JsonArray toolCalls, JsonObject usage, long elapsedMs)
+        public void Generation(string model, string messageSummary, string reasoning, JsonArray toolCalls, JsonObject usage, long elapsedMs)
         {
             Record("generation", new JsonObject
             {
                 ["model"] = model,
                 ["input"] = Truncate(messageSummary, 65536),
+                ["reasoning"] = Truncate(reasoning, 65536),
                 ["toolCalls"] = toolCalls ?? new JsonArray(),
                 ["usage"] = usage ?? new JsonObject(),
                 ["elapsedMs"] = elapsedMs,
