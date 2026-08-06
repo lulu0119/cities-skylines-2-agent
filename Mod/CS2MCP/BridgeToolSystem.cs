@@ -36,6 +36,9 @@ namespace CS2MCP
             Idle,
             CreateDefinitions,
             Apply,
+            ProbeCreate,
+            ProbeValidate,
+            ProbeClear,
             Finish,
         }
 
@@ -43,6 +46,7 @@ namespace CS2MCP
         {
             Object,
             Net,
+            Probe,
             Demolish,
             Upgrade,
             Area,
@@ -62,6 +66,11 @@ namespace CS2MCP
         private float3[] m_PendingAreaNodes;
         private float2 m_PendingElevations;
         private quaternion m_PendingRotation;
+        private readonly List<float3> m_ProbePositions = new List<float3>();
+        private int m_ProbeIndex;
+        private int m_ProbeTried;
+        private float m_ProbeRotationDegrees;
+        private string m_ProbeLastError = "";
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
 
@@ -101,6 +110,37 @@ namespace CS2MCP
             m_PendingPrefab = prefab;
             m_PendingPosition = position;
             m_PendingRotation = rotation;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>
+        /// Must be called on the simulation thread. Probes candidate object
+        /// placements through the same validation pipeline (CreateDefinitions +
+        /// GetAllowApply) without committing any of them, then completes the
+        /// request with the first valid position found.
+        /// </summary>
+        public bool TryQueueProbe(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            IReadOnlyList<float3> positions,
+            float rotationDegrees,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.Probe;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_ProbePositions.Clear();
+            m_ProbePositions.AddRange(positions);
+            m_ProbeIndex = 0;
+            m_ProbeTried = 0;
+            m_ProbeRotationDegrees = rotationDegrees;
+            m_ProbeLastError = "";
             m_PendingRequest = request;
             Activate();
             return true;
@@ -198,6 +238,10 @@ namespace CS2MCP
                             case OperationKind.Net:
                                 CreateRoadDefinitions();
                                 break;
+                            case OperationKind.Probe:
+                                ApplyProbeCandidate();
+                                CreatePlacementDefinitions();
+                                break;
                             case OperationKind.Demolish:
                                 CreateModifyDefinitions(CreationFlags.Delete, default);
                                 break;
@@ -208,7 +252,9 @@ namespace CS2MCP
                                 CreateAreaDefinitions();
                                 break;
                         }
-                        m_Stage = Stage.Apply;
+                        m_Stage = m_PendingKind == OperationKind.Probe
+                            ? Stage.ProbeValidate
+                            : Stage.Apply;
                         break;
 
                     case Stage.Apply:
@@ -223,6 +269,38 @@ namespace CS2MCP
                             CompletePending(BridgeResponse.Error(409, DescribeValidationBlock()));
                         }
                         m_Stage = Stage.Finish;
+                        break;
+
+                    case Stage.ProbeValidate:
+                        m_ProbeTried++;
+                        if (GetAllowApply())
+                        {
+                            applyMode = ApplyMode.Clear;
+                            CompletePending(BuildProbeSuccess());
+                            m_Stage = Stage.Finish;
+                        }
+                        else
+                        {
+                            m_ProbeLastError = DescribeValidationBlock();
+                            applyMode = ApplyMode.Clear;
+                            m_ProbeIndex++;
+                            if (m_ProbeIndex < m_ProbePositions.Count)
+                            {
+                                m_Stage = Stage.ProbeClear;
+                            }
+                            else
+                            {
+                                CompletePending(BridgeResponse.Error(404, DescribeProbeFailure()));
+                                m_Stage = Stage.Finish;
+                            }
+                        }
+                        break;
+
+                    case Stage.ProbeClear:
+                        // Let the game clear the rejected preview before probing
+                        // the next candidate.
+                        applyMode = ApplyMode.Clear;
+                        m_Stage = Stage.ProbeCreate;
                         break;
 
                     case Stage.Finish:
@@ -243,6 +321,16 @@ namespace CS2MCP
                 Deactivate();
             }
             return inputDeps;
+        }
+
+        private void ApplyProbeCandidate()
+        {
+            if (m_ProbeIndex < 0 || m_ProbeIndex >= m_ProbePositions.Count)
+            {
+                return;
+            }
+            m_PendingPosition = m_ProbePositions[m_ProbeIndex];
+            m_PendingRotation = quaternion.RotateY(math.radians(m_ProbeRotationDegrees));
         }
 
         private BridgeResponse BuildSuccessResponse()
@@ -296,6 +384,34 @@ namespace CS2MCP
                         note = "committed this frame; verify via /city/buildings or /screenshot",
                     });
             }
+        }
+
+        private BridgeResponse BuildProbeSuccess()
+        {
+            return BridgeResponse.Json(new
+            {
+                found = true,
+                prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                position = new
+                {
+                    x = m_PendingPosition.x,
+                    y = m_PendingPosition.y,
+                    z = m_PendingPosition.z,
+                },
+                rotation = m_ProbeRotationDegrees,
+                attemptsTried = m_ProbeTried,
+                note = "validated by the game's placement validation; call cs2_place_building with these exact coordinates",
+            });
+        }
+
+        private string DescribeProbeFailure()
+        {
+            string lastError = string.IsNullOrWhiteSpace(m_ProbeLastError)
+                ? "unknown"
+                : m_ProbeLastError;
+            return "no valid placement found near the requested position: tried " +
+                   m_ProbeTried + " candidate(s). Last reason: " + lastError +
+                   " Try a larger radius, a different rotation (90/180/270), or a center closer to a road.";
         }
 
         private void CompletePending(BridgeResponse response)
@@ -442,6 +558,10 @@ namespace CS2MCP
             m_PendingRequest = null;
             m_PendingPrefab = null;
             m_PendingPrefabEntity = Entity.Null;
+            m_ProbePositions.Clear();
+            m_ProbeIndex = 0;
+            m_ProbeTried = 0;
+            m_ProbeLastError = "";
             if (m_ToolSystem.activeTool == this)
             {
                 m_ToolSystem.activeTool = m_PreviousTool != null ? m_PreviousTool : m_DefaultToolSystem;

@@ -328,6 +328,85 @@ namespace CS2MCP
             return null;
         }
 
+        private BridgeResponse FindPlacement(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+
+            if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
+            {
+                return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs>");
+            }
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            {
+                return BridgeResponse.Error(400, "provide ?x=<float>&z=<float> search center");
+            }
+            float radius = request.TryGetFloat("radius", out float rawRadius)
+                ? math.clamp(rawRadius, 8f, 300f)
+                : 40f;
+            int maxAttempts = request.TryGetInt("attempts", out int rawAttempts)
+                ? math.clamp(rawAttempts, 1, 120)
+                : 32;
+            request.TryGetFloat("rotation", out float rotationDegrees);
+
+            if (!TryFindPrefabByName(BuildingPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab)
+                && !TryFindPrefabByName(TreePrefabQuery, prefabName, out prefabEntity, out prefab))
+            {
+                return BridgeResponse.Error(404, $"unknown building/tree prefab '{prefabName}'; search via /prefabs?category=building|tree&query=...");
+            }
+            if (IsLocked(prefabEntity) && !IsForced(request))
+            {
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to search anyway");
+            }
+
+            float2 center = new float2(x, z);
+            const int step = 4;
+            int halfSteps = math.max(1, (int)math.floor(radius / step));
+            var candidates = new List<float3>();
+            for (int dz = -halfSteps; dz <= halfSteps; dz++)
+            {
+                for (int dx = -halfSteps; dx <= halfSteps; dx++)
+                {
+                    float cx = x + dx * step;
+                    float cz = z + dz * step;
+                    if (math.abs(cx - x) > radius || math.abs(cz - z) > radius)
+                    {
+                        continue;
+                    }
+                    candidates.Add(new float3(cx, 0f, cz));
+                }
+            }
+            candidates.Sort((a, b) =>
+            {
+                float da = math.lengthsq(new float2(a.x, a.z) - center);
+                float db = math.lengthsq(new float2(b.x, b.z) - center);
+                return da.CompareTo(db);
+            });
+            if (candidates.Count > maxAttempts)
+            {
+                candidates.RemoveRange(maxAttempts, candidates.Count - maxAttempts);
+            }
+
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                float3 position = candidates[i];
+                position.y = TerrainUtils.SampleHeight(ref heightData, position);
+                candidates[i] = position;
+            }
+
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueueProbe(prefabEntity, prefab, candidates, rotationDegrees, request))
+            {
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            }
+            // Completed asynchronously by BridgeToolSystem over the next tool frames.
+            return null;
+        }
+
         private BridgeResponse BuildRoad(BridgeRequest request)
         {
             if (!TryGetCity(out _, out BridgeResponse error))

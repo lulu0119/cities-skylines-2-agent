@@ -83,6 +83,8 @@ namespace CS2MCP
                     return GetPrefabs(request);
                 case "/build/place":
                     return PlaceBuilding(request);
+                case "/build/find-place":
+                    return FindPlacement(request);
                 case "/build/road":
                     return BuildRoad(request);
                 case "/build/upgrade":

@@ -384,7 +384,7 @@
     },
     {
       "name": "cs2_place_building",
-      "description": "Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. Costs city money like a normal player action. Verify the result with cs2_screenshot or cs2_list_buildings.",
+      "description": "Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. If blocked (NoRoadAccess / OverlapExisting / InWater), call cs2_find_placement with the same prefab and a nearby center instead of guessing coordinates. Costs city money like a normal player action. Verify the result with cs2_screenshot or cs2_list_buildings.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -543,8 +543,85 @@
       "response": "json"
     },
     {
+      "name": "cs2_find_placement",
+      "description": "Search for a VALID placement position for a building/tree prefab near (x, z) WITHOUT committing anything. Probes the game's real placement validation (road access, overlap, water, city limits) over a grid around the center and returns the closest valid x/z/rotation when one exists. Use this after cs2_place_building fails (NoRoadAccess / OverlapExisting / InWater) instead of guessing coordinates. Then call cs2_place_building with the returned position.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prefab": {
+            "type": "string",
+            "description": "Exact prefab name from cs2_find_prefabs (buildings or trees)"
+          },
+          "x": {
+            "type": "number",
+            "description": "Center X to search around (meters)"
+          },
+          "z": {
+            "type": "number",
+            "description": "Center Z to search around (meters)"
+          },
+          "radius": {
+            "type": "number",
+            "description": "Search half-size in meters (default 40, max 300)"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 120,
+            "description": "Max candidate positions to probe, closest first (default 32)"
+          },
+          "rotation": {
+            "type": "number",
+            "description": "Rotation in degrees to require (default 0); retry with 90/180/270 if not found"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Search even if the prefab is milestone-locked"
+          }
+        },
+        "required": [
+          "prefab",
+          "x",
+          "z"
+        ]
+      },
+      "route": "/build/find-place",
+      "query": [
+        {
+          "key": "prefab",
+          "arg": "prefab"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
+          "key": "attempts",
+          "arg": "attempts"
+        },
+        {
+          "key": "rotation",
+          "arg": "rotation"
+        },
+        {
+          "key": "force",
+          "arg": "force",
+          "boolMode": "trueOnly"
+        }
+      ],
+      "response": "json"
+    },
+    {
       "name": "cs2_list_buildings",
-      "description": "List buildings existing in the city with their prefab name, world position and entity id (index+version, needed for cs2_demolish). Filter by name substring to find specific buildings.",
+      "description": "List buildings existing in the city with their prefab name, world position and entity id (index+version, needed for cs2_demolish). Filter by name substring to find specific buildings. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the query.",
       "parameters": {
         "type": "object",
         "properties": {
