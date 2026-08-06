@@ -1,60 +1,61 @@
-# Skylines 2 Agent POC
+# Cities: Skylines 2 Agent
 
-验证「游戏内 AI 市长」两条技术路线的可行性，不需要安装《城市：天际线 2》：
+为《都市：天际线 2》打造「游戏内 AI 市长」的基础仓库：游戏里一个聊天面板，玩家与 LLM 对话，AI 通过 C# 模组执行建路、划区、调税、跑模拟等操作。目标形态是纯游戏内 mod，玩家在 Paradox Mods 安装后只需填 API Key。
 
-| 目录 | 内容 | 验证什么 |
-|---|---|---|
-| [`web/`](./web) | Vite + React/TS，浏览器里跑 `@apeira/core`（底层 XSAI），带模拟城市工具 | Apeira 能否打成浏览器 bundle、流式对话 + 多轮 function calling 是否跑得通 |
-| [`mock/`](./mock) | 零依赖 OpenAI 兼容 mock 服务器（SSE + tool calls） | 没有 API Key 也能跑通全流程 |
-| [`cs/`](./cs) | C# console「ModHost」：用 OpenAI .NET SDK 跑同一套模拟城市工具 | 游戏内 C# agent loop 的可行性（含 net472 编译兼容检查） |
+当前状态：**POC 已通过（2026-08-05，Mac 侧）**。下一步是在 Windows 真机上做游戏内冒烟验证，见 [docs/windows-onboarding.md](./docs/windows-onboarding.md)。
 
-## 快速开始（浏览器侧）
+## 为什么是这个仓库
+
+这是后续所有 CS2 Agent 工作的基地，不只做一次测试：
+
+- 浏览器侧 agent loop（`@apeira/core` + XSAI）已验证可打进 bundle；
+- C# 侧 agent loop（OpenAI .NET SDK）已验证可编译/运行；
+- 模拟城市工具、mock LLM、无头浏览器测试都已就位；
+- 未来 mod 本体、UI、运行时、打包都在这一个仓库里演进。
+
+## 目录
+
+| 目录 | 内容 |
+|---|---|
+| [`web/`](./web) | React/TS 聊天 UI + `@apeira/core` agent loop（浏览器侧），带模拟城市工具 |
+| [`mock/`](./mock) | 零依赖 OpenAI 兼容 mock 服务器（SSE 流式 + 非流式 tool calls） |
+| [`cs/ModHost`](./cs/ModHost) | C# agent loop + 模拟 mod 宿主；多目标 `net10.0;net472` |
+| [`docs/`](./docs) | [愿景与路线图](./docs/vision.md)、[Windows 上手](./docs/windows-onboarding.md) |
+
+## 快速开始
 
 ```bash
-# 终端 1：mock LLM
+# 终端 1：mock LLM（不需要 API Key）
 cd mock && node server.mjs
 
-# 终端 2：web
+# 终端 2：web（浏览器侧 POC）
 cd web && pnpm install && pnpm dev
 ```
 
-打开 http://127.0.0.1:5173 ，直接对 AI 说话。默认走本地 mock（无需 API Key）；
-想用真实模型，把 baseURL 改成 `https://api.openai.com/v1/`、填 API Key 和模型名，点「应用配置」。
-
-无头浏览器验证：
+无头浏览器验证（Mac/Windows 通用）：
 
 ```bash
 cd web && pnpm build && node e2e.mjs
 ```
 
-Node 冒烟（同一套 agent 循环）：
-
-```bash
-cd web && node smoke.mjs
-```
-
-## 快速开始（C# 侧）
+C# 侧（需要 .NET SDK）：
 
 ```bash
 cd cs/ModHost
 dotnet run -f net10.0 --project . -- "建一条路，然后跑 4 小时模拟"
 ```
 
-默认打本地 mock；用 `CS2POC_BASE_URL` / `CS2POC_MODEL` / `CS2POC_API_KEY` 切换真实端点。
+真实端点：用 `CS2POC_BASE_URL` / `CS2POC_MODEL` / `CS2POC_API_KEY` 环境变量切换（不要把 key 写进仓库）。
 
-## 验证结果（2026-08-05）
+## 已验证（2026-08-05）
 
-- ✅ **浏览器 bundle**：`@apeira/core` 打进 Vite 产物，gzip 约 71 KB。
-- ✅ **Node 冒烟**（`web/smoke.mjs`）：读状态 → 建路 → 跑模拟 → 总结，多轮工具调用闭环。
-- ✅ **无头 Chromium e2e**（`web/e2e.mjs`）：页面里发「建一条路，然后跑 4 小时模拟」，渲染 3 次工具调用并流式输出最终回答。
-- ✅ **C# agent loop**（`cs/ModHost`，net10.0 实跑）：OpenAI .NET SDK 非流式 + function calling，同样的三步工具循环跑通。
-- ✅ **net472 编译兼容检查**：`dotnet build -f net472` 通过；过程中抓到并修复了两个真实兼容问题（`Math.Clamp` 和 `string.Join(char)` 在 net472 不存在）。
-- ❓ **仍未验证**：Gameface 是 Chromium 受限子集，`fetch`/`ReadableStream` 是否可用必须进游戏实测；CS2 模组进程内 HTTPS 到模型 API 的 TLS 兼容性也需实测（兜底：手写最小 HTTP 客户端，参考 CS2MCP）。
+- ✅ `@apeira/core` 浏览器 bundle 构建成功（gzip 约 71 KB）。
+- ✅ Node 冒烟 + 无头 Chromium e2e：读状态 → 建路 → 跑模拟 → 总结，多轮工具调用闭环。
+- ✅ C#（OpenAI .NET SDK 2.10）同样的工具循环跑通；`net472` 编译检查通过（修掉 `Math.Clamp`、`string.Join(char)` 两个兼容坑）。
+- ❓ 未验证（需要 Windows 真机）：Gameface 的 fetch/streams、模组内 HTTPS/TLS、暂停时 UIUpdate 队列。
 
-## 目前结论（POC 范围）
+## 下一步
 
-- ✅ `@apeira/core` + XSAI 可以打进浏览器 bundle（gzip 约 71 KB），流式输出、多轮工具调用可用。
-- ✅ 多轮 function calling 在 mock 上闭环：读状态 → 建路 → 跑模拟 → 总结。
-- ✅ C# 侧可以用 OpenAI .NET SDK 写同样的 agent loop；`net472` 目标可编译（真实 Unity Mono 运行仍需游戏内验证）。
-- ❓ 未验证：Gameface 是 Chromium 受限子集，`fetch`/`ReadableStream` 是否可用必须进游戏实测；
-  CS2 模组进程内 HTTPS 到模型 API 的 TLS 兼容性也需实测（兜底：手写最小 HTTP 客户端，参考 CS2MCP）。
+1. 在 Windows 真机上跑 [游戏内冒烟测试](./docs/windows-onboarding.md)。
+2. 根据结果决定 agent loop 放 Gameface TS 还是 C#。
+3. 按 [路线图](./docs/vision.md) 推进到可上 Paradox Mods 的 mod。
