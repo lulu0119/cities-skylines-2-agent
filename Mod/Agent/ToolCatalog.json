@@ -632,8 +632,8 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 500,
-            "description": "Max results (default 100)"
+            "maximum": 128,
+            "description": "Max results (default 128, hard cap 128)"
           }
         },
         "required": []
@@ -710,7 +710,7 @@
         },
         {
           "key": "z",
-          "arg": "zCoord"
+          "arg": "z"
         },
         {
           "key": "force",
@@ -822,7 +822,7 @@
         },
         {
           "key": "z",
-          "arg": "zCoord"
+          "arg": "z"
         },
         {
           "key": "radius",
@@ -921,7 +921,7 @@
         },
         {
           "key": "z",
-          "arg": "zCoord"
+          "arg": "z"
         },
         {
           "key": "y",
@@ -1084,7 +1084,7 @@
         },
         {
           "key": "z",
-          "arg": "zCoord"
+          "arg": "z"
         },
         {
           "key": "radius",
@@ -1095,15 +1095,15 @@
     },
     {
       "name": "cs2_notifications",
-      "description": "All active in-world warning icons (no electricity, no water, garbage piling up, abandoned buildings, high rent...) with type counts, locations and target entities. The primary way to discover problems.",
+      "description": "All active in-world warning icons (no electricity, no water, garbage piling up, abandoned buildings, high rent...) with type counts, locations and target entities. The primary way to discover problems. Hard max 128 detail items; countsByType is always complete; truncated=true when details were cut.",
       "parameters": {
         "type": "object",
         "properties": {
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 500,
-            "description": "Max detailed items (default 100)"
+            "maximum": 128,
+            "description": "Max detailed items (default 128, hard cap 128)"
           }
         },
         "required": []
@@ -1234,7 +1234,7 @@
     },
     {
       "name": "cs2_list_objects",
-      "description": "List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter by name or spatially. Use the entity id with cs2_demolish to remove them.",
+      "description": "List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Use the entity id with cs2_demolish to remove them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1257,8 +1257,8 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 500,
-            "description": "Max results (default 100)"
+            "maximum": 128,
+            "description": "Max results (default 128, hard cap 128)"
           }
         },
         "required": []
@@ -1275,7 +1275,7 @@
         },
         {
           "key": "z",
-          "arg": "zCoord"
+          "arg": "z"
         },
         {
           "key": "radius",

@@ -168,13 +168,13 @@ namespace CS2MCP
                 return error;
             }
             request.Query.TryGetValue("query", out string search);
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 500) : 100;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
             bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
             float2 center = new float2(x, z);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var results = new List<object>();
+            var found = new List<(float distance, object item)>();
             int total = 0;
             using (NativeArray<Entity> entities = StandaloneObjectQuery.ToEntityArray(Allocator.Temp))
             {
@@ -192,22 +192,68 @@ namespace CS2MCP
                         continue;
                     }
                     total++;
-                    if (results.Count < limit)
+                    float distance = hasCenter
+                        ? math.distance(transform.m_Position.xz, center)
+                        : 0f;
+                    var item = new
                     {
-                        results.Add(new
+                        entity = new { index = entity.Index, version = entity.Version },
+                        prefab = name,
+                        position = new { x = transform.m_Position.x, y = transform.m_Position.y, z = transform.m_Position.z },
+                        distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
+                    };
+                    if (found.Count < limit)
+                    {
+                        found.Add((distance, item));
+                    }
+                    else if (hasCenter)
+                    {
+                        int worst = 0;
+                        for (int j = 1; j < found.Count; j++)
                         {
-                            entity = new { index = entity.Index, version = entity.Version },
-                            prefab = name,
-                            position = new { x = transform.m_Position.x, y = transform.m_Position.y, z = transform.m_Position.z },
-                        });
+                            if (found[j].distance > found[worst].distance)
+                            {
+                                worst = j;
+                            }
+                        }
+                        if (distance < found[worst].distance)
+                        {
+                            found[worst] = (distance, item);
+                        }
                     }
                 }
             }
+
+            if (hasCenter && found.Count > 1)
+            {
+                for (int i = 0; i < found.Count - 1; i++)
+                {
+                    for (int j = i + 1; j < found.Count; j++)
+                    {
+                        if (found[j].distance < found[i].distance)
+                        {
+                            (found[i], found[j]) = (found[j], found[i]);
+                        }
+                    }
+                }
+            }
+            var results = new List<object>(found.Count);
+            foreach ((_, object item) in found)
+            {
+                results.Add(item);
+            }
+
+            bool truncated = total > results.Count;
             return BridgeResponse.Json(new
             {
                 totalMatches = total,
                 returned = results.Count,
-                note = "standalone trees/plants; use entity index+version with /build/demolish",
+                limit,
+                truncated,
+                warning = truncated
+                    ? $"too many results: {total} objects match, only {results.Count} returned; shrink radius / add query filter, or paginate."
+                    : null,
+                note = "standalone trees/plants; hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
                 objects = results,
             });
         }

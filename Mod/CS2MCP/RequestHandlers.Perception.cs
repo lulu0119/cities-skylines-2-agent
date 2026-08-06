@@ -346,7 +346,7 @@ namespace CS2MCP
                 sampleCount = n,
                 truncated,
                 warning = truncated
-                    ? $"范围覆盖 {cellsInBounds} 个原生格子，超过上限 {hardMaxCells}；已改为固定 {kAreaSampleGrid}x{kAreaSampleGrid} 均匀采样。缩小范围可提高密度。"
+                    ? $"range covers {cellsInBounds} native cells, over the {hardMaxCells} cap; fell back to a fixed {kAreaSampleGrid}x{kAreaSampleGrid} uniform sample. Shrink the range for higher density."
                     : null,
                 value = new
                 {
@@ -517,7 +517,7 @@ namespace CS2MCP
                 return error;
             }
 
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 500) : 100;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
 
             var counts = new Dictionary<string, int>();
@@ -561,8 +561,13 @@ namespace CS2MCP
             {
                 total,
                 returned = items.Count,
+                limit,
+                truncated = total > items.Count,
+                warning = total > items.Count
+                    ? $"too many icons: {total} notifications total, only {items.Count} details returned; countsByType is still complete. Raise limit (max 128) or narrow the query."
+                    : null,
                 countsByType = counts,
-                note = "in-world warning icons (no electricity/water, garbage piling, abandoned...); use target with /entity/inspect",
+                note = "in-world warning icons (no electricity/water, garbage piling, abandoned...); hard max 128; use target with /entity/inspect",
                 notifications = items,
             });
         }

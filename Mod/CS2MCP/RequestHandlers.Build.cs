@@ -156,7 +156,7 @@ namespace CS2MCP
             float2 center = new float2(x, z);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var results = new List<object>();
+            var found = new List<(float distance, object item)>();
             int total = 0;
             using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
             {
@@ -177,18 +177,55 @@ namespace CS2MCP
                         continue;
                     }
                     total++;
-                    if (results.Count < limit)
+                    float distance = hasCenter ? math.distance(midpoint, center) : 0f;
+                    var item = new
                     {
-                        results.Add(new
+                        entity = new { index = entity.Index, version = entity.Version },
+                        prefab = name,
+                        start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
+                        end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
+                        length = curve.m_Length,
+                        distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
+                    };
+                    if (found.Count < limit)
+                    {
+                        found.Add((distance, item));
+                    }
+                    else if (hasCenter)
+                    {
+                        int worst = 0;
+                        for (int j = 1; j < found.Count; j++)
                         {
-                            entity = new { index = entity.Index, version = entity.Version },
-                            prefab = name,
-                            start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
-                            end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
-                            length = curve.m_Length,
-                        });
+                            if (found[j].distance > found[worst].distance)
+                            {
+                                worst = j;
+                            }
+                        }
+                        if (distance < found[worst].distance)
+                        {
+                            found[worst] = (distance, item);
+                        }
                     }
                 }
+            }
+
+            if (hasCenter && found.Count > 1)
+            {
+                for (int i = 0; i < found.Count - 1; i++)
+                {
+                    for (int j = i + 1; j < found.Count; j++)
+                    {
+                        if (found[j].distance < found[i].distance)
+                        {
+                            (found[i], found[j]) = (found[j], found[i]);
+                        }
+                    }
+                }
+            }
+            var results = new List<object>(found.Count);
+            foreach ((_, object item) in found)
+            {
+                results.Add(item);
             }
 
             bool truncated = total > results.Count;
@@ -199,9 +236,9 @@ namespace CS2MCP
                 limit,
                 truncated,
                 warning = truncated
-                    ? $"超过上限：范围内共 {total} 条路段（曲线），仅返回 {results.Count} 条。缩小 radius / 加 query 过滤，或分页查看。"
+                    ? $"too many results: {total} road segments match, only {results.Count} returned; shrink radius / add query filter, or paginate."
                     : null,
-                note = "one entry per road segment (edge/curve); hard max 128; use entity index+version with /build/demolish",
+                note = "one entry per road segment (edge/curve); hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
                 roads = results,
             });
         }
@@ -564,7 +601,7 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("query", out string search);
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 500) : 100;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var results = new List<object>();
@@ -605,7 +642,12 @@ namespace CS2MCP
             {
                 totalMatches = total,
                 returned = results.Count,
-                note = "use entity index+version with /build/demolish",
+                limit,
+                truncated = total > results.Count,
+                warning = total > results.Count
+                    ? $"too many results: {total} buildings match, only {results.Count} returned; add a query filter, or paginate."
+                    : null,
+                note = "hard max 128; use entity index+version with /build/demolish",
                 buildings = results,
             });
         }
