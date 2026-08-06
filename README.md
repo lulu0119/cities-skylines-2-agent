@@ -4,14 +4,24 @@
 
 当前状态：**POC 已通过（2026-08-05，Mac 侧）**。下一步是在 Windows 真机上做游戏内冒烟验证，见 [docs/windows-onboarding.md](./docs/windows-onboarding.md)。
 
-## 为什么是这个仓库
+## 愿景（摘要）
 
-这是后续所有 CS2 Agent 工作的基地，不只做一次测试：
+```text
+Gameface UI（React/TS 聊天面板）
+      ↕ Cohtml 绑定
+Agent Loop（待定：Gameface TS 或 C#）
+  - 对话历史 + tools（function calling）→ OpenAI 兼容 API
+      ↕
+C# 工具层：队列到模拟主线程（UIUpdate/ToolUpdate，暂停时可用）
+      ↓
+Unity ECS / 游戏原生 Tool 管线
+```
 
-- 浏览器侧 agent loop（`@apeira/core` + XSAI）已验证可打进 bundle；
-- C# 侧 agent loop（OpenAI .NET SDK）已验证可编译/运行；
-- 模拟城市工具、mock LLM、无头浏览器测试都已就位；
-- 未来 mod 本体、UI、运行时、打包都在这一个仓库里演进。
+待决点：agent loop 放哪（等 Windows 冒烟结果）、API Key 存模组设置、工具面自研或复用 CS2MCP（Apache-2.0）、MCP 暂不需要、实时性走「暂停 + 快进」。
+
+里程碑：**M0 POC ✅** → **M1 Windows 游戏内冒烟（下一步）** → M2 最小聊天 mod → M3 工具层 + agent loop → M4 产品化（设置/打包/Paradox Mods 上架）→ M5 迭代。
+
+原则：游戏侧胶水是 C#、UI 是 React/TS、agent runtime 保持浏览器可移植；工具执行永远排队到模拟主线程；暂停优先；API Key 绝不进仓库；真实 Windows 是权威验证环境。
 
 ## 目录
 
@@ -20,7 +30,7 @@
 | [`web/`](./web) | React/TS 聊天 UI + `@apeira/core` agent loop（浏览器侧），带模拟城市工具 |
 | [`mock/`](./mock) | 零依赖 OpenAI 兼容 mock 服务器（SSE 流式 + 非流式 tool calls） |
 | [`cs/ModHost`](./cs/ModHost) | C# agent loop + 模拟 mod 宿主；多目标 `net10.0;net472` |
-| [`docs/`](./docs) | [愿景与路线图](./docs/vision.md)、[Windows 上手](./docs/windows-onboarding.md) |
+| [`docs/`](./docs) | Windows 交接与游戏内验证清单（唯一文档） |
 
 ## 快速开始
 
@@ -56,6 +66,6 @@ dotnet run -f net10.0 --project . -- "建一条路，然后跑 4 小时模拟"
 
 ## 下一步
 
-1. 在 Windows 真机上跑 [游戏内冒烟测试](./docs/windows-onboarding.md)。
+1. 在 Windows 真机上跑 [docs/windows-onboarding.md](./docs/windows-onboarding.md)。
 2. 根据结果决定 agent loop 放 Gameface TS 还是 C#。
-3. 按 [路线图](./docs/vision.md) 推进到可上 Paradox Mods 的 mod。
+3. 按里程碑推进到可上 Paradox Mods 的 mod。

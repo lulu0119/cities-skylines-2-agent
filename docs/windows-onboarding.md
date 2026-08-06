@@ -1,7 +1,42 @@
-# Windows 上手：游戏内冒烟验证
+# Windows 交接与游戏内冒烟验证
 
 **日期：** 2026-08-06
-**目的：** 给在 Windows 机器上接手的新 agent 一份可直接执行的清单。目标是验证三个 Mac 上无法验证的游戏内未知项，并为后续 mod 开发建立 Windows 工作流。
+**交接对象：** 在 Windows 机器上接手的新 agent
+**仓库：** `cities-skylines-2-agent`（GitHub：lulu0119/cities-skylines-2-agent，公开）
+
+## 交接背景（一句话）
+
+用户要做一个纯游戏内「AI 市长」mod：游戏内聊天面板 + 玩家填 API Key + AI 通过 C# 模组执行建路/划区/税收/跑模拟等操作，经 Paradox Mods 分发，不依赖外部 agent 程序。
+
+## 仓库状态
+
+- POC 已验证（见仓库 README「已验证」）；git 历史完整，当前分支为 `main`。
+- Mac 侧无需再验证；你只需跑下面 §2 的非游戏检查确认环境，然后跑 §3 的游戏内冒烟。
+- 本仓库是后续所有 CS2 Agent 工作的基地（UI、mod、运行时、测试都在这里演进）。
+
+## 建议技能（suggested skills）
+
+- `research`：查 CS2 官方 modding 文档、Paradox Mods 上架要求。
+- `tdd`：工具层与 agent loop 先写测试再实现。
+- `diagnosing-bugs`：游戏内失败/崩溃排查。
+- `code-review`：交接前审查改动。
+- `xsai`：涉及 web 侧 agent loop（`@apeira/core` 底层是 XSAI）时使用。
+- `handoff`：Windows 会话结束向用户/下一 agent 交接时使用。
+
+## 已定约束 / 决策
+
+- 纯游戏内闭环，不接外部 agent；MCP 本轮不需要（以后做外部客户端再议）。
+- 游戏侧胶水用 C#，UI 用 React/TS，agent runtime 保持浏览器可移植（Apeira/XSAI 路线）。
+- 工具执行永远排队到模拟主线程（`UIUpdate`/`ToolUpdate`），暂停优先。
+- API Key 只走环境变量/运行时设置，绝不进仓库。
+- CS2MCP（Apache-2.0）是 Bridge 与工具管线的参考实现，可直接借鉴/复用。
+- 真实 Windows 环境是权威；CrossOver + cs2-macos-patcher 只是 Mac 兜底，不算发布验证。
+
+## 敏感信息
+
+无。仓库只使用 mock/dummy key（`sk-mock`）；后续测试若用真实 key，只放环境变量，并在任何文档/提交前清除。
+
+---
 
 ## 1. 环境准备
 
@@ -9,7 +44,7 @@
 - Steam 安装并拥有《都市：天际线 2》（建议开启 modding toolchain / developer mode）。
 - .NET SDK（10 或 8+）：`winget install Microsoft.DotNet.SDK.10`。
 - Node.js 20+ 与 pnpm（跑 web/mock/e2e）。
-- Git；把 `cities-skylines-2-agent` 仓库弄到机器上（本地复制或先推到远端再 clone）。
+- Git；clone：`git clone https://github.com/lulu0119/cities-skylines-2-agent.git`。
 - 可选：Visual Studio / Rider（C# 调试）、Chrome/Edge（Gameface 是 Chromium 内核，可参考）。
 
 ## 2. 先跑不依赖游戏的验证（确保环境 OK）
