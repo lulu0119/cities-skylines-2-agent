@@ -1,67 +1,288 @@
-import { useState } from "react";
-import type { CSSProperties, FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
+import { bindEvent, bindValue, trigger, useValue } from "cs2/api";
 import { Button, Panel, Portal } from "cs2/ui";
+import mod from "mod.json";
 
-type ChatRole = "user" | "assistant";
+type ChatRole = "user" | "assistant" | "tool" | "system" | "error";
 
-type ChatLine = {
+type UiMessage = {
+  id: number;
   role: ChatRole;
   text: string;
+  tool?: string;
+  streaming?: boolean;
 };
 
+type PlanStep = {
+  index: number;
+  title: string;
+  detail: string;
+  status: string;
+  result: string;
+};
+
+type Plan = {
+  id: string;
+  goal: string;
+  status: string;
+  currentStep: number;
+  approvalNote: string;
+  steps: PlanStep[];
+};
+
+type StateMessage = {
+  role: string;
+  text: string;
+  tool: string | null;
+};
+
+type AgentState = {
+  status: string;
+  busy: boolean;
+  pendingInputs: number;
+  session: string;
+  turn: string;
+  plan: Plan | null;
+  contextBlocks: unknown[];
+  messages: StateMessage[];
+};
+
+type AgentEvent = {
+  kind: "delta" | "tool" | "plan" | "status" | "user" | "error" | "compact" | "turn";
+  text: string;
+  tool?: string;
+  plan?: Plan | null;
+  status?: string;
+};
+
+const state$ = bindValue<string>(mod.id, "state", "{}");
+const events$ = bindEvent<string>(mod.id, "event");
+
+// GameBottomRight is a narrow icon column; Portal + fixed px width escapes it
+// (M1 smoke: rem/% collapsed into a one-glyph vertical strip).
 const rootStyle: CSSProperties = {
   position: "absolute",
-  left: "1.5rem",
-  bottom: "8rem",
-  zIndex: 1000,
-  width: "22rem",
+  right: "24px",
+  bottom: "200px",
+  zIndex: 999999,
+  width: "480px",
+  minWidth: "480px",
   pointerEvents: "auto",
 };
 
 const listStyle: CSSProperties = {
-  maxHeight: "14rem",
+  height: "220px",
   overflow: "auto",
-  marginBottom: "0.75rem",
 };
 
 const lineStyle: CSSProperties = {
-  marginBottom: "0.5rem",
-  fontSize: "0.85rem",
+  marginBottom: "6px",
+  fontSize: "13px",
   lineHeight: 1.35,
 };
 
-const formStyle: CSSProperties = {
+const toolStyle: CSSProperties = {
+  ...lineStyle,
+  padding: "4px 8px",
+  borderRadius: "4px",
+  backgroundColor: "rgba(120, 160, 220, 0.15)",
+};
+
+const planStyle: CSSProperties = {
+  ...lineStyle,
+  padding: "6px 8px",
+  borderRadius: "4px",
+  backgroundColor: "rgba(220, 180, 90, 0.15)",
+};
+
+const statusStyle: CSSProperties = {
+  fontSize: "12px",
+  opacity: 0.75,
+  marginBottom: "8px",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+};
+
+const composerStyle: CSSProperties = {
   display: "flex",
   flexDirection: "row",
   alignItems: "center",
+  gap: "8px",
+  width: "100%",
 };
 
 const inputStyle: CSSProperties = {
-  flex: 1,
-  marginRight: "0.5rem",
+  flex: "1 1 auto",
   minWidth: 0,
+  height: "36px",
+  padding: "0 10px",
+  boxSizing: "border-box",
+  border: "1px solid rgba(255, 255, 255, 0.22)",
+  borderRadius: "4px",
+  backgroundColor: "rgba(0, 0, 0, 0.45)",
+  color: "#f0f4fa",
+  fontSize: "14px",
 };
 
-const placeholderReply =
-  "Local echo only — C# IChatClient + ReAct comes next. Tools will use ToolQueueSystem.";
+const sendStyle: CSSProperties = {
+  flex: "0 0 auto",
+  height: "36px",
+};
 
-export const ChatPanel = () => {
+const roleLabel: Record<ChatRole, string> = {
+  user: "You",
+  assistant: "Agent",
+  tool: "Tool",
+  system: "System",
+  error: "Error",
+};
+
+export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const [open, setOpen] = useState(true);
   const [draft, setDraft] = useState("");
-  const [lines, setLines] = useState<ChatLine[]>([
-    { role: "assistant", text: "Cities Skylines 2 Agent — chat shell ready." },
-  ]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
+  const [status, setStatus] = useState("Idle");
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(0);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [session, setSession] = useState("");
+  const stateJson = useValue(state$);
+  const nextId = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const pushMessage = (message: Omit<UiMessage, "id">) => {
+    const id = nextId.current++;
+    setMessages((current) => [...current, { ...message, id }]);
+  };
+
+  const finalizeStream = () => {
+    setMessages((current) =>
+      current.map((message) =>
+        message.streaming ? { ...message, streaming: false } : message,
+      ),
+    );
+  };
+
+  const applyEvent = (event: AgentEvent) => {
+    switch (event.kind) {
+      case "user":
+        finalizeStream();
+        pushMessage({ role: "user", text: event.text });
+        setBusy(true);
+        break;
+      case "delta":
+        setMessages((current) => {
+          const next = [...current];
+          const last = next[next.length - 1];
+          if (last && last.role === "assistant" && last.streaming) {
+            next[next.length - 1] = { ...last, text: last.text + event.text };
+          } else {
+            next.push({
+              id: nextId.current++,
+              role: "assistant",
+              text: event.text,
+              streaming: true,
+            });
+          }
+          return next;
+        });
+        setBusy(true);
+        break;
+      case "tool":
+        finalizeStream();
+        pushMessage({
+          role: "tool",
+          text: event.text,
+          tool: event.tool ?? "tool",
+        });
+        setBusy(true);
+        break;
+      case "plan":
+        setPlan(event.plan ?? null);
+        setStatus("WaitingApproval");
+        break;
+      case "status":
+        setStatus(event.status ?? event.text);
+        setBusy(event.status === "Thinking" || event.status === "Working");
+        if (event.status === "Idle" || event.status === "Interrupted") {
+          finalizeStream();
+        }
+        break;
+      case "error":
+        finalizeStream();
+        pushMessage({ role: "error", text: event.text });
+        setBusy(false);
+        break;
+      case "compact":
+        pushMessage({ role: "system", text: event.text });
+        break;
+      case "turn":
+        finalizeStream();
+        setBusy(false);
+        break;
+    }
+  };
+
+  useEffect(() => {
+    const subscription = events$.subscribe((json) => {
+      try {
+        applyEvent(JSON.parse(json) as AgentEvent);
+      } catch {
+        // ignore malformed events
+      }
+    });
+    return () => subscription.dispose();
+  }, []);
+
+  useEffect(() => {
+    let parsed: AgentState;
+    try {
+      parsed = JSON.parse(stateJson) as AgentState;
+    } catch {
+      return;
+    }
+    if (!parsed.session) {
+      return;
+    }
+    if (parsed.session !== session || messages.length === 0) {
+      setSession(parsed.session);
+      setStatus(parsed.status);
+      setBusy(parsed.busy);
+      setPending(parsed.pendingInputs ?? 0);
+      setPlan(parsed.plan ?? null);
+      setMessages(
+        (parsed.messages ?? [])
+          .filter((message) => message.role !== "system")
+          .map((message) => ({
+            id: nextId.current++,
+            role: message.role as ChatRole,
+            text: message.text,
+            tool: message.tool ?? undefined,
+          })),
+      );
+    } else {
+      setPending(parsed.pendingInputs ?? 0);
+    }
+  }, [stateJson, session, messages.length]);
+
+  useEffect(() => {
+    const element = listRef.current;
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [messages, status]);
 
   const send = () => {
     const text = draft.trim();
     if (!text) {
       return;
     }
-    setLines((current) => [
-      ...current,
-      { role: "user", text },
-      { role: "assistant", text: placeholderReply },
-    ]);
+    trigger(mod.id, "send", text);
+    finalizeStream();
+    pushMessage({ role: "user", text });
+    setBusy(true);
     setDraft("");
   };
 
@@ -71,39 +292,108 @@ export const ChatPanel = () => {
   };
 
   return (
-    <Portal>
-      <div style={rootStyle}>
-        {open ? (
-          <Panel
-            header="Cities Skylines 2 Agent"
-            onClose={() => setOpen(false)}
-          >
-            <div style={listStyle}>
-              {lines.map((line, index) => (
-                <div key={`${line.role}-${index}`} style={lineStyle}>
-                  <strong>{line.role === "user" ? "You" : "Agent"}: </strong>
-                  {line.text}
+    <>
+      {children}
+      <Portal>
+        <div style={rootStyle}>
+          {open ? (
+            <Panel
+              header="Cities Skylines 2 Agent"
+              onClose={() => setOpen(false)}
+              footer={
+                <form style={composerStyle} onSubmit={onSubmit}>
+                  <input
+                    style={inputStyle}
+                    value={draft}
+                    placeholder={
+                      busy
+                        ? "Type to interleave… (queued, injected after this round)"
+                        : "Message…"
+                    }
+                    onChange={(event) => setDraft(event.target.value)}
+                  />
+                  <Button variant="primary" style={sendStyle} onSelect={send}>
+                    Send
+                  </Button>
+                </form>
+              }
+            >
+              <div style={statusStyle}>
+                {status}
+                {busy ? " · working" : ""}
+                {pending > 0 ? ` · ${pending} queued` : ""}
+                {session ? ` · ${session}` : ""}
+              </div>
+              <div ref={listRef} style={listStyle}>
+                {messages.map((message) => (
+                  <MessageLine key={message.id} message={message} />
+                ))}
+                {plan && <PlanCard plan={plan} />}
+              </div>
+              {(plan?.status === "Proposed" || busy) && (
+                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                  {plan?.status === "Proposed" && (
+                    <Button variant="primary" onSelect={() => trigger(mod.id, "approve")}>
+                      Approve plan
+                    </Button>
+                  )}
+                  {busy && (
+                    <Button onSelect={() => trigger(mod.id, "interrupt")}>Interrupt</Button>
+                  )}
                 </div>
-              ))}
-            </div>
-            <form style={formStyle} onSubmit={onSubmit}>
-              <input
-                style={inputStyle}
-                value={draft}
-                placeholder="Message…"
-                onChange={(event) => setDraft(event.target.value)}
-              />
-              <Button variant="primary" onSelect={send}>
-                Send
-              </Button>
-            </form>
-          </Panel>
-        ) : (
-          <Button variant="primary" onSelect={() => setOpen(true)}>
-            Open Agent Chat
-          </Button>
-        )}
+              )}
+            </Panel>
+          ) : (
+            <Button variant="primary" onSelect={() => setOpen(true)}>
+              Open Agent Chat
+            </Button>
+          )}
+        </div>
+      </Portal>
+    </>
+  );
+};
+
+const MessageLine = ({ message }: { message: UiMessage }) => {
+  if (message.role === "tool") {
+    return (
+      <div style={toolStyle}>
+        <strong>⚙ {message.tool}</strong>
+        <pre
+          style={{
+            margin: "0.15rem 0 0",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            maxHeight: "96px",
+            overflow: "auto",
+            font: "inherit",
+          }}
+        >
+          {message.text}
+        </pre>
       </div>
-    </Portal>
+    );
+  }
+  return (
+    <div style={lineStyle}>
+      <strong>{roleLabel[message.role]}: </strong>
+      {message.text}
+      {message.streaming ? "▍" : ""}
+    </div>
+  );
+};
+
+const PlanCard = ({ plan }: { plan: Plan }) => {
+  return (
+    <div style={planStyle}>
+      <strong>Plan ({plan.status}): {plan.goal}</strong>
+      {plan.approvalNote && <div style={{ opacity: 0.85 }}>{plan.approvalNote}</div>}
+      {plan.steps.map((step) => (
+        <div key={step.index} style={{ opacity: step.status === "Done" ? 0.6 : 1 }}>
+          {step.index + 1}. {step.title} — {step.status}
+          {step.result ? ` (${step.result})` : ""}
+        </div>
+      ))}
+    </div>
   );
 };
