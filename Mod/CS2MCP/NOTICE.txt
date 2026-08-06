@@ -1,0 +1,11 @@
+CitiesSkylines2Agent includes an inlined, adapted copy of the CS2MCP bridge
+(https://github.com/LancerComet/cities-skylines-2-mcp), Copyright (c) LancerComet,
+licensed under the Apache License, Version 2.0 (see LICENSE-CS2MCP.txt).
+
+The bridge's HTTP boundary was replaced with an in-process ToolCall -> ToolResult
+path; tool definitions and request handlers are otherwise kept as-is.
+
+CreateDefinitions.cs contains portions derived from game code:
+Copyright (c) Colossal Order and Paradox Interactive.
+Not for reuse or distribution except in accordance with the Paradox Interactive
+End User License Agreement.
