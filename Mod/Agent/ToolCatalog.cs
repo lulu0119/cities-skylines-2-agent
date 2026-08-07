@@ -16,7 +16,7 @@ namespace CitiesSkylines2Agent.Agent
         public string BoolMode; // "trueOnly" | null
     }
 
-    /// <summary>One tool definition from the 44-tool CS2MCP catalog.</summary>
+    /// <summary>One tool definition from the 45-tool catalog.</summary>
     public sealed class ToolDefinition
     {
         public string Name;
@@ -28,8 +28,9 @@ namespace CitiesSkylines2Agent.Agent
     }
 
     /// <summary>
-    /// Loads Mod/Agent/ToolCatalog.json (generated from the upstream MCP server
-    /// by Mod/CS2MCP/Server/extract-tools.mjs) and exposes the 44 tools.
+    /// Loads Mod/Agent/ToolCatalog.json (owned by this mod; originally derived
+    /// from the CS2MCP upstream catalog, see Mod/CS2MCP/NOTICE.txt) and exposes
+    /// the 45 tools.
     /// </summary>
     public static class ToolCatalog
     {
@@ -94,6 +95,17 @@ namespace CitiesSkylines2Agent.Agent
                             }
                         }
                         tools.Add(tool);
+                    }
+                    for (int i = 0; i < tools.Count; i++)
+                    {
+                        for (int j = i + 1; j < tools.Count; j++)
+                        {
+                            if (string.Equals(tools[i].Name, tools[j].Name, StringComparison.Ordinal))
+                            {
+                                throw new InvalidOperationException(
+                                    "ToolCatalog.json contains duplicate tool name: " + tools[i].Name);
+                            }
+                        }
                     }
                     return tools;
                 }

@@ -3,7 +3,7 @@
   "mcpVersion": "0.8.0",
   "tools": [
     {
-      "name": "cs2_ping",
+      "name": "ping",
       "description": "Check that Cities: Skylines II is running with the CS2MCP bridge mod loaded. Returns mod version, current game mode (MainMenu / Game / Editor) and whether a save is loading. Works even while a save is still loading; use this first to diagnose connection issues.",
       "parameters": {
         "type": "object",
@@ -15,7 +15,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_game_state",
+      "name": "game_state",
       "description": "Get the current game state: game mode, whether a city is loaded, city name, simulation pause/speed and the in-game date/time.",
       "parameters": {
         "type": "object",
@@ -27,7 +27,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_city_overview",
+      "name": "city_overview",
       "description": "Key statistics of the loaded city: population (plus citizens currently moving in), average happiness and health, city treasury money, XP, in-game date and simulation speed. Requires a loaded city.",
       "parameters": {
         "type": "object",
@@ -39,8 +39,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_demand",
-      "description": "Residential (low/medium/high density), commercial, industrial, office and storage demand of the loaded city (0-100), including the demand factors that explain WHY demand is high or low (e.g. Taxes, Unemployment, EmptyZones, Homelessness). Positive factor values push demand up, negative values push it down.",
+      "name": "demand",
+      "description": "Residential (low/medium/high density), commercial, industrial, office and storage demand of the loaded city. buildingDemand uses the game's internal 0-255 scale (NOT 0-100); companyDemand counters can exceed 255. Includes the demand factors that explain WHY demand is high or low (e.g. Taxes, Unemployment, EmptyZones, Homelessness). Positive factor values push demand up, negative values push it down.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -51,7 +51,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_simulation",
+      "name": "set_simulation",
       "description": "Control the simulation clock: pause/unpause the game and/or set the simulation speed (0 = paused, 1 = normal, 2 = double, 4 = fastest UI speed; values up to 8 are accepted). Returns the resulting state.",
       "parameters": {
         "type": "object",
@@ -83,7 +83,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_screenshot",
+      "name": "screenshot",
       "description": "Capture the current game view as a PNG image. Useful for seeing the city layout, checking what the player is looking at, or verifying the result of an action. Returns the image directly.",
       "parameters": {
         "type": "object",
@@ -108,7 +108,7 @@
       "response": "png"
     },
     {
-      "name": "cs2_budget",
+      "name": "budget",
       "description": "Detailed city budget: total income/expenses, balance, and a per-source breakdown (residential/commercial/industrial/office taxes, service fees, subsidies, service upkeep, loan interest, electricity/water import-export, map tile upkeep). Values are monthly rates; expenses are positive costs.",
       "parameters": {
         "type": "object",
@@ -120,7 +120,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_city_services",
+      "name": "city_services",
       "description": "Electricity (production/consumption/battery/trade), water & sewage (capacity/consumption/trade) and garbage accumulation of the loaded city. Compare production vs consumption to spot shortages.",
       "parameters": {
         "type": "object",
@@ -132,7 +132,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_labor",
+      "name": "labor",
       "description": "Employment data: employed citizens, unemployment rate, homelessness, total/free jobs broken down by required education level, and the population age structure (children/teens/adults/seniors).",
       "parameters": {
         "type": "object",
@@ -144,7 +144,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_statistics",
+      "name": "statistics",
       "description": "Time series of a city statistic (sampled 32x per in-game day). Useful types: Population, Money, Income, Expense, HouseholdCount, WorkerCount, Unemployed, TouristCount, CrimeRate, BirthRate, DeathRate, CitizensMovedIn, CitizensMovedAway, ResidentialTaxableIncome, TrafficFlow-style passenger counts (PassengerCountBus/Subway/Train...). An invalid type returns the full list of valid names.",
       "parameters": {
         "type": "object",
@@ -186,7 +186,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_get_taxes",
+      "name": "get_taxes",
       "description": "Current tax rate and allowed range for each tax area: Residential, Commercial, Industrial, Office.",
       "parameters": {
         "type": "object",
@@ -198,7 +198,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_tax",
+      "name": "set_tax",
       "description": "Set the tax rate (integer percent) for one tax area. The rate is clamped to the game's allowed range (returned in the response). Higher taxes raise income but lower demand and happiness.",
       "parameters": {
         "type": "object",
@@ -237,7 +237,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_policies",
+      "name": "policies",
       "description": "All city-wide policies with their internal name, localized title, active state, locked state and whether they take a slider adjustment value (e.g. Recycling, Education Subsidies, speed limits).",
       "parameters": {
         "type": "object",
@@ -249,14 +249,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_policy",
-      "description": "Activate or deactivate a city-wide policy by its internal name (from cs2_policies). Slider policies additionally accept an adjustment value. Locked policies cannot be set.",
+      "name": "set_policy",
+      "description": "Activate or deactivate a city-wide policy by its internal name (from policies). Slider policies additionally accept an adjustment value. Locked policies cannot be set.",
       "parameters": {
         "type": "object",
         "properties": {
           "name": {
             "type": "string",
-            "description": "Policy internal name from cs2_policies"
+            "description": "Policy internal name from policies"
           },
           "active": {
             "type": "boolean",
@@ -290,7 +290,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_service_budgets",
+      "name": "service_budgets",
       "description": "Per-service budget sliders (50-150%, 100 = default) with current efficiency, estimated upkeep cost and building count for every city service (police, healthcare, education, transport, ...).",
       "parameters": {
         "type": "object",
@@ -302,14 +302,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_service_budget",
-      "description": "Set the budget percentage (50-150) for one city service by name (from cs2_service_budgets). Lower budgets save money but reduce service efficiency; higher budgets do the opposite.",
+      "name": "set_service_budget",
+      "description": "Set the budget percentage (50-150) for one city service by name (from service_budgets). Lower budgets save money but reduce service efficiency; higher budgets do the opposite.",
       "parameters": {
         "type": "object",
         "properties": {
           "service": {
             "type": "string",
-            "description": "Service name from cs2_service_budgets"
+            "description": "Service name from service_budgets"
           },
           "percentage": {
             "type": "integer",
@@ -337,8 +337,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_find_prefabs",
-      "description": "Search the game's building or road prefabs by name substring. Returns exact prefab names needed by cs2_place_building, plus their type and locked state. Example queries: 'school', 'FireHouse', 'WindTurbine', 'Highway'.",
+      "name": "find_prefabs",
+      "description": "Search the game's building or road prefabs by name substring. Returns exact prefab names needed by place_building, plus their type, locked state and footprint: buildings/trees carry lotSize (int2, 8m cells) and footprintMeters; roads/networks carry widthM (meters). Example queries: 'school', 'FireHouse', 'WindTurbine', 'Highway'.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -383,14 +383,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_place_building",
-      "description": "Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use cs2_list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. If blocked (NoRoadAccess / OverlapExisting / InWater), call cs2_find_placement with the same prefab and a nearby center instead of guessing coordinates. Costs city money like a normal player action. Verify the result with cs2_screenshot or cs2_list_buildings.",
+      "name": "place_building",
+      "description": "Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. If blocked (NoRoadAccess / OverlapExisting / InWater), call find_placement with the same prefab and a nearby center instead of guessing coordinates. Costs city money like a normal player action. Verify the result with screenshot or list_buildings.",
       "parameters": {
         "type": "object",
         "properties": {
           "prefab": {
             "type": "string",
-            "description": "Exact prefab name from cs2_find_prefabs"
+            "description": "Exact prefab name from find_prefabs"
           },
           "x": {
             "type": "number",
@@ -442,14 +442,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_build_road",
-      "description": "Build a network segment between two world coordinates (terrain-following): roads, tracks, paths, power lines, pipes — any prefab from cs2_find_prefabs category 'road' or 'net'. Prefer short segments (about 50-300m) on owned map tiles, connecting near existing road nodes. Long cross-map or cross-water spans usually fail validation. Straight by default; pass cx/cz for a curve. Length 8-1500m. e1/e2 are elevation in meters above/below terrain for bridges/tunnels (-30..60), NOT entity indexes — omit for ground-level roads. Costs city money; failures return specific ErrorType reasons when available.",
+      "name": "build_road",
+      "description": "Build a network segment between two world coordinates (terrain-following): roads, tracks, paths, power lines, pipes — any prefab from find_prefabs category 'road' or 'net'. Prefer short segments (about 50-300m) on owned map tiles, connecting near existing road nodes. Long cross-map or cross-water spans usually fail validation. Straight by default; pass cx/cz for a curve. Length 8-1500m. e1/e2 are elevation in meters above/below terrain for bridges/tunnels (-30..60), NOT entity indexes — omit for ground-level roads. Costs city money; failures return specific ErrorType reasons when available.",
       "parameters": {
         "type": "object",
         "properties": {
           "prefab": {
             "type": "string",
-            "description": "Exact prefab name from cs2_find_prefabs (category road or net)"
+            "description": "Exact prefab name from find_prefabs (category road or net)"
           },
           "x1": {
             "type": "number",
@@ -477,10 +477,14 @@
           },
           "e1": {
             "type": "number",
+            "minimum": -30,
+            "maximum": 60,
             "description": "Elevation at start in meters relative to terrain (-30..60). Bridges typically 5-20. Not an entity id. Omit for ground level."
           },
           "e2": {
             "type": "number",
+            "minimum": -30,
+            "maximum": 60,
             "description": "Elevation at end in meters relative to terrain (-30..60). Not an entity id. Omit for ground level."
           },
           "force": {
@@ -543,14 +547,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_find_placement",
-      "description": "Search for a VALID placement position for a building/tree prefab near (x, z) WITHOUT committing anything. Probes the game's real placement validation (road access, overlap, water, city limits) over a grid around the center and returns the closest valid x/z/rotation when one exists. Use this after cs2_place_building fails (NoRoadAccess / OverlapExisting / InWater) instead of guessing coordinates. Then call cs2_place_building with the returned position.",
+      "name": "find_placement",
+      "description": "Search for a VALID placement position for a building/tree prefab near (x, z) WITHOUT committing anything. Probes the game's real placement validation (road access, overlap, water, city limits) over a grid around the center and returns the closest valid x/z/rotation when one exists. Use this after place_building fails (NoRoadAccess / OverlapExisting / InWater) instead of guessing coordinates. Then call place_building with the returned position.",
       "parameters": {
         "type": "object",
         "properties": {
           "prefab": {
             "type": "string",
-            "description": "Exact prefab name from cs2_find_prefabs (buildings or trees)"
+            "description": "Exact prefab name from find_prefabs (buildings or trees)"
           },
           "x": {
             "type": "number",
@@ -562,6 +566,8 @@
           },
           "radius": {
             "type": "number",
+            "minimum": 8,
+            "maximum": 300,
             "description": "Search half-size in meters (default 40, max 300)"
           },
           "attempts": {
@@ -620,14 +626,27 @@
       "response": "json"
     },
     {
-      "name": "cs2_list_buildings",
-      "description": "List buildings existing in the city with their prefab name, world position and entity id (index+version, needed for cs2_demolish). Filter by name substring to find specific buildings. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the query.",
+      "name": "list_buildings",
+      "description": "List buildings existing in the city with their prefab name, world position, entity id (index+version, needed for demolish) and lot footprint (lotSize in 8m cells, footprintMeters). Filter by name substring or spatially with x/z/radius. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the query/range.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
             "description": "Case-insensitive prefab-name substring filter"
+          },
+          "x": {
+            "type": "number",
+            "description": "Center X for spatial filter"
+          },
+          "z": {
+            "type": "number",
+            "description": "Center Z for spatial filter"
+          },
+          "radius": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Radius in meters for spatial filter (default 250 with x/z)"
           },
           "limit": {
             "type": "integer",
@@ -645,6 +664,18 @@
           "arg": "query"
         },
         {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
           "key": "limit",
           "arg": "limit"
         }
@@ -652,8 +683,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_list_zones",
-      "description": "All zone types (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. Use the exact name with cs2_zone_area.",
+      "name": "list_zones",
+      "description": "All zone TYPES (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. This is a small type list (not the painted cells); use zoning for per-type cell counts. Use the exact name with zone_area.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -664,14 +695,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_zone_area",
-      "description": "Paint zoning on all zonable cells within a radius around a point. Zone cells only exist along roads (build a road first). Pass zone='None' to remove zoning. Buildings grow on zoned cells while the simulation runs, driven by RCI demand (check cs2_demand).",
+      "name": "zone_area",
+      "description": "Paint zoning on all zonable cells within a radius around a point. Zone cells only exist along roads (build a road first). Pass zone='None' to remove zoning. Buildings grow on zoned cells while the simulation runs, driven by RCI demand (check demand).",
       "parameters": {
         "type": "object",
         "properties": {
           "zone": {
             "type": "string",
-            "description": "Exact zone name from cs2_list_zones, or 'None' to dezone"
+            "description": "Exact zone name from list_zones, or 'None' to dezone"
           },
           "x": {
             "type": "number",
@@ -725,8 +756,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_upgrade_road",
-      "description": "Apply upgrades to an existing road segment (from cs2_list_roads): grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. Combine multiple with commas. The segment is recreated with the new composition via the game's tool pipeline.",
+      "name": "upgrade_road",
+      "description": "Apply upgrades to an existing road segment (from list_roads): grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. Combine multiple with commas. The segment is recreated with the new composition via the game's tool pipeline.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -780,8 +811,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_list_roads",
-      "description": "List road segments (edges/curves) with entity id, prefab name, start/end coordinates and length. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range.",
+      "name": "list_roads",
+      "description": "List road segments (edges/curves) with entity id, prefab name, start/end coordinates, length and widthM (road/net prefab width in meters). Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -836,18 +867,18 @@
       "response": "json"
     },
     {
-      "name": "cs2_demolish",
-      "description": "Demolish (bulldoze) one building (from cs2_list_buildings) or road segment (from cs2_list_roads) identified by its entity index and version. Irreversible 鈥?double-check the target first.",
+      "name": "demolish",
+      "description": "Demolish (bulldoze) one building (from list_buildings) or road segment (from list_roads) identified by its entity index and version. Irreversible 鈥?double-check the target first.",
       "parameters": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Entity index from cs2_list_buildings"
+            "description": "Entity index from list_buildings"
           },
           "version": {
             "type": "integer",
-            "description": "Entity version from cs2_list_buildings"
+            "description": "Entity version from list_buildings"
           }
         },
         "required": [
@@ -869,7 +900,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_get_camera",
+      "name": "get_camera",
       "description": "Current gameplay camera: pivot (look-at point), position, compass/tilt angles and zoom distance.",
       "parameters": {
         "type": "object",
@@ -881,8 +912,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_camera",
-      "description": "Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. Combine with cs2_screenshot to LOOK at any place in the city 鈥?the AI's own eyes.",
+      "name": "set_camera",
+      "description": "Point the gameplay camera: set the pivot (look-at world coordinates; height auto-sampled from terrain unless y given), compass rotation angleX (degrees), tilt angleY (0-89) and zoom distance. Combine with screenshot to LOOK at any place in the city 鈥?the AI's own eyes.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -904,10 +935,14 @@
           },
           "angleY": {
             "type": "number",
+            "minimum": 0,
+            "maximum": 89,
             "description": "Tilt in degrees (0 = horizontal, 89 = top-down)"
           },
           "zoom": {
             "type": "number",
+            "minimum": 10,
+            "maximum": 10000,
             "description": "Camera distance (10-10000, larger = further out)"
           }
         },
@@ -943,7 +978,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_terrain",
+      "name": "terrain",
       "description": "Compact terrain probe for a map range: height min/max/mean, water coverage, and a fixed 8x8 uniform sample lattice (x,z,height,water). Requires x+z+radius or xMin+zMin+xMax+zMax. Never returns full heightmap arrays.",
       "parameters": {
         "type": "object",
@@ -958,22 +993,32 @@
           },
           "radius": {
             "type": "number",
+            "minimum": 8,
+            "maximum": 14336,
             "description": "Half-size of square range in meters (with x+z)"
           },
           "xMin": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds min X (with zMin+xMax+zMax)"
           },
           "zMin": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds min Z"
           },
           "xMax": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds max X"
           },
           "zMax": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds max Z"
           }
         },
@@ -992,7 +1037,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_gridmap",
+      "name": "gridmap",
       "description": "Compact cell-map probe (landValue, pollution, groundWater, …) for a map range: value min/max/mean plus fixed 8x8 samples. Requires x+z+radius or xMin+zMin+xMax+zMax. If the range covers more than 128 native cells, returns truncated=true with a warning and still only 8x8 samples. Never returns full arrays.",
       "parameters": {
         "type": "object",
@@ -1019,22 +1064,32 @@
           },
           "radius": {
             "type": "number",
+            "minimum": 8,
+            "maximum": 14336,
             "description": "Half-size of square range in meters (with x+z)"
           },
           "xMin": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds min X"
           },
           "zMin": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds min Z"
           },
           "xMax": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds max X"
           },
           "zMax": {
             "type": "number",
+            "minimum": -7168,
+            "maximum": 7168,
             "description": "Bounds max Z"
           }
         },
@@ -1056,8 +1111,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_zoning",
-      "description": "Summary of painted zones: cells per zone type with occupied/empty split, whole-city or within a radius. Empty zoned cells are where buildings will grow.",
+      "name": "zoning",
+      "description": "Aggregated summary of painted zones (counts only, never per-cell rows): cells per zone type with occupied/empty split, whole-city or within an optional x/z/radius. Empty zoned cells are where buildings will grow. Whole-city counts are cheap and safe to call.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1071,6 +1126,7 @@
           },
           "radius": {
             "type": "number",
+            "minimum": 8,
             "description": "Radius in meters (with x/z)"
           }
         },
@@ -1094,11 +1150,15 @@
       "response": "json"
     },
     {
-      "name": "cs2_notifications",
-      "description": "All active in-world warning icons (no electricity, no water, garbage piling up, abandoned buildings, high rent...) with type counts, locations and target entities. The primary way to discover problems. Hard max 128 detail items; countsByType is always complete; truncated=true when details were cut.",
+      "name": "notifications",
+      "description": "All active in-world warning icons (no electricity, no water, garbage piling up, abandoned buildings, high rent...) with type counts, locations and target entities. The primary way to discover problems. Optional 'type' filters the detailed items by notification type name substring (countsByType always stays complete). Hard max 128 detail items; truncated=true when details were cut.",
       "parameters": {
         "type": "object",
         "properties": {
+          "type": {
+            "type": "string",
+            "description": "Notification type name substring filter (case-insensitive, optional)"
+          },
           "limit": {
             "type": "integer",
             "minimum": 1,
@@ -1111,6 +1171,10 @@
       "route": "/city/notifications",
       "query": [
         {
+          "key": "type",
+          "arg": "type"
+        },
+        {
           "key": "limit",
           "arg": "limit"
         }
@@ -1118,8 +1182,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_inspect",
-      "description": "Detail view of one entity (building/road) by index+version: prefab, position, status flags (abandoned/condemned/destroyed), renters with citizen/employee counts. Like clicking a building in game.",
+      "name": "inspect",
+      "description": "Detail view of one entity (building/road) by index+version: prefab, position, status flags (abandoned/condemned/destroyed), renters with citizen/employee counts, and for buildings the lot footprint (lotSize in 8m cells / footprintMeters). Like clicking a building in game.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1151,7 +1215,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_get_loan",
+      "name": "get_loan",
       "description": "Current loan principal, daily interest rate, daily payment and the city's creditworthiness (max borrowable).",
       "parameters": {
         "type": "object",
@@ -1163,7 +1227,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_loan",
+      "name": "set_loan",
       "description": "Set the city's loan principal: higher than current = borrow more (cash added to treasury), lower = repay, 0 = repay fully. Clamped to creditworthiness. Interest accrues daily.",
       "parameters": {
         "type": "object",
@@ -1188,7 +1252,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_get_fees",
+      "name": "get_fees",
       "description": "Current price the city charges per service (electricity, water, healthcare, education levels, garbage, parking, public transport...) with slider ranges and estimated monthly income per fee.",
       "parameters": {
         "type": "object",
@@ -1200,14 +1264,14 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_fee",
-      "description": "Set the fee/price for one service resource (name from cs2_get_fees). Higher fees raise income but reduce usage and citizen happiness.",
+      "name": "set_fee",
+      "description": "Set the fee/price for one service resource (name from get_fees). Higher fees raise income but reduce usage and citizen happiness.",
       "parameters": {
         "type": "object",
         "properties": {
           "resource": {
             "type": "string",
-            "description": "Resource name from cs2_get_fees, e.g. 'Electricity'"
+            "description": "Resource name from get_fees, e.g. 'Electricity'"
           },
           "fee": {
             "type": "number",
@@ -1233,8 +1297,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_list_objects",
-      "description": "List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Use the entity id with cs2_demolish to remove them.",
+      "name": "list_objects",
+      "description": "List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Use the entity id with demolish to remove them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1289,8 +1353,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_run_simulation",
-      "description": "Unpause and run the simulation at the given speed, auto-pausing after the requested number of in-game hours. Blocks until the timed run finishes (or cancel=true). Do NOT poll cs2_game_state waiting for it. Prefer short runs (0.5-2 hours) while building. The core loop for autonomous mayoring: act, run time forward, observe results.",
+      "name": "agent_advance_time",
+      "description": "Unpause and run the simulation at the given speed, auto-pausing after the requested number of in-game hours. The call waits up to the configured max sim-wait (progress is shown in the chat), then returns with the final game state; if it did not finish in time the response says so and you should call again with fewer hours. Do NOT poll game_state waiting for it. Prefer short runs (0.5-2 hours) while building. cancel=true stops a timed run and pauses now.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1332,7 +1396,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_save_game",
+      "name": "save_game",
       "description": "Trigger a manual save (asynchronous). Use before large construction batches as a safety net. Default name is timestamped 'CS2MCP ...'.",
       "parameters": {
         "type": "object",
@@ -1354,7 +1418,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_tiles_info",
+      "name": "tiles_info",
       "description": "Owned/total map tiles, tiles available to purchase and upkeep settings. (Purchasing via API arrives in v0.9.)",
       "parameters": {
         "type": "object",
@@ -1366,7 +1430,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_list_districts",
+      "name": "list_districts",
       "description": "All districts with entity id, center position, polygon size and active policy count.",
       "parameters": {
         "type": "object",
@@ -1378,7 +1442,7 @@
       "response": "json"
     },
     {
-      "name": "cs2_create_district",
+      "name": "create_district",
       "description": "Draw a district over an area by polygon corners (3-32 points, world meters). Buildings and roads inside get assigned to it; district policies can then be applied to just that area.",
       "parameters": {
         "type": "object",
@@ -1410,8 +1474,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_district_policies",
-      "description": "Policies available for one district (speed limits, parking fees, combustion ban...) with active/locked state. District from cs2_list_districts.",
+      "name": "district_policies",
+      "description": "Policies available for one district (speed limits, parking fees, combustion ban...) with active/locked state. District from list_districts.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1443,8 +1507,8 @@
       "response": "json"
     },
     {
-      "name": "cs2_set_district_policy",
-      "description": "Activate/deactivate a policy on one district (policy name from cs2_district_policies).",
+      "name": "set_district_policy",
+      "description": "Activate/deactivate a policy on one district (policy name from district_policies).",
       "parameters": {
         "type": "object",
         "properties": {
