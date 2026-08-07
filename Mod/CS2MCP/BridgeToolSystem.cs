@@ -354,12 +354,20 @@ namespace CS2MCP
                         note = "upgrade applied via the tool pipeline; the segment is recreated with the new composition",
                     });
                 case OperationKind.Net:
+                    float? widthM = null;
+                    if (EntityManager.HasComponent<NetGeometryData>(m_PendingPrefabEntity))
+                    {
+                        widthM = (float?)Math.Round(
+                            EntityManager.GetComponentData<NetGeometryData>(m_PendingPrefabEntity).m_DefaultWidth,
+                            1);
+                    }
                     return BridgeResponse.Json(new
                     {
                         placed = true,
                         prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
                         start = new { x = m_PendingPosition.x, z = m_PendingPosition.z },
                         end = new { x = m_PendingEnd.x, z = m_PendingEnd.z },
+                        widthM,
                         note = "committed this frame; verify via /city/roads or /screenshot",
                     });
                 case OperationKind.Area:
@@ -371,6 +379,18 @@ namespace CS2MCP
                         note = "area committed this frame; list districts via /districts",
                     });
                 default:
+                    object lotSize = null;
+                    object footprintMeters = null;
+                    if (EntityManager.HasComponent<BuildingData>(m_PendingPrefabEntity))
+                    {
+                        int2 lot = EntityManager.GetComponentData<BuildingData>(m_PendingPrefabEntity).m_LotSize;
+                        lotSize = new { x = lot.x, z = lot.y };
+                        footprintMeters = new
+                        {
+                            x = (float)Math.Round(lot.x * 8f, 1),
+                            z = (float)Math.Round(lot.y * 8f, 1),
+                        };
+                    }
                     return BridgeResponse.Json(new
                     {
                         placed = true,
@@ -381,6 +401,8 @@ namespace CS2MCP
                             y = m_PendingPosition.y,
                             z = m_PendingPosition.z,
                         },
+                        lotSize,
+                        footprintMeters,
                         note = "committed this frame; verify via /city/buildings or /screenshot",
                     });
             }
@@ -400,7 +422,7 @@ namespace CS2MCP
                 },
                 rotation = m_ProbeRotationDegrees,
                 attemptsTried = m_ProbeTried,
-                note = "validated by the game's placement validation; call cs2_place_building with these exact coordinates",
+                note = "validated by the game's placement validation; call place_building with these exact coordinates",
             });
         }
 

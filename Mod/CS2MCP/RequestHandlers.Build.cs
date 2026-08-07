@@ -15,6 +15,8 @@ namespace CS2MCP
     /// </summary>
     public sealed partial class RequestHandlers
     {
+        private const float kFootprintCellSize = 8f;
+
         private EntityQuery m_BuildingPrefabQuery;
         private bool m_BuildingPrefabQueryCreated;
         private EntityQuery m_RoadPrefabQuery;
@@ -185,6 +187,7 @@ namespace CS2MCP
                         start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
                         end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
                         length = curve.m_Length,
+                        widthM = NetworkWidthM(EntityManager, prefabRef.m_Prefab),
                         distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
                     };
                     if (found.Count < limit)
@@ -295,11 +298,40 @@ namespace CS2MCP
                     total++;
                     if (results.Count < limit)
                     {
+                        object lotSize = null;
+                        object footprintMeters = null;
+                        float? widthM = null;
+                        if (EntityManager.HasComponent<BuildingData>(entity))
+                        {
+                            int2 lot = EntityManager.GetComponentData<BuildingData>(entity).m_LotSize;
+                            lotSize = new { x = lot.x, z = lot.y };
+                            footprintMeters = new
+                            {
+                                x = (float)Math.Round(lot.x * kFootprintCellSize, 1),
+                                z = (float)Math.Round(lot.y * kFootprintCellSize, 1),
+                            };
+                        }
+                        else if (EntityManager.HasComponent<ObjectGeometryData>(entity))
+                        {
+                            float3 size = EntityManager.GetComponentData<ObjectGeometryData>(entity).m_Size;
+                            footprintMeters = new
+                            {
+                                x = (float)Math.Round(size.x, 1),
+                                z = (float)Math.Round(size.z, 1),
+                            };
+                        }
+                        if (EntityManager.HasComponent<NetGeometryData>(entity))
+                        {
+                            widthM = EntityManager.GetComponentData<NetGeometryData>(entity).m_DefaultWidth;
+                        }
                         results.Add(new
                         {
                             name = prefab.name,
                             type = prefab.GetType().Name,
                             locked = IsLocked(entity),
+                            lotSize,
+                            footprintMeters,
+                            widthM,
                         });
                     }
                 }
@@ -601,10 +633,14 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("query", out string search);
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
+            const int hardMax = 128;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
+            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
+            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
+            float2 center = new float2(x, z);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var results = new List<object>();
+            var found = new List<(float distance, object item)>();
             int total = 0;
             using (NativeArray<Entity> entities = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
             {
@@ -618,24 +654,79 @@ namespace CS2MCP
                     {
                         continue;
                     }
-                    total++;
-                    if (results.Count < limit)
+                    Transform transform = EntityManager.GetComponentData<Transform>(entity);
+                    if (hasCenter && math.distance(transform.m_Position.xz, center) > radius)
                     {
-                        Transform transform = EntityManager.GetComponentData<Transform>(entity);
-                        results.Add(new
+                        continue;
+                    }
+                    total++;
+                    float distance = hasCenter ? math.distance(transform.m_Position.xz, center) : 0f;
+                    object lotSize = null;
+                    object footprintMeters = null;
+                    if (EntityManager.HasComponent<BuildingData>(prefabRef.m_Prefab))
+                    {
+                        int2 lot = EntityManager.GetComponentData<BuildingData>(prefabRef.m_Prefab).m_LotSize;
+                        lotSize = new { x = lot.x, z = lot.y };
+                        footprintMeters = new
                         {
-                            entity = new { index = entity.Index, version = entity.Version },
-                            prefab = name,
-                            isSubBuilding = EntityManager.HasComponent<Game.Common.Owner>(entity),
-                            position = new
+                            x = (float)Math.Round(lot.x * kFootprintCellSize, 1),
+                            z = (float)Math.Round(lot.y * kFootprintCellSize, 1),
+                        };
+                    }
+                    var item = new
+                    {
+                        entity = new { index = entity.Index, version = entity.Version },
+                        prefab = name,
+                        isSubBuilding = EntityManager.HasComponent<Game.Common.Owner>(entity),
+                        position = new
+                        {
+                            x = transform.m_Position.x,
+                            y = transform.m_Position.y,
+                            z = transform.m_Position.z,
+                        },
+                        lotSize,
+                        footprintMeters,
+                        distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
+                    };
+                    if (found.Count < limit)
+                    {
+                        found.Add((distance, item));
+                    }
+                    else if (hasCenter)
+                    {
+                        int worst = 0;
+                        for (int j = 1; j < found.Count; j++)
+                        {
+                            if (found[j].distance > found[worst].distance)
                             {
-                                x = transform.m_Position.x,
-                                y = transform.m_Position.y,
-                                z = transform.m_Position.z,
-                            },
-                        });
+                                worst = j;
+                            }
+                        }
+                        if (distance < found[worst].distance)
+                        {
+                            found[worst] = (distance, item);
+                        }
                     }
                 }
+            }
+
+            if (hasCenter && found.Count > 1)
+            {
+                for (int i = 0; i < found.Count - 1; i++)
+                {
+                    for (int j = i + 1; j < found.Count; j++)
+                    {
+                        if (found[j].distance < found[i].distance)
+                        {
+                            (found[i], found[j]) = (found[j], found[i]);
+                        }
+                    }
+                }
+            }
+            var results = new List<object>(found.Count);
+            foreach ((_, object item) in found)
+            {
+                results.Add(item);
             }
 
             return BridgeResponse.Json(new
@@ -645,11 +736,22 @@ namespace CS2MCP
                 limit,
                 truncated = total > results.Count,
                 warning = total > results.Count
-                    ? $"too many results: {total} buildings match, only {results.Count} returned; add a query filter, or paginate."
+                    ? $"too many results: {total} buildings match, only {results.Count} returned; shrink radius / add query filter, or paginate."
                     : null,
-                note = "hard max 128; use entity index+version with /build/demolish",
+                note = "hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
                 buildings = results,
             });
+        }
+
+        private static float? NetworkWidthM(EntityManager entityManager, Entity prefabEntity)
+        {
+            if (!entityManager.HasComponent<NetGeometryData>(prefabEntity))
+            {
+                return null;
+            }
+            return (float?)Math.Round(
+                entityManager.GetComponentData<NetGeometryData>(prefabEntity).m_DefaultWidth,
+                1);
         }
 
         private BridgeResponse Demolish(BridgeRequest request)

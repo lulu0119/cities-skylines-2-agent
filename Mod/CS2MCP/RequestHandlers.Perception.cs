@@ -518,11 +518,13 @@ namespace CS2MCP
             }
 
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
+            string typeFilter = request.Query.TryGetValue("type", out string rawType) ? rawType : null;
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
 
             var counts = new Dictionary<string, int>();
             var items = new List<object>();
             int total = 0;
+            int matched = 0;
             using (NativeArray<Entity> icons = IconQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity iconEntity in icons)
@@ -532,6 +534,12 @@ namespace CS2MCP
                     string type = prefab != null ? prefab.name : "<unknown>";
                     total++;
                     counts[type] = counts.TryGetValue(type, out int c) ? c + 1 : 1;
+                    if (!string.IsNullOrEmpty(typeFilter)
+                        && type.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+                    matched++;
                     if (items.Count < limit)
                     {
                         object target = null;
@@ -560,14 +568,16 @@ namespace CS2MCP
             return BridgeResponse.Json(new
             {
                 total,
+                matched,
                 returned = items.Count,
                 limit,
-                truncated = total > items.Count,
-                warning = total > items.Count
-                    ? $"too many icons: {total} notifications total, only {items.Count} details returned; countsByType is still complete. Raise limit (max 128) or narrow the query."
+                filterType = typeFilter,
+                truncated = matched > items.Count,
+                warning = matched > items.Count
+                    ? $"too many icons: {matched} notifications match, only {items.Count} details returned; countsByType is still complete. Raise limit (max 128) or narrow the type filter."
                     : null,
                 countsByType = counts,
-                note = "in-world warning icons (no electricity/water, garbage piling, abandoned...); hard max 128; use target with /entity/inspect",
+                note = "in-world warning icons (no electricity/water, garbage piling, abandoned...); hard max 128; total/countsByType are always complete, matched respects the type filter; use target with /entity/inspect",
                 notifications = items,
             });
         }
@@ -598,6 +608,17 @@ namespace CS2MCP
             {
                 PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab);
                 result["prefab"] = prefab != null ? prefab.name : null;
+                Entity prefabEntity = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                if (EntityManager.HasComponent<BuildingData>(prefabEntity))
+                {
+                    int2 lot = EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize;
+                    result["lotSize"] = new { x = lot.x, z = lot.y };
+                    result["footprintMeters"] = new
+                    {
+                        x = (float)Math.Round(lot.x * kFootprintCellSize, 1),
+                        z = (float)Math.Round(lot.y * kFootprintCellSize, 1),
+                    };
+                }
             }
             if (EntityManager.HasComponent<Game.Objects.Transform>(entity))
             {
