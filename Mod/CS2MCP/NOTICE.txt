@@ -2,8 +2,15 @@ CitiesSkylines2Agent includes an inlined, adapted copy of the CS2MCP bridge
 (https://github.com/LancerComet/cities-skylines-2-mcp), Copyright (c) LancerComet,
 licensed under the Apache License, Version 2.0 (see LICENSE-CS2MCP.txt).
 
-The bridge's HTTP boundary was replaced with an in-process ToolCall -> ToolResult
-path; tool definitions and request handlers are otherwise kept as-is.
+Modifications by the CitiesSkylines2Agent project:
+- The bridge's HTTP boundary was replaced with an in-process ToolCall -> ToolResult
+  path (BridgeSystem + AgentToolBridge); no HTTP server ships in the mod.
+- Tool definitions are now owned by this mod (Mod/Agent/ToolCatalog.json) and are
+  no longer generated from the upstream MCP server. Some tools were renamed,
+  their parameter schemas were tightened, and descriptions were aligned with the
+  actual implementation.
+- The standalone MCP server entry point (index.ts / extract-tools.mjs) is
+  preserved for reference under archive/cs2mcp-server/.
 
 CreateDefinitions.cs contains portions derived from game code:
 Copyright (c) Colossal Order and Paradox Interactive.
