@@ -29,7 +29,7 @@ namespace CitiesSkylines2Agent.Agent
     /// <summary>UI-facing event emitted by the agent loop.</summary>
     public sealed class AgentUiEvent
     {
-        public string Kind;      // status|delta|tool|user|error|compact|turn
+        public string Kind;      // status|delta|tool|user|error|compact|turn|progress
         public string Text;
         public string Tool;
         public AgentStatus Status;
@@ -65,13 +65,13 @@ namespace CitiesSkylines2Agent.Agent
         private const string SystemPrompt = @"You are the in-game AI city mayor assistant for Cities: Skylines 2, running inside the game process. Your goal is to help the player manage the city and to autonomously execute tasks over long horizons.
 
 Working style:
-1. Observe briefly first (cs2_game_state / cs2_city_overview / cs2_demand / cs2_screenshot), then act. Do not repeat the same read tool more than twice without a write. cs2_terrain / cs2_gridmap require a map range and return compact 8×8 samples (not full arrays).
-2. Writing operations (build / demolish / change taxes / change policies) must happen while the game is paused; the bridge auto-pauses before writes.
-3. Before destructive actions (cs2_demolish), list the targets and explain why.
-4. Use cs2_screenshot to verify your work; use cs2_set_camera to inspect the city.
+1. Observe briefly first (game_state / city_overview / demand / screenshot), then act. Do not repeat the same read tool more than twice without a write. terrain / gridmap require a map range and return compact 8×8 samples (not full arrays).
+2. No tool requires the game to be paused. The game validates construction while the simulation runs; if a build/zone/upgrade call fails, the world changed between your read and the write — retry with find_placement or a nearby position instead of repeating the same call.
+3. Before destructive actions (demolish), list the targets and explain why.
+4. Use screenshot to verify your work; use set_camera to inspect the city.
 5. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
 6. End every turn with a concise summary (what was done, results, next steps).
-7. Use cs2_run_simulation to advance time; it blocks until the timed run finishes and auto-pauses. Never poll cs2_game_state in a loop waiting for simulation.
+7. Use agent_advance_time to advance time; it waits (progress is shown in the chat), auto-pauses and returns the final state. Never poll game_state in a loop waiting for simulation.
 8. Prefer place / road / zone tools that change the city over endless prefab listing and state reads. For roads: short segments on owned land near existing nodes; e1/e2 are elevation meters, never entity ids.
 
 Context blocks (map pins / selected networks) arrive as system messages and are the player's precise positions or targets; prefer them over guessing.";
@@ -134,6 +134,8 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         private string m_TurnLastToolSignature = "";
         private int m_TurnIdenticalToolCount;
         private string m_ContextSignature = "";
+        private string m_SkillsRendered = "";
+        private int m_SkillsMessageIndex = -1;
         private bool m_Disposed;
 
         public AgentLoop()
@@ -353,6 +355,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         /// </summary>
         private void InjectContextBlocks()
         {
+            EnsureSkillsInjected();
             string signature = string.Join(",", ContextBlockStore.Blocks.ConvertAll(b => b.Id));
             if (signature == m_ContextSignature)
             {
@@ -371,6 +374,51 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     "Player context blocks:\n" + rendered));
             }
             m_ContextSignature = signature;
+        }
+
+        /// <summary>
+        /// Injects the enabled skills (from Setting.EnabledSkills) as one system
+        /// message and swaps it in place when the set or content changes.
+        /// </summary>
+        private void EnsureSkillsInjected()
+        {
+            string rendered = SkillStore.RenderEnabled(ParseEnabledSkills());
+            if (string.Equals(rendered, m_SkillsRendered, StringComparison.Ordinal))
+            {
+                return;
+            }
+            lock (m_Lock)
+            {
+                if (m_SkillsMessageIndex >= 0 && m_SkillsMessageIndex < m_History.Count)
+                {
+                    m_History.RemoveAt(m_SkillsMessageIndex);
+                }
+                if (!string.IsNullOrWhiteSpace(rendered))
+                {
+                    m_History.Add(new ChatMessage(ChatRole.System, "Active skills:\n" + rendered));
+                    m_SkillsMessageIndex = m_History.Count - 1;
+                }
+                else
+                {
+                    m_SkillsMessageIndex = -1;
+                }
+            }
+            m_SkillsRendered = rendered;
+        }
+
+        private static List<string> ParseEnabledSkills()
+        {
+            var names = new List<string>();
+            string raw = Setting.StaticEnabledSkills ?? "";
+            foreach (string part in raw.Split(','))
+            {
+                string name = part.Trim();
+                if (name.Length > 0)
+                {
+                    names.Add(name);
+                }
+            }
+            return names;
         }
 
         private void DrainPending(List<AgentInput> inputs)
@@ -515,10 +563,10 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     {
                         result = await InvokeMetaToolAsync(call.Name, argumentsJson, cancellationToken);
                     }
-                    else
-                    {
-                        ToolDefinition tool = ToolCatalog.Find(call.Name);
-                        if (tool == null)
+                else
+                {
+                    ToolDefinition tool = ToolCatalog.Find(call.Name);
+                    if (tool == null)
                         {
                             result = new ToolInvocationResult
                             {
@@ -528,7 +576,16 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                         }
                         else
                         {
-                            result = await AgentToolBridge.InvokeAsync(tool, argumentsJson, cancellationToken);
+                            Action<string> progress = null;
+                            if (string.Equals(call.Name, "agent_advance_time", StringComparison.Ordinal))
+                            {
+                                progress = text => Emit(new AgentUiEvent { Kind = "progress", Text = text });
+                            }
+                            result = await AgentToolBridge.InvokeAsync(
+                                tool,
+                                argumentsJson,
+                                cancellationToken,
+                                progress);
                         }
                     }
                 }
@@ -732,6 +789,8 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     m_History.Add(new ChatMessage(ChatRole.System, SystemPrompt));
                     m_History.Add(new ChatMessage(ChatRole.System, SummaryPrefix + summary));
                     m_History.AddRange(keptMessages);
+                    m_SkillsMessageIndex = -1;
+                    m_SkillsRendered = "";
                 }
                 m_EstimatedTokens = EstimateTokens(m_History);
 
@@ -1000,6 +1059,12 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             var tools = new List<AITool>();
             foreach (ToolDefinition tool in ToolCatalog.Tools)
             {
+                if (!Setting.StaticEnableVisionTools &&
+                    (string.Equals(tool.Name, "screenshot", StringComparison.Ordinal) ||
+                     string.Equals(tool.Name, "set_camera", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
                 tools.Add(AIFunctionFactory.CreateDeclaration(
                     tool.Name,
                     tool.Description,

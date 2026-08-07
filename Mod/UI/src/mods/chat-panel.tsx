@@ -31,7 +31,7 @@ type AgentState = {
 };
 
 type AgentEvent = {
-  kind: "delta" | "tool" | "status" | "user" | "error" | "compact" | "turn";
+  kind: "delta" | "tool" | "status" | "user" | "error" | "compact" | "turn" | "progress";
   text: string;
   tool?: string;
   status?: string;
@@ -183,6 +183,9 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
         if (event.status === "Idle" || event.status === "Interrupted") {
           finalizeStream();
         }
+        break;
+      case "progress":
+        setStatus(event.text);
         break;
       case "error":
         finalizeStream();

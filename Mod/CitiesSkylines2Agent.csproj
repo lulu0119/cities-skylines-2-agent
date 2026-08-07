@@ -93,6 +93,7 @@
 
 	<ItemGroup>
 		<EmbeddedResource Include="Agent\ToolCatalog.json" />
+		<EmbeddedResource Include="Agent\Skills\**\SKILL.md" />
 	</ItemGroup>
 
 	<ItemGroup>

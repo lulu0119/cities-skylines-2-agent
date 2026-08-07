@@ -16,7 +16,7 @@ Gameface UI (chat)  ↔  Cohtml bindings  ↔  C# agent loop + ToolQueueSystem (
 | `archive/` | Offline POCs + frozen M1 smoke — do not treat as the product root |
 | `docs/` | Dated notes under `guide/` / `research/` / `ops/` — see `docs/README.md` |
 
-**Provisional agent loop:** C# `IChatClient` (MEAI) + hand-rolled function-calling / ReAct. **Not** Gameface apeira/xsai, Semantic Kernel, or Agent Framework first. Tools always enqueue to the simulation main thread; pause-first. Details: `docs/research/2026-08-06-csharp-agent-runtimes.md`.
+**Provisional agent loop:** C# `IChatClient` (MEAI) + hand-rolled function-calling / ReAct. **Not** Gameface apeira/xsai, Semantic Kernel, or Agent Framework first. Tools always enqueue to the simulation main thread; no forced pausing — the game validates construction while the simulation runs, and blocked calls retry via `find_placement`. Details: `docs/research/2026-08-06-csharp-agent-runtimes.md`.
 
 **Hard constraints**
 

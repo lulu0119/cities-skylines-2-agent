@@ -7,13 +7,14 @@ using Game.Settings;
 namespace CitiesSkylines2Agent
 {
     [FileLocation(nameof(CitiesSkylines2Agent))]
-    [SettingsUIGroupOrder(kProviderGroup, kAgentGroup)]
-    [SettingsUIShowGroupName(kProviderGroup, kAgentGroup)]
+    [SettingsUIGroupOrder(kProviderGroup, kAgentGroup, kToolsGroup)]
+    [SettingsUIShowGroupName(kProviderGroup, kAgentGroup, kToolsGroup)]
     public class Setting : ModSetting
     {
         public const string kSection = "Main";
         public const string kProviderGroup = "Provider";
         public const string kAgentGroup = "Agent";
+        public const string kToolsGroup = "Tools";
 
         public static Setting Instance { get; set; }
 
@@ -57,6 +58,19 @@ namespace CitiesSkylines2Agent
         [SettingsUISlider(min = 1f, max = 200f, step = 1f)]
         public int MaxToolRounds { get; set; } = 30;
 
+        // ---- Tool surface ------------------------------------------------
+
+        [SettingsUISection(kSection, kToolsGroup)]
+        public bool EnableVisionTools { get; set; } = true;
+
+        [SettingsUISection(kSection, kToolsGroup)]
+        [SettingsUISlider(min = 30f, max = 600f, step = 10f)]
+        public int MaxSimWaitSeconds { get; set; } = 180;
+
+        [SettingsUISection(kSection, kToolsGroup)]
+        [SettingsUITextInput]
+        public string EnabledSkills { get; set; } = "utility-networks";
+
         // ---- Static facade for the agent loop ----------------------------
 
         public static string StaticProvider => Instance?.Provider ?? "OpenAI-compatible";
@@ -75,6 +89,9 @@ namespace CitiesSkylines2Agent
         public static double StaticCompactThreshold => Instance?.CompactThreshold ?? 0.85;
         public static int StaticKeepTailMessages => Instance?.KeepTailMessages ?? 20;
         public static int StaticMaxToolRounds => Instance?.MaxToolRounds ?? 30;
+        public static bool StaticEnableVisionTools => Instance?.EnableVisionTools ?? true;
+        public static int StaticMaxSimWaitSeconds => Instance?.MaxSimWaitSeconds ?? 180;
+        public static string StaticEnabledSkills => Instance?.EnabledSkills ?? "utility-networks";
 
         public override void SetDefaults()
         {
@@ -86,6 +103,9 @@ namespace CitiesSkylines2Agent
             CompactThreshold = 0.85f;
             KeepTailMessages = 20;
             MaxToolRounds = 30;
+            EnableVisionTools = true;
+            MaxSimWaitSeconds = 180;
+            EnabledSkills = "utility-networks";
         }
     }
 
@@ -106,6 +126,7 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kProviderGroup), "Model provider" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kAgentGroup), "Agent loop" },
+                { m_Setting.GetOptionGroupLocaleID(Setting.kToolsGroup), "Tools" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Provider)), "Provider name" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Display name only (e.g. OpenAI, DeepSeek). The client is always built from Endpoint + API key." },
@@ -124,6 +145,13 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.KeepTailMessages)), "Number of newest messages left verbatim when compaction runs." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.MaxToolRounds)), "Max tool rounds per turn" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.MaxToolRounds)), "Safety cap on model+tool rounds in one user turn." },
+
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EnableVisionTools)), "Vision tools (screenshots)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EnableVisionTools)), "Expose image-returning tools (screenshot, set_camera). Turn off when the configured model cannot see images; the tools are then hidden from the model." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.MaxSimWaitSeconds)), "Max sim-run wait (seconds)" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.MaxSimWaitSeconds)), "How long agent_advance_time waits for the timed run before returning a 'still in progress' result. Progress is shown in the chat while waiting." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EnabledSkills)), "Enabled skills" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EnabledSkills)), "Comma-separated skill names from the Skills folder (<user data>/Mods/CitiesSkylines2Agent/Skills). Create a subfolder with SKILL.md to add your own skill." },
             };
         }
 
