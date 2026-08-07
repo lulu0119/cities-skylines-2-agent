@@ -52,6 +52,13 @@ namespace CitiesSkylines2Agent.Agent
                 OnSend,
                 ValueReaders.Create<string>()));
             AddBinding(new TriggerBinding(Group, "interrupt", OnInterrupt));
+            // #region agent log
+            AddBinding(new TriggerBinding<string>(
+                Group,
+                "debugLog",
+                OnDebugLog,
+                ValueReaders.Create<string>()));
+            // #endregion
 
             PushState();
         }
@@ -68,6 +75,13 @@ namespace CitiesSkylines2Agent.Agent
         {
             AgentLoop.EnsureCreated().Interrupt();
         }
+
+        // #region agent log
+        private void OnDebugLog(string json)
+        {
+            Debug548a1a.LogUiPayload(json ?? "{}");
+        }
+        // #endregion
 
         private void OnAgentEvent(AgentUiEvent agentEvent)
         {

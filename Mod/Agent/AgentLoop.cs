@@ -156,6 +156,13 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         /// <summary>Queue a user message; injected after the current tool round.</summary>
         public void Send(string text)
         {
+            // #region agent log
+            Debug548a1a.Log(
+                "H-DUP-A",
+                "AgentLoop.Send",
+                "csharp_emit_user",
+                "{\"textLen\":" + (text ?? "").Length + "}");
+            // #endregion
             m_Pending.Writer.TryWrite(new AgentInput { Text = text ?? "" });
             m_Observability.InterleavedQueued(text ?? "");
             Emit(new AgentUiEvent { Kind = "user", Text = text ?? "" });
@@ -181,6 +188,19 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         {
             lock (m_Lock)
             {
+                // Tool results only carry CallId; resolve names from prior calls.
+                var callNames = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (ChatMessage message in m_History)
+                {
+                    foreach (AIContent content in message.Contents)
+                    {
+                        if (content is FunctionCallContent call && !string.IsNullOrEmpty(call.CallId))
+                        {
+                            callNames[call.CallId] = call.Name ?? call.CallId;
+                        }
+                    }
+                }
+
                 var messages = new JsonArray();
                 foreach (ChatMessage message in m_History)
                 {
@@ -194,16 +214,48 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                         : message.Role == ChatRole.Tool ? "tool"
                         : "user";
                     string text = message.Text ?? "";
-                    if (role == "assistant" && string.IsNullOrWhiteSpace(text) &&
-                        message.Contents.Count > 0 && string.IsNullOrEmpty(ToolCallNames(message)))
+                    string tool = null;
+
+                    if (role == "tool")
                     {
-                        continue;
+                        foreach (AIContent content in message.Contents)
+                        {
+                            if (content is FunctionResultContent result)
+                            {
+                                if (!string.IsNullOrEmpty(result.CallId) &&
+                                    callNames.TryGetValue(result.CallId, out string name))
+                                {
+                                    tool = name;
+                                }
+                                else
+                                {
+                                    tool = result.CallId ?? "tool";
+                                }
+                                text = result.Result?.ToString() ?? text;
+                                break;
+                            }
+                        }
+                        if (string.IsNullOrWhiteSpace(text) && string.IsNullOrEmpty(tool))
+                        {
+                            continue;
+                        }
+                        text = TruncateForLog(text ?? "", 800);
                     }
+                    else if (role == "assistant")
+                    {
+                        // Pure function-call turns are shown via the following tool rows.
+                        if (string.IsNullOrWhiteSpace(text))
+                        {
+                            continue;
+                        }
+                        tool = ToolCallNames(message);
+                    }
+
                     var entry = new JsonObject
                     {
                         ["role"] = role,
                         ["text"] = text,
-                        ["tool"] = ToolCallNames(message),
+                        ["tool"] = tool,
                     };
                     messages.Add(entry);
                 }
@@ -538,6 +590,9 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 }
 
                 Stopwatch timer = Stopwatch.StartNew();
+                // #region agent log
+                // Skip tool_start spam; only log slow/end results (H-BLK-K).
+                // #endregion
                 Emit(new AgentUiEvent
                 {
                     Kind = "tool",
@@ -591,6 +646,22 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 }
                 timer.Stop();
                 m_TurnFunctionCount++;
+                // #region agent log
+                if (timer.ElapsedMilliseconds >= 100)
+                {
+                    string blkId =
+                        string.Equals(call.Name, "screenshot", StringComparison.Ordinal) ? "H-BLK-B" :
+                        (call.Name != null && (call.Name.Contains("simulation") || call.Name.Contains("advance_time")))
+                            ? "H-BLK-A" : "H-BLK-C";
+                    Debug548a1a.Log(
+                        blkId,
+                        "AgentLoop.ExecuteToolCallsAsync",
+                        "tool_end_slow",
+                        "{\"tool\":\"" + (call.Name ?? "") +
+                        "\",\"ms\":" + timer.ElapsedMilliseconds +
+                        ",\"ok\":" + (result.Success ? "true" : "false") + "}");
+                }
+                // #endregion
 
                 m_Observability.Function(
                     call.Name,

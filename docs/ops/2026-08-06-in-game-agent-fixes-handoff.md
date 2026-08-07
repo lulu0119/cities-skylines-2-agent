@@ -6,6 +6,8 @@
 
 Related research: [agent-runtime-compression-observability](../research/2026-08-06-agent-runtime-compression-observability.md).
 
+**Follow-on (2026-08-07):** chat UI debug, duplicate/black-screen hypotheses, Windows-MCP + Gameface CDP — [2026-08-07-chat-ui-debug-computer-use-handoff.md](./2026-08-07-chat-ui-debug-computer-use-handoff.md).
+
 ---
 
 ## What landed (code)

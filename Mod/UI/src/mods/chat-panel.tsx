@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode } from "react";
 import { bindEvent, bindValue, trigger, useValue } from "cs2/api";
-import { Button, Panel, Portal } from "cs2/ui";
+import { Button, Panel, Portal, Scrollable } from "cs2/ui";
 import mod from "mod.json";
 
-type ChatRole = "user" | "assistant" | "tool" | "system" | "error";
+type ChatRole = "user" | "assistant" | "system" | "error";
 
 type UiMessage = {
   id: number;
   role: ChatRole;
   text: string;
-  tool?: string;
   streaming?: boolean;
 };
 
@@ -25,8 +24,6 @@ type AgentState = {
   busy: boolean;
   pendingInputs: number;
   session: string;
-  turn: string;
-  contextBlocks: unknown[];
   messages: StateMessage[];
 };
 
@@ -37,11 +34,36 @@ type AgentEvent = {
   status?: string;
 };
 
+type ChatStore = {
+  session: string;
+  messages: UiMessage[];
+  nextId: number;
+  status: string;
+  busy: boolean;
+  pending: number;
+  mounts: number;
+};
+
 const state$ = bindValue<string>(mod.id, "state", "{}");
 const events$ = bindEvent<string>(mod.id, "event");
 
-// GameBottomRight is a narrow icon column; Portal + fixed px width escapes it
-// (M1 smoke: rem/% collapsed into a one-glyph vertical strip).
+const getStore = (): ChatStore => {
+  const root = window as Window & { __cs2AgentChat?: ChatStore };
+  if (!root.__cs2AgentChat) {
+    root.__cs2AgentChat = {
+      session: "",
+      messages: [],
+      nextId: 0,
+      status: "Idle",
+      busy: false,
+      pending: 0,
+      mounts: 0,
+    };
+  }
+  return root.__cs2AgentChat;
+};
+
+// Fixed placement — Portal escapes GameBottomRight; no Panel.draggable (can hide the panel).
 const rootStyle: CSSProperties = {
   position: "absolute",
   right: "24px",
@@ -50,24 +72,6 @@ const rootStyle: CSSProperties = {
   width: "480px",
   minWidth: "480px",
   pointerEvents: "auto",
-};
-
-const listStyle: CSSProperties = {
-  height: "220px",
-  overflow: "auto",
-};
-
-const lineStyle: CSSProperties = {
-  marginBottom: "6px",
-  fontSize: "13px",
-  lineHeight: 1.35,
-};
-
-const toolStyle: CSSProperties = {
-  ...lineStyle,
-  padding: "4px 8px",
-  borderRadius: "4px",
-  backgroundColor: "rgba(120, 160, 220, 0.15)",
 };
 
 const statusStyle: CSSProperties = {
@@ -83,7 +87,6 @@ const composerStyle: CSSProperties = {
   display: "flex",
   flexDirection: "row",
   alignItems: "center",
-  gap: "8px",
   width: "100%",
 };
 
@@ -98,9 +101,10 @@ const inputStyle: CSSProperties = {
   backgroundColor: "rgba(0, 0, 0, 0.45)",
   color: "#f0f4fa",
   fontSize: "14px",
+  marginRight: "8px",
 };
 
-const sendStyle: CSSProperties = {
+const actionButtonStyle: CSSProperties = {
   flex: "0 0 auto",
   height: "36px",
   display: "inline-flex",
@@ -108,36 +112,118 @@ const sendStyle: CSSProperties = {
   justifyContent: "center",
   padding: "0 14px",
   lineHeight: "normal",
+  marginLeft: "4px",
+};
+
+const interruptStyle: CSSProperties = {
+  ...actionButtonStyle,
+  border: "1px solid rgba(255, 255, 255, 0.35)",
+  borderRadius: "4px",
+  backgroundColor: "rgba(0, 0, 0, 0.35)",
+  color: "#f0f4fa",
+  cursor: "pointer",
+};
+
+const lineStyle: CSSProperties = {
+  marginBottom: "6px",
+  fontSize: "13px",
+  lineHeight: 1.35,
+};
+
+const listStyle: CSSProperties = {
+  height: "220px",
+  width: "100%",
 };
 
 const roleLabel: Record<ChatRole, string> = {
   user: "You",
   assistant: "Agent",
-  tool: "Tool",
   system: "System",
   error: "Error",
 };
 
+const toUiMessages = (messages: StateMessage[]): UiMessage[] =>
+  messages
+    .filter(
+      (message) =>
+        message.role === "user" || message.role === "assistant" || message.role === "error",
+    )
+    .filter((message) => (message.text ?? "").trim().length > 0)
+    .map((message, index) => ({
+      id: index,
+      role: message.role as ChatRole,
+      text: message.text ?? "",
+    }));
+
+// #region agent log
+const debugLog = (
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+) => {
+  trigger(
+    mod.id,
+    "debugLog",
+    JSON.stringify({
+      sessionId: "548a1a",
+      runId: "post-fix",
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  );
+};
+// #endregion
+
 export const ChatPanel = ({ children }: { children?: ReactNode }) => {
+  const store = getStore();
   const [open, setOpen] = useState(true);
   const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [status, setStatus] = useState("Idle");
-  const [busy, setBusy] = useState(false);
-  const [pending, setPending] = useState(0);
-  const [session, setSession] = useState("");
+  const [messages, setMessages] = useState<UiMessage[]>(store.messages);
+  const [status, setStatus] = useState(store.status);
+  const [busy, setBusy] = useState(store.busy);
+  const [pending, setPending] = useState(store.pending);
+  const [session, setSession] = useState(store.session);
   const stateJson = useValue(state$);
-  const nextId = useRef(0);
-  const listRef = useRef<HTMLDivElement>(null);
+  const subscribed = useRef(false);
+
+  useEffect(() => {
+    store.mounts += 1;
+    // #region agent log
+    debugLog("H-DUP-C", "chat-panel.tsx:mount", "mounted", {
+      mounts: store.mounts,
+      session: store.session,
+      messageCount: store.messages.length,
+      open: true,
+    });
+    // #endregion
+  }, []);
+
+  const syncMessages = (next: UiMessage[]) => {
+    store.messages = next;
+    setMessages(next);
+  };
 
   const pushMessage = (message: Omit<UiMessage, "id">) => {
-    const id = nextId.current++;
-    setMessages((current) => [...current, { ...message, id }]);
+    const id = store.nextId++;
+    // #region agent log
+    if (message.role === "user") {
+      debugLog("H-DUP-A", "chat-panel.tsx:pushMessage", "ui_push", {
+        id,
+        role: message.role,
+        textLen: (message.text || "").length,
+      });
+    }
+    // #endregion
+    syncMessages([...store.messages, { ...message, id }]);
   };
 
   const finalizeStream = () => {
-    setMessages((current) =>
-      current.map((message) =>
+    syncMessages(
+      store.messages.map((message) =>
         message.streaming ? { ...message, streaming: false } : message,
       ),
     );
@@ -148,123 +234,129 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
       case "user":
         finalizeStream();
         pushMessage({ role: "user", text: event.text });
+        store.busy = true;
         setBusy(true);
         break;
       case "delta":
-        setMessages((current) => {
-          const next = [...current];
+        {
+          const next = [...store.messages];
           const last = next[next.length - 1];
           if (last && last.role === "assistant" && last.streaming) {
             next[next.length - 1] = { ...last, text: last.text + event.text };
           } else {
             next.push({
-              id: nextId.current++,
+              id: store.nextId++,
               role: "assistant",
               text: event.text,
               streaming: true,
             });
           }
-          return next;
-        });
-        setBusy(true);
+          syncMessages(next);
+          store.busy = true;
+          setBusy(true);
+        }
         break;
       case "tool":
-        finalizeStream();
-        pushMessage({
-          role: "tool",
-          text: event.text,
-          tool: event.tool ?? "tool",
-        });
+        store.busy = true;
         setBusy(true);
         break;
       case "status":
-        setStatus(event.status ?? event.text);
-        setBusy(event.status === "Thinking" || event.status === "Working");
+        store.status = event.status ?? event.text;
+        setStatus(store.status);
+        store.busy = event.status === "Thinking" || event.status === "Working";
+        setBusy(store.busy);
         if (event.status === "Idle" || event.status === "Interrupted") {
           finalizeStream();
         }
         break;
       case "progress":
+        store.status = event.text;
         setStatus(event.text);
         break;
       case "error":
         finalizeStream();
         pushMessage({ role: "error", text: event.text });
+        store.busy = false;
         setBusy(false);
         break;
       case "compact":
-        pushMessage({ role: "system", text: event.text });
         break;
       case "turn":
         finalizeStream();
+        store.busy = false;
         setBusy(false);
         break;
     }
   };
 
   useEffect(() => {
+    if (subscribed.current) {
+      return;
+    }
+    subscribed.current = true;
     const subscription = events$.subscribe((json) => {
-      try {
-        applyEvent(JSON.parse(json) as AgentEvent);
-      } catch {
-        // ignore malformed events
-      }
+      applyEvent(JSON.parse(json) as AgentEvent);
     });
-    return () => subscription.dispose();
+    return () => {
+      subscribed.current = false;
+      subscription.dispose();
+    };
   }, []);
 
   useEffect(() => {
-    let parsed: AgentState;
-    try {
-      parsed = JSON.parse(stateJson) as AgentState;
-    } catch {
-      return;
-    }
+    const parsed = JSON.parse(stateJson) as AgentState;
     if (!parsed.session) {
       return;
     }
-    if (parsed.session !== session || messages.length === 0) {
-      setSession(parsed.session);
-      setStatus(parsed.status);
-      setBusy(parsed.busy);
-      setPending(parsed.pendingInputs ?? 0);
-      setMessages(
-        (parsed.messages ?? [])
-          .filter((message) => message.role !== "system")
-          .map((message) => ({
-            id: nextId.current++,
-            role: message.role as ChatRole,
-            text: message.text,
-            tool: message.tool ?? undefined,
-          })),
-      );
-    } else {
-      setPending(parsed.pendingInputs ?? 0);
+    if (parsed.session === store.session) {
+      store.pending = parsed.pendingInputs ?? 0;
+      store.status = parsed.status;
+      store.busy = parsed.busy;
+      setPending(store.pending);
+      setStatus(store.status);
+      setBusy(store.busy);
+      return;
     }
-  }, [stateJson, session, messages.length]);
-
-  useEffect(() => {
-    const element = listRef.current;
-    if (element) {
-      element.scrollTop = element.scrollHeight;
+    // #region agent log
+    debugLog("H-DUP-C", "chat-panel.tsx:stateHydrate", "session_change", {
+      prevSession: store.session,
+      nextSession: parsed.session,
+      existingMessages: store.messages.length,
+      stateMessages: (parsed.messages ?? []).length,
+    });
+    // #endregion
+    store.session = parsed.session;
+    store.status = parsed.status;
+    store.busy = parsed.busy;
+    store.pending = parsed.pendingInputs ?? 0;
+    setSession(store.session);
+    setStatus(store.status);
+    setBusy(store.busy);
+    setPending(store.pending);
+    if (store.messages.length === 0) {
+      const hydrated = toUiMessages(parsed.messages ?? []);
+      store.nextId = hydrated.length;
+      syncMessages(hydrated);
     }
-  }, [messages, status]);
+  }, [stateJson]);
 
-  const send = () => {
+  const send = (source: "submit" | "button") => {
     const text = draft.trim();
     if (!text) {
       return;
     }
+    // #region agent log
+    debugLog("H-DUP-B", "chat-panel.tsx:send", "ui_send", { source, textLen: text.length });
+    // #endregion
     trigger(mod.id, "send", text);
-    finalizeStream();
-    pushMessage({ role: "user", text });
+    store.busy = true;
     setBusy(true);
     setDraft("");
   };
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    send();
+    send("submit");
   };
 
   return (
@@ -281,37 +373,37 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
                   <input
                     style={inputStyle}
                     value={draft}
-                    placeholder={
-                      busy
-                        ? "Type to interleave… (queued, injected after this round)"
-                        : "Message…"
-                    }
+                    placeholder={busy ? "Type to queue…" : "Message…"}
                     onChange={(event) => setDraft(event.target.value)}
                   />
-                  <Button variant="primary" style={sendStyle} onSelect={send}>
+                  {busy ? (
+                    <div
+                      style={interruptStyle}
+                      onClick={() => trigger(mod.id, "interrupt")}
+                    >
+                      Interrupt
+                    </div>
+                  ) : null}
+                  <Button
+                    variant="primary"
+                    style={actionButtonStyle}
+                    onSelect={() => send("button")}
+                  >
                     Send
                   </Button>
                 </form>
               }
             >
               <div style={statusStyle}>
-                {status}
-                {busy ? " · working" : ""}
-                {pending > 0 ? ` · ${pending} queued` : ""}
-                {session ? ` · ${session}` : ""}
+                {`${status}${busy ? " | working" : ""}${pending > 0 ? ` | ${pending} queued` : ""}${session ? ` | ${session}` : ""}`}
               </div>
-              <div ref={listRef} style={listStyle}>
+              <Scrollable vertical trackVisibility="scrollable" style={listStyle}>
                 {messages.map((message) => (
-                  <MessageLine key={message.id} message={message} />
+                  <div key={message.id} style={lineStyle}>
+                    {`${roleLabel[message.role]}: ${message.text}${message.streaming ? " ..." : ""}`}
+                  </div>
                 ))}
-              </div>
-              {busy && (
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  <Button variant="primary" onSelect={() => trigger(mod.id, "interrupt")}>
-                    Interrupt
-                  </Button>
-                </div>
-              )}
+              </Scrollable>
             </Panel>
           ) : (
             <Button variant="primary" onSelect={() => setOpen(true)}>
@@ -323,33 +415,3 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
     </>
   );
 };
-
-const MessageLine = ({ message }: { message: UiMessage }) => {
-  if (message.role === "tool") {
-    return (
-      <div style={toolStyle}>
-        <strong>⚙ {message.tool}</strong>
-        <pre
-          style={{
-            margin: "0.15rem 0 0",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-all",
-            maxHeight: "96px",
-            overflow: "auto",
-            font: "inherit",
-          }}
-        >
-          {message.text}
-        </pre>
-      </div>
-    );
-  }
-  return (
-    <div style={lineStyle}>
-      <strong>{roleLabel[message.role]}: </strong>
-      {message.text}
-      {message.streaming ? "▍" : ""}
-    </div>
-  );
-};
-
