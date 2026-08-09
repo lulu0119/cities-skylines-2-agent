@@ -28,3 +28,4 @@ Dated notes under `guide/` / `research/` / `ops/`. Frozen M1 smoke checklist liv
 | [scripts/2026-08-07-gameface-cdp/](./ops/scripts/2026-08-07-gameface-cdp/) | CDP probe/send/check helpers for `-uiDeveloperMode` :9444 |
 | [2026-08-07-sewage-handoff.md](./ops/2026-08-07-sewage-handoff.md) | Session handoff: agent sees sewage problem but never fixes it; `agent_advance_time` dispatch bug; proposed fixes |
 | [2026-08-08-windows-mcp-game-debug-loop.md](./ops/2026-08-08-windows-mcp-game-debug-loop.md) | Repeatable hands-off Steam/launcher/Gameface control, black-screen diagnosis, and real-machine acceptance loop |
+| [2026-08-09-10k-loop-task.md](./ops/2026-08-09-10k-loop-task.md) | Codex task brief: iterate launch/observe/diagnose/build until the in-game agent reaches 10k population |
