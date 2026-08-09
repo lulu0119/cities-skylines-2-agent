@@ -1,4 +1,4 @@
-namespace CitiesSkylines2Agent.Agent
+﻿namespace CitiesSkylines2Agent.Agent
 {
     internal sealed class OpenAIProfile : IProviderProfile
     {
@@ -15,7 +15,7 @@ namespace CitiesSkylines2Agent.Agent
 
             if (model.StartsWith("gpt-5.6") || model.Contains("gpt-5.6"))
             {
-                // Sol / Terra / Luna �� ȫϵ 1.05M context / 128K output / ֧Ԯ vision
+                // 1.05M context, 128K max output, vision
                 // https://developers.openai.com/api/docs/models/gpt-5.6-sol
                 return new ModelCapabilities
                 {

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Colossal;
 using Colossal.IO.AssetDatabase;
@@ -7,7 +7,6 @@ using Game.Settings;
 
 namespace CitiesSkylines2Agent
 {
-    /// <summary>Pre-configured provider options. Picking one auto-fills the endpoint.</summary>
     public enum ProviderKind
     {
         OpenAI,
@@ -27,11 +26,9 @@ namespace CitiesSkylines2Agent
 
         public static Setting Instance { get; set; }
 
-        public Setting(IMod mod) : base(mod)
-        {
-        }
+        public Setting(IMod mod) : base(mod) { }
 
-        // ---- Provider configuration -------------------------------------
+        // ---- Provider -------------------------------------
 
         [SettingsUISection(kSection, kProviderGroup)]
         public ProviderKind Provider { get; set; } = ProviderKind.OpenAI;
@@ -48,18 +45,17 @@ namespace CitiesSkylines2Agent
         [SettingsUITextInput]
         public string Model { get; set; } = "";
 
-        // ---- Agent loop configuration -----------------------------------
+        // ---- Agent ---------------------------------------
 
         [SettingsUISection(kSection, kAgentGroup)]
         public bool AutoStart { get; set; } = true;
 
         [SettingsUISection(kSection, kAgentGroup)]
-        [SettingsUITextInput]
-        public string StartupPrompt { get; set; } =
-            "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
+        public bool Continuous { get; set; } = true;
 
-        // ---- Hidden technical settings (not shown in UI) -----------------
+        // ---- Hidden --------------------------------------
 
+        public string StartupPrompt { get; set; } = "";
         public int WindowTokens { get; set; } = 200_000;
         public float CompactThreshold { get; set; } = 0.85f;
         public int KeepTailMessages { get; set; } = 20;
@@ -68,22 +64,16 @@ namespace CitiesSkylines2Agent
         public int MaxSimWaitSeconds { get; set; } = 180;
         public string EnabledSkills { get; set; } = "utility-networks";
 
-        // ---- Static facade for the agent loop ----------------------------
+        // ---- Static facade ---------------------------------
 
         public static ProviderKind StaticProvider => Instance?.Provider ?? ProviderKind.OpenAI;
         public static string StaticEndpoint => Instance?.Endpoint ?? "https://api.openai.com/v1";
         public static string StaticModel => Instance?.Model ?? "";
         public static bool StaticAutoStart => Instance?.AutoStart ?? true;
-        public static string StaticStartupPrompt => Instance?.StartupPrompt ??
-            "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
+        public static bool StaticContinuous => Instance?.Continuous ?? true;
+        public static string StaticStartupPrompt => Instance?.StartupPrompt ?? "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
 
-        public static string StaticApiKey
-        {
-            get
-            {
-                return Instance?.ApiKey ?? "";
-            }
-        }
+        public static string StaticApiKey => Instance?.ApiKey ?? "";
 
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
         public static double StaticCompactThreshold => Instance?.CompactThreshold ?? 0.85;
@@ -100,6 +90,7 @@ namespace CitiesSkylines2Agent
             ApiKey = "";
             Model = "";
             AutoStart = true;
+            Continuous = true;
             StartupPrompt = "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
             WindowTokens = 200_000;
             CompactThreshold = 0.85f;
@@ -110,8 +101,6 @@ namespace CitiesSkylines2Agent
             EnabledSkills = "utility-networks";
         }
 
-        // ---- Auto-fill endpoint when provider changes --------------------
-
         public void SetProviderWithEndpoint(ProviderKind kind)
         {
             Provider = kind;
@@ -120,22 +109,16 @@ namespace CitiesSkylines2Agent
                 ProviderKind.OpenAI => "https://api.openai.com/v1",
                 ProviderKind.DeepSeek => "https://api.deepseek.com/v1",
                 ProviderKind.OpenRouter => "https://openrouter.ai/api/v1",
-                ProviderKind.Custom => Endpoint,
                 _ => Endpoint,
             };
         }
-        // Note: the game settings system reads/writes properties directly;
-        // this helper is for programmatic use or mod config migration.
     }
 
     public class LocaleEN : IDictionarySource
     {
         private readonly Setting m_Setting;
 
-        public LocaleEN(Setting setting)
-        {
-            m_Setting = setting;
-        }
+        public LocaleEN(Setting setting) { m_Setting = setting; }
 
         public IEnumerable<KeyValuePair<string, string>> ReadEntries(IList<IDictionaryEntryError> errors, Dictionary<string, int> indexCounts)
         {
@@ -143,27 +126,25 @@ namespace CitiesSkylines2Agent
             {
                 { m_Setting.GetSettingsLocaleID(), "Cities Skylines 2 Agent" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kProviderGroup), "Model provider" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kAgentGroup), "Agent loop" },
+                { m_Setting.GetOptionGroupLocaleID(Setting.kProviderGroup), "Provider" },
+                { m_Setting.GetOptionGroupLocaleID(Setting.kAgentGroup), "Agent" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Provider)), "Provider" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Select your model provider. Endpoint is auto-filled. Use Custom to enter a different endpoint." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Select your provider. Endpoint is auto-filled." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Endpoint)), "Endpoint" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "OpenAI-compatible API base URL. Auto-filled by provider selection." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "API base URL. Auto-filled by provider." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApiKey)), "API key" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApiKey)), "Stored only in this local settings file (never in the repo or logs)." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApiKey)), "Stored in settings file only." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Model)), "Model" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Model)), "Model id, e.g. gpt-5.6-sol, deepseek-v4-flash, or any model your endpoint accepts." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Model)), "e.g. gpt-5.6-sol, deepseek-v4-flash." },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AutoStart)), "Auto-start on city load" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.AutoStart)), "Start one agent turn automatically after a city finishes loading; leaving the city arms it again." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.StartupPrompt)), "Startup prompt" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.StartupPrompt)), "User message queued automatically on city load. Keep it empty to disable the automatic turn." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AutoStart)), "Auto-start" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.AutoStart)), "Start a turn on city load." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Continuous)), "Continuous" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Continuous)), "Keep the agent running turn after turn without stopping." },
             };
         }
 
-        public void Unload()
-        {
-        }
+        public void Unload() { }
     }
 }

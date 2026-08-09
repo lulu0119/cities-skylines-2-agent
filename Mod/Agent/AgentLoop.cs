@@ -412,6 +412,17 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 Status = AgentStatus.Idle;
                 Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Idle });
                 Emit(new AgentUiEvent { Kind = "turn", Text = m_TurnId });
+
+                // Auto-continue: queue a continuation message so the loop
+                // picks it up on its next iteration without user input.
+                if (Setting.StaticContinuous && m_Pending.Reader.Count == 0 &&
+                    !m_LoopCts.IsCancellationRequested)
+                {
+                    m_Pending.Writer.TryWrite(new AgentInput
+                    {
+                        Text = "Continue managing the city. Observe current state and take the next most impactful action.",
+                    });
+                }
             }
         }
 
