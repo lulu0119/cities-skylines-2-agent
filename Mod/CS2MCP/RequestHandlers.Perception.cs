@@ -565,8 +565,19 @@ namespace CS2MCP
                 }
             }
 
+            // Top 5 issues by count — makes critical problems unmissable at a glance.
+            var sortedCounts = new List<KeyValuePair<string, int>>(counts);
+            sortedCounts.Sort((a, b) => b.Value.CompareTo(a.Value));
+            int topCount = Math.Min(5, sortedCounts.Count);
+            var topIssuesList = new List<object>(topCount);
+            for (int ti = 0; ti < topCount; ti++)
+            {
+                topIssuesList.Add(new { type = sortedCounts[ti].Key, count = sortedCounts[ti].Value });
+            }
+
             return BridgeResponse.Json(new
             {
+                topIssues = topIssuesList,
                 total,
                 matched,
                 returned = items.Count,

@@ -106,9 +106,8 @@ namespace CitiesSkylines2Agent.Agent
                 }
                 ToolDefinition tool = ToolCatalog.Find(name);
                 if (tool == null) return Error("unknown tool: " + name);
-                Action<string> progress = string.Equals(name, "agent_advance_time", StringComparison.Ordinal)
-                    ? text => m_Emit(new AgentUiEvent { Kind = "progress", Text = text }) : null;
-                return await AgentToolBridge.InvokeAsync(tool, argumentsJson, cancellationToken, progress);
+
+                return await AgentToolBridge.InvokeAsync(tool, argumentsJson, cancellationToken);
             }
             catch (OperationCanceledException)
             {

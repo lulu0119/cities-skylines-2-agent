@@ -57,18 +57,21 @@ namespace CitiesSkylines2Agent.Agent
     /// </summary>
     public sealed class AgentLoop : IDisposable
     {
-        private const string SystemPrompt = @"You are the in-game AI city mayor assistant for Cities: Skylines 2, running inside the game process. Your goal is to help the player manage the city and to autonomously execute tasks over long horizons.
+        private const string SystemPrompt = @"You are the in-game AI mayor for Cities: Skylines 2.
 
 Working style:
-1. Observe briefly first (game_state / city_overview / demand / screenshot), then act. Do not repeat the same read tool more than twice without a write. terrain / gridmap require a map range and return compact 8×8 samples (not full arrays).
-2. No tool requires the game to be paused. The game validates construction while the simulation runs; if a build/zone/upgrade call fails, the world changed between your read and the write — retry with find_placement or a nearby position instead of repeating the same call.
-3. Before destructive actions (demolish), list the targets and explain why.
-4. When visual tools are available, use screenshot to verify your work and set_camera to inspect the city.
-5. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
-6. End every turn with a concise summary (what was done, results, next steps).
-7. Use agent_advance_time to advance time; it waits (progress is shown in the chat), auto-pauses and returns the final state. Never poll game_state in a loop waiting for simulation.
-8. Prefer place / road / zone tools that change the city over endless prefab listing and state reads. For roads: short segments on owned land near existing nodes; e1/e2 are elevation meters, never entity ids.
-9. Tool schemas are grouped to keep the request small. If a needed domain tool is not listed, call agent_enable_tool_group with construction, finance, districts, or visual before calling that tool. Only call tools present in the current schema.
+1. Observe briefly first (game_state / city_overview / demand / city_services / notifications), then act. Do not repeat the same read tool more than twice without a write.
+2. Fix problems that block city growth FIRST: sewage, water, electricity, garbage, road access. Do not zone or expand while a red problem is unresolved.
+3. Choose infrastructure based on this map and the current city state (use terrain / gridmap / find_prefabs). There is no fixed recipe: pick the power source, water intake and sewage outlet that fit this city.
+4. Use zone_area for regular residential / commercial / industrial / office growth. Use place_building only for standalone buildings (service buildings, unique/landmark/signature buildings, special production or extraction facilities).
+5. After find_placement succeeds, call place_building with the returned coordinates in the SAME turn. Never end a turn with only a found position.
+6. build_road: short segments (50-250m) on owned tiles near existing nodes; omit e1/e2 for ground level. If a call fails, change the position or try a nearby one instead of repeating the same call.
+7. The simulation clock belongs to the player. You can wait briefly with wait_simulation (max 60 real seconds) to let buildings construct or services react; never poll game_state in a loop.
+8. Before destructive actions (demolish), list the targets and explain why.
+9. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
+10. End every turn with a concise summary (what was done, results, next steps).
+
+Skills: call agent_read_skill(""city-building"") for the full playbook.
 
 Context blocks (map pins / selected networks) arrive as system messages and are the player's precise positions or targets; prefer them over guessing.";
 
@@ -99,6 +102,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         private const string SummaryPrefix = "[context summary] ";
         private const int MaxToolRoundsPerTurn = 30;
+        private const int ModelTimeoutMs = 120_000;
 
         public static AgentLoop Instance { get; private set; }
 
@@ -128,6 +132,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         private string m_TurnId;
         private long m_EstimatedTokens;
         private int m_TurnGenerationCount;
+        private bool m_TimeoutOccurred;
         private bool m_Disposed;
 
         public AgentLoop()
@@ -319,6 +324,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnId = Guid.NewGuid().ToString("N").Substring(0, 8);
                 m_TurnCts = new CancellationTokenSource();
                 m_TurnGenerationCount = 0;
+                m_TimeoutOccurred = false;
                 m_ToolSurface.Reset();
                 m_ToolExecutor.Reset();
                 Stopwatch turnTimer = Stopwatch.StartNew();
@@ -413,16 +419,18 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Idle });
                 Emit(new AgentUiEvent { Kind = "turn", Text = m_TurnId });
 
-                // Auto-continue: queue a continuation message so the loop
-                // picks it up on its next iteration without user input.
-                if (Setting.StaticContinuous && m_Pending.Reader.Count == 0 &&
+                // Auto-continue: queue the continuation message so the loop picks it
+                // up without user input. The simulation clock stays with the player.
+                if (Setting.StaticContinuous && !m_TimeoutOccurred &&
+                    m_Pending.Reader.Count == 0 &&
                     !m_LoopCts.IsCancellationRequested)
                 {
                     m_Pending.Writer.TryWrite(new AgentInput
                     {
-                        Text = "Continue managing the city. Observe current state and take the next most impactful action.",
+                        Text = "Build the city, grow population, solve problems. Keep working until the city thrives.",
                     });
                 }
+                m_TimeoutOccurred = false;
             }
         }
 
@@ -485,12 +493,18 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             {
                 Status = AgentStatus.Thinking;
                 Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Thinking });
-                await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(m_History, options, cancellationToken))
+                using (CancellationTokenSource timeoutCts =
+                    CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                    updates.Add(update);
-                    if (!string.IsNullOrEmpty(update.Text))
+                    timeoutCts.CancelAfter(ModelTimeoutMs);
+                    await foreach (ChatResponseUpdate update in client.GetStreamingResponseAsync(
+                        m_History, options, timeoutCts.Token))
                     {
-                        pendingDelta.Append(update.Text);
+                        updates.Add(update);
+                        if (!string.IsNullOrEmpty(update.Text))
+                        {
+                            pendingDelta.Append(update.Text);
+                        }
                     }
                 }
                 if (pendingDelta.Length > 0)
@@ -535,6 +549,20 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             }
             catch (OperationCanceledException)
             {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    timer.Stop();
+                    m_TimeoutOccurred = true;
+                    m_Observability.Error(
+                        "generation-timeout",
+                        "model response exceeded " + ModelTimeoutMs + "ms");
+                    Emit(new AgentUiEvent
+                    {
+                        Kind = "error",
+                        Text = "模型响应超时（120 秒），本回合已停止，不会自动续跑。请重试。",
+                    });
+                    return ModelRound.Error("model response timeout");
+                }
                 throw;
             }
             catch (Exception e)

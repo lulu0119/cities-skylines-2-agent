@@ -40,9 +40,9 @@ namespace CitiesSkylines2Agent.Agent
         private static readonly HashSet<string> s_CoreTools =
             new HashSet<string>(StringComparer.Ordinal)
             {
-                "ping", "game_state", "city_overview", "demand", "set_simulation",
+                "ping", "game_state", "city_overview", "demand",
                 "budget", "city_services", "labor", "statistics", "notifications",
-                "inspect", "agent_advance_time", "save_game",
+                "inspect", "save_game",
             };
 
         private static readonly HashSet<string> s_MetaTools =

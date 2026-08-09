@@ -27,6 +27,31 @@ namespace CS2MCP
             WaterTradeSystem waterTrade = World.GetOrCreateSystemManaged<WaterTradeSystem>();
             GarbageAccumulationSystem garbage = World.GetOrCreateSystemManaged<GarbageAccumulationSystem>();
 
+            // Derive human-readable problem summaries from raw service values.
+            // Sorted by severity: critical before high before warning.
+            var problems = new List<object>();
+            if (water.sewageConsumption > 0 && water.sewageCapacity <= 0)
+                problems.Add(new { id = "sewage", severity = "critical",
+                    message = $"{water.sewageConsumption:N0} sewage produced but no capacity — build SewageOutlet01 near water and connect it to the road network" });
+            else if (water.sewageConsumption > water.sewageCapacity)
+                problems.Add(new { id = "sewage", severity = "high",
+                    message = $"sewage consumption {water.sewageConsumption:N0} exceeds capacity {water.sewageCapacity:N0} — add more outlets or treatment plants" });
+            if (water.freshConsumption > 0 && water.freshCapacity <= 0)
+                problems.Add(new { id = "water", severity = "critical",
+                    message = $"{water.freshConsumption:N0} water consumed but no pumping capacity — build a pumping station or water tower" });
+            else if (water.freshConsumption > water.freshCapacity)
+                problems.Add(new { id = "water", severity = "high",
+                    message = $"water consumption {water.freshConsumption:N0} exceeds capacity {water.freshCapacity:N0} — add more pumping stations" });
+            if (electricity.production + electricityTrade.import < electricity.fulfilledConsumption)
+                problems.Add(new { id = "electricity", severity = "high",
+                    message = $"electricity demand {electricity.fulfilledConsumption:N0} exceeds production+import ({electricity.production:N0}+{electricityTrade.import:N0}) — add power plants" });
+            else if (electricity.production + electricityTrade.import < electricity.consumption)
+                problems.Add(new { id = "electricity", severity = "warning",
+                    message = $"electricity consumption {electricity.consumption:N0} slightly exceeds reliable supply — consider adding production capacity" });
+            if (garbage.garbageAccumulation > 0.01f)
+                problems.Add(new { id = "garbage", severity = "warning",
+                    message = $"garbage accumulating (rate: {garbage.garbageAccumulation:F1}) — add landfill, incinerator, or recycling center" });
+
             return BridgeResponse.Json(new
             {
                 electricity = new
@@ -53,7 +78,8 @@ namespace CS2MCP
                 {
                     accumulationRate = garbage.garbageAccumulation,
                 },
-                note = "healthcare/education coverage: query /city/statistics (e.g. type=EducationCount) until dedicated endpoints land",
+                problems,
+                note = "healthcare/education coverage: query /city/statistics (e.g. type=EducationCount) until dedicated endpoints land. problems[] is a derived summary of critical service gaps — address those before expanding.",
             });
         }
 

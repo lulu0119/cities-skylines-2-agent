@@ -51,33 +51,27 @@
       "response": "json"
     },
     {
-      "name": "set_simulation",
-      "description": "Control the simulation clock: pause/unpause the game and/or set the simulation speed (0 = paused, 1 = normal, 2 = double, 4 = fastest UI speed; values up to 8 are accepted). Returns the resulting state.",
+      "name": "wait_simulation",
+      "description": "Run the simulation for a short real-time wait: resumes if paused, runs at max speed, then restores the previous speed/pause state and returns the latest city state. Use at most 60 seconds; prefer short waits (10-30s) and re-check city_services.problems[] afterwards.",
       "parameters": {
         "type": "object",
         "properties": {
-          "paused": {
-            "type": "boolean",
-            "description": "true to pause, false to resume"
-          },
-          "speed": {
+          "seconds": {
             "type": "number",
-            "minimum": 0,
-            "maximum": 8,
-            "description": "simulation speed multiplier (0-8)"
+            "minimum": 1,
+            "maximum": 60,
+            "description": "Real-world seconds to run the simulation (max 60)"
           }
         },
-        "required": []
+        "required": [
+          "seconds"
+        ]
       },
-      "route": "/sim/control",
+      "route": "/sim/wait",
       "query": [
         {
-          "key": "speed",
-          "arg": "speed"
-        },
-        {
-          "key": "paused",
-          "arg": "paused"
+          "key": "seconds",
+          "arg": "seconds"
         }
       ],
       "response": "json"
@@ -338,7 +332,7 @@
     },
     {
       "name": "find_prefabs",
-      "description": "Search the game's building or road prefabs by name substring. Returns exact prefab names needed by place_building, plus their type, locked state and footprint: buildings/trees carry lotSize (int2, 8m cells) and footprintMeters; roads/networks carry widthM (meters). Example queries: 'school', 'FireHouse', 'WindTurbine', 'Highway'.",
+      "description": "Search game prefabs by name. Use 'Highway' to find highway connections, 'Sewage' for sewage outlets, 'Water' for water pumping, 'WindTurbine' for power, 'School' for schools, 'Clinic'/'Hospital' for healthcare. Check 'locked' field to see if milestone blocks it.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -384,7 +378,7 @@
     },
     {
       "name": "place_building",
-      "description": "Place a building in the world at the given map coordinates (x, z in meters; the map is roughly -7000 to +7000 on each axis, use list_buildings to see coordinates of existing buildings for reference). Height is sampled from the terrain automatically. The game validates the placement (collisions, terrain, water) and the call fails with an explanation if blocked. If blocked (NoRoadAccess / OverlapExisting / InWater), call find_placement with the same prefab and a nearby center instead of guessing coordinates. Costs city money like a normal player action. Verify the result with screenshot or list_buildings.",
+      "description": "Place a standalone prefab building at world coordinates - service buildings (power/water/sewage, schools, clinics, etc.), unique/landmark/signature buildings, and special production/extraction facilities. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area. If placement fails, call find_placement first, then retry with the returned coordinates.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -443,7 +437,7 @@
     },
     {
       "name": "build_road",
-      "description": "Build a network segment between two world coordinates (terrain-following): roads, tracks, paths, power lines, pipes — any prefab from find_prefabs category 'road' or 'net'. Prefer short segments (about 50-300m) on owned map tiles, connecting near existing road nodes. Long cross-map or cross-water spans usually fail validation. Straight by default; pass cx/cz for a curve. Length 8-1500m. e1/e2 are elevation in meters above/below terrain for bridges/tunnels (-30..60), NOT entity indexes — omit for ground-level roads. Costs city money; failures return specific ErrorType reasons when available.",
+      "description": "Build a network segment between two world coordinates. SHORT segments (50-250m) on OWNED map tiles, connecting near EXISTING road nodes. Use list_roads first to find existing road positions. Omit e1/e2 for ground level. If the call fails: try shorter segments or move closer to existing roads. Do NOT repeat the same coordinates that just failed.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -696,7 +690,7 @@
     },
     {
       "name": "zone_area",
-      "description": "Paint zoning on all zonable cells within a radius around a point. Zone cells only exist along roads (build a road first). Pass zone='None' to remove zoning. Buildings grow on zoned cells while the simulation runs, driven by RCI demand (check demand).",
+      "description": "Paint zoning on all zonable cells within a radius of a point. This is the PRIMARY way to add residential, commercial, and industrial areas. Do NOT use place_building for zoneable buildings. Buildings grow automatically from zones while the simulation runs. Default radius 80m. Check demand first to see what zone type is needed.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -812,7 +806,7 @@
     },
     {
       "name": "list_roads",
-      "description": "List road segments (edges/curves) with entity id, prefab name, start/end coordinates, length and widthM (road/net prefab width in meters). Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range.",
+      "description": "List road segments in the city. Use with no filters to find the highway connection (look for 'Highway' prefabs) and existing road positions. Ideal for finding where to extend your road network. Spatial filter with x/z/radius. Hard max 128 results.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -979,7 +973,7 @@
     },
     {
       "name": "terrain",
-      "description": "Compact terrain probe for a map range: height min/max/mean, water coverage, and a fixed 8x8 uniform sample lattice (x,z,height,water). Requires x+z+radius or xMin+zMin+xMax+zMax. Never returns full heightmap arrays.",
+      "description": "Compact terrain probe: height and water coverage for a map range. Returns a fixed 8x8 sample grid. Use to find water for sewage outlets and pumping stations, or to check terrain height before building. Requires x+z+radius or xMin+zMin+xMax+zMax bounds.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1026,13 +1020,34 @@
       },
       "route": "/city/terrain",
       "query": [
-        { "key": "x", "arg": "x" },
-        { "key": "z", "arg": "z" },
-        { "key": "radius", "arg": "radius" },
-        { "key": "xMin", "arg": "xMin" },
-        { "key": "zMin", "arg": "zMin" },
-        { "key": "xMax", "arg": "xMax" },
-        { "key": "zMax", "arg": "zMax" }
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
+          "key": "xMin",
+          "arg": "xMin"
+        },
+        {
+          "key": "zMin",
+          "arg": "zMin"
+        },
+        {
+          "key": "xMax",
+          "arg": "xMax"
+        },
+        {
+          "key": "zMax",
+          "arg": "zMax"
+        }
       ],
       "response": "json"
     },
@@ -1099,14 +1114,38 @@
       },
       "route": "/city/gridmap",
       "query": [
-        { "key": "layer", "arg": "layer" },
-        { "key": "x", "arg": "x" },
-        { "key": "z", "arg": "z" },
-        { "key": "radius", "arg": "radius" },
-        { "key": "xMin", "arg": "xMin" },
-        { "key": "zMin", "arg": "zMin" },
-        { "key": "xMax", "arg": "xMax" },
-        { "key": "zMax", "arg": "zMax" }
+        {
+          "key": "layer",
+          "arg": "layer"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
+          "key": "xMin",
+          "arg": "xMin"
+        },
+        {
+          "key": "zMin",
+          "arg": "zMin"
+        },
+        {
+          "key": "xMax",
+          "arg": "xMax"
+        },
+        {
+          "key": "zMax",
+          "arg": "zMax"
+        }
       ],
       "response": "json"
     },
@@ -1348,49 +1387,6 @@
         {
           "key": "limit",
           "arg": "limit"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "agent_advance_time",
-      "description": "Unpause and run the simulation at the given speed, auto-pausing after the requested number of in-game hours. The call waits up to the configured max sim-wait (progress is shown in the chat), then returns with the final game state; if it did not finish in time the response says so and you should call again with fewer hours. Do NOT poll game_state waiting for it. Prefer short runs (0.5-2 hours) while building. cancel=true stops a timed run and pauses now.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "hours": {
-            "type": "number",
-            "minimum": 0.1,
-            "maximum": 96,
-            "description": "In-game hours to run (required unless cancel)"
-          },
-          "speed": {
-            "type": "number",
-            "minimum": 0.5,
-            "maximum": 8,
-            "description": "Simulation speed while running (default 4)"
-          },
-          "cancel": {
-            "type": "boolean",
-            "description": "true to cancel a timed run and pause now"
-          }
-        },
-        "required": []
-      },
-      "route": "/sim/run",
-      "query": [
-        {
-          "key": "cancel",
-          "arg": "cancel",
-          "boolMode": "trueOnly"
-        },
-        {
-          "key": "hours",
-          "arg": "hours"
-        },
-        {
-          "key": "speed",
-          "arg": "speed"
         }
       ],
       "response": "json"

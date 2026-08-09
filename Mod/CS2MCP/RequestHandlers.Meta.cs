@@ -13,13 +13,13 @@ using Unity.Mathematics;
 namespace CS2MCP
 {
     /// <summary>
-    /// Meta / time / district endpoints: timed simulation runs with auto-pause,
-    /// triggering saves (AI safety net), map tile info, district creation and
-    /// district policies.
+    /// Meta / time / district endpoints: short real-time simulation waits with
+    /// state restore, triggering saves (AI safety net), map tile info,
+    /// district creation and district policies.
     /// </summary>
     public sealed partial class RequestHandlers
     {
-        private const float kFramesPerHour = 262144f / 24f;
+        private const float kFramesPerSecond = 262144f / 24f / 3600f;
 
         private EntityQuery m_DistrictPrefabQuery;
         private bool m_DistrictPrefabQueryCreated;
@@ -104,40 +104,39 @@ namespace CS2MCP
             }
         }
 
-        private BridgeResponse SimRun(BridgeRequest request)
+        private BridgeResponse SimWait(BridgeRequest request)
         {
             if (!TryGetCity(out _, out BridgeResponse error))
             {
                 return error;
             }
+            if (m_System.AutoPauseTargetFrame != 0)
+            {
+                return BridgeResponse.Error(409, "a timed simulation wait is already active; wait for it to finish first");
+            }
+            if (!request.TryGetFloat("seconds", out float seconds))
+            {
+                return BridgeResponse.Error(400, "provide ?seconds=<real seconds 1-60>");
+            }
+            seconds = math.clamp(seconds, 1f, 60f);
+
             SimulationSystem sim = World.GetOrCreateSystemManaged<SimulationSystem>();
-
-            if (request.TryGetBool("cancel", out bool cancel) && cancel)
-            {
-                m_System.SetAutoPause(0);
-                sim.selectedSpeed = 0f;
-                return BridgeResponse.Json(new { cancelled = true, paused = true });
-            }
-
-            if (!request.TryGetFloat("hours", out float hours))
-            {
-                return BridgeResponse.Error(400, "provide ?hours=<in-game hours 0.1-96> (or ?cancel=true)");
-            }
-            hours = math.clamp(hours, 0.1f, 96f);
-            float speed = request.TryGetFloat("speed", out float rawSpeed) ? math.clamp(rawSpeed, 0.5f, 8f) : 4f;
-
-            uint targetFrame = sim.frameIndex + (uint)(hours * kFramesPerHour);
-            m_System.SetAutoPause(targetFrame);
+            float restoreSpeed = sim.selectedSpeed;
+            const float speed = 8f;
+            uint targetFrame = sim.frameIndex +
+                (uint)Math.Ceiling(seconds * kFramesPerSecond * speed);
+            m_System.StartTimedRun(targetFrame, restoreSpeed);
             sim.selectedSpeed = speed;
 
             return BridgeResponse.Json(new
             {
                 running = true,
-                inGameHours = hours,
+                seconds,
                 speed,
+                restoreSpeed,
                 startFrame = sim.frameIndex,
                 targetFrame,
-                note = "simulation auto-pauses at targetFrame; poll /state (frameIndex) to track progress; cancel with /sim/run?cancel=true",
+                note = "simulation runs at max speed for the requested real-time seconds, then the previous speed/pause state is restored",
             });
         }
 

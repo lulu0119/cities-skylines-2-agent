@@ -15,7 +15,7 @@ namespace CitiesSkylines2Agent.Agent
 
             if (model.StartsWith("deepseek-v4") || model.Contains("deepseek-v4"))
             {
-                // Flash / Pro ¡ª 1M context / ×î´ó 384K output / Ÿo vision
+                // Flash / Pro â€” 1M context / æœ€å¤§ 384K output / ç„¡ vision
                 // https://api-docs.deepseek.com/quick_start/pricing
                 return new ModelCapabilities
                 {

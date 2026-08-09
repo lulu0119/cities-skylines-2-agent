@@ -36,6 +36,7 @@ namespace CitiesSkylines2Agent.Agent
         {
             Directory.CreateDirectory(SkillsDirectory);
             CopyBuiltin("utility-networks");
+            CopyBuiltin("city-building");
         }
 
         public static List<AgentSkill> LoadAll()

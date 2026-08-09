@@ -1,4 +1,4 @@
-﻿namespace CitiesSkylines2Agent.Agent
+namespace CitiesSkylines2Agent.Agent
 {
     internal sealed class OpenAIProfile : IProviderProfile
     {

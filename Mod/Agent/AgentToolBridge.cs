@@ -21,9 +21,9 @@ namespace CitiesSkylines2Agent.Agent
     /// <summary>
     /// Translates model tool calls into CS2MCP bridge requests (in-process),
     /// builds query strings from the catalog. Writes are not gated on pausing:
-    /// the game validates construction while the simulation runs. Timed
-    /// /sim/run waits until auto-pause so the model does not busy-poll
-    /// game_state.
+    /// the game validates construction while the simulation runs. Short
+    /// wait_simulation calls wait on the agent thread until the timed run
+    /// finishes, so the model does not busy-poll game_state.
     /// </summary>
     public static class AgentToolBridge
     {
@@ -32,8 +32,7 @@ namespace CitiesSkylines2Agent.Agent
         public static async Task<ToolInvocationResult> InvokeAsync(
             ToolDefinition tool,
             string argumentsJson,
-            CancellationToken cancellationToken,
-            Action<string> progress = null)
+            CancellationToken cancellationToken)
         {
             CS2MCP.BridgeSystem bridge = CS2MCP.BridgeSystem.Instance;
             if (bridge == null)
@@ -50,9 +49,6 @@ namespace CitiesSkylines2Agent.Agent
             {
                 return Error($"invalid arguments for {tool.Name}: {AgentObservability.RedactSecrets(e.Message)}");
             }
-
-            bool simRun = string.Equals(tool.Route, "/sim/run", StringComparison.Ordinal);
-            bool cancelRun = query.ContainsKey("cancel");
 
             CS2MCP.BridgeResponse response = await bridge.InvokeAsync(tool.Route, query);
             if (response == null)
@@ -76,9 +72,9 @@ namespace CitiesSkylines2Agent.Agent
             }
 
             string text = Encoding.UTF8.GetString(response.Body ?? Array.Empty<byte>());
-            if (simRun && !cancelRun)
+            if (string.Equals(tool.Route, "/sim/wait", StringComparison.Ordinal))
             {
-                text = await WaitForSimRunAsync(bridge, text, cancellationToken, progress);
+                text = await WaitForWaitAsync(bridge, text, query, cancellationToken);
             }
             return new ToolInvocationResult
             {
@@ -88,86 +84,33 @@ namespace CitiesSkylines2Agent.Agent
         }
 
         /// <summary>
-        /// Blocks until BridgeSystem clears AutoPauseTargetFrame, then appends
-        /// a final /state snapshot so the model need not poll.
+        /// Waits on the agent thread until BridgeSystem clears
+        /// AutoPauseTargetFrame (bounded by the requested seconds plus a small
+        /// margin), then appends a final /state snapshot so the model need not
+        /// poll.
         /// </summary>
-        private static async Task<string> WaitForSimRunAsync(
+        private static async Task<string> WaitForWaitAsync(
             CS2MCP.BridgeSystem bridge,
             string startJson,
-            CancellationToken cancellationToken,
-            Action<string> progress)
+            Dictionary<string, string> query,
+            CancellationToken cancellationToken)
         {
+            int requestedSeconds = 0;
+            if (query.TryGetValue("seconds", out string rawSeconds))
+            {
+                int.TryParse(
+                    rawSeconds,
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out requestedSeconds);
+            }
+            int maxWaitMs = Math.Max(1, requestedSeconds) * 1000 + SimWaitPollMs * 4;
             int waited = 0;
-            uint startFrame = 0;
-            uint targetFrame = 0;
-            try
-            {
-                using (JsonDocument document = JsonDocument.Parse(startJson))
-                {
-                    if (document.RootElement.TryGetProperty("startFrame", out JsonElement start) &&
-                        start.ValueKind == JsonValueKind.Number)
-                    {
-                        startFrame = start.GetUInt32();
-                    }
-                    if (document.RootElement.TryGetProperty("targetFrame", out JsonElement target) &&
-                        target.ValueKind == JsonValueKind.Number)
-                    {
-                        targetFrame = target.GetUInt32();
-                    }
-                }
-            }
-            catch
-            {
-                // progress stays time-based when the start JSON is not parseable
-            }
-
-            int maxWaitMs = CitiesSkylines2Agent.Setting.StaticMaxSimWaitSeconds * 1000;
-            int lastProgressMs = -1000;
             while (bridge.AutoPauseTargetFrame != 0 && waited < maxWaitMs)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 await Task.Delay(SimWaitPollMs, cancellationToken);
                 waited += SimWaitPollMs;
-
-                if (progress != null && waited - lastProgressMs >= 1000)
-                {
-                    lastProgressMs = waited;
-                    string text = string.Format(
-                        CultureInfo.InvariantCulture,
-                        "模拟推进中… 已等待 {0:F0}s",
-                        waited / 1000f);
-                    if (targetFrame > startFrame)
-                    {
-                        try
-                        {
-                            CS2MCP.BridgeResponse state = await bridge.InvokeAsync("/state");
-                            if (state != null && state.Status == 200)
-                            {
-                                using (JsonDocument doc = JsonDocument.Parse(
-                                    Encoding.UTF8.GetString(state.Body ?? Array.Empty<byte>())))
-                                {
-                                    if (doc.RootElement.TryGetProperty("simulation", out JsonElement sim) &&
-                                        sim.TryGetProperty("frameIndex", out JsonElement frame) &&
-                                        frame.ValueKind == JsonValueKind.Number)
-                                    {
-                                        uint current = frame.GetUInt32();
-                                        float ratio = (current - startFrame) /
-                                            (float)(targetFrame - startFrame);
-                                        text = string.Format(
-                                            CultureInfo.InvariantCulture,
-                                            "模拟推进中… {0:P0}",
-                                            Math.Max(0f, Math.Min(1f, ratio)));
-                                    }
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            // progress is best-effort; the wait itself still works
-                        }
-                    }
-                    progress(text);
-                }
             }
 
             string finalState = null;
@@ -181,7 +124,7 @@ namespace CitiesSkylines2Agent.Agent
             }
             catch (Exception e)
             {
-                CS2MCP.Mod.Log.Warn($"post-sim state failed: {AgentObservability.RedactSecrets(e.Message)}");
+                CS2MCP.Mod.Log.Warn($"post-wait state failed: {AgentObservability.RedactSecrets(e.Message)}");
             }
 
             try
@@ -196,13 +139,12 @@ namespace CitiesSkylines2Agent.Agent
                 }
                 if (bridge.AutoPauseTargetFrame != 0)
                 {
-                    root["note"] = "timed run still in progress after wait cap; check game_state once";
+                    root["note"] = "wait did not finish in time; check game_state once";
                 }
                 else
                 {
-                root["note"] = "timed run finished and auto-paused; do not poll game_state for this run";
-                progress?.Invoke("模拟完成，已自动暂停");
-            }
+                    root["note"] = "wait finished; simulation restored to its previous speed/pause state";
+                }
                 return root.ToJsonString();
             }
             catch

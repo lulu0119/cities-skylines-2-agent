@@ -23,6 +23,7 @@ namespace CS2MCP
         private RequestHandlers m_Handlers;
         private SimulationSystem m_SimulationSystem;
         private uint m_FrameIndexAtLoad;
+        private float m_WaitRestoreSpeed = -1f;
         private readonly ConcurrentQueue<BridgeRequest> m_Pending = new ConcurrentQueue<BridgeRequest>();
 
         /// <summary>
@@ -33,12 +34,17 @@ namespace CS2MCP
         /// </summary>
         public bool SimulationHasTickedSinceLoad { get; private set; } = true;
 
-        /// <summary>Frame at which the simulation auto-pauses (0 = disabled).</summary>
+        /// <summary>Frame at which a timed wait ends (0 = no wait active).</summary>
         public uint AutoPauseTargetFrame { get; private set; }
 
-        public void SetAutoPause(uint targetFrame)
+        /// <summary>
+        /// Starts a timed simulation run: at targetFrame the simulation speed
+        /// is restored to <paramref name="restoreSpeed"/> (0 = paused).
+        /// </summary>
+        public void StartTimedRun(uint targetFrame, float restoreSpeed)
         {
             AutoPauseTargetFrame = targetFrame;
+            m_WaitRestoreSpeed = restoreSpeed;
         }
 
         [Preserve]
@@ -67,9 +73,12 @@ namespace CS2MCP
             }
             if (AutoPauseTargetFrame != 0 && m_SimulationSystem.frameIndex >= AutoPauseTargetFrame)
             {
-                m_SimulationSystem.selectedSpeed = 0f;
+                m_SimulationSystem.selectedSpeed = m_WaitRestoreSpeed >= 0f
+                    ? m_WaitRestoreSpeed
+                    : 0f;
                 AutoPauseTargetFrame = 0;
-                Mod.Log.Info("timed run finished, simulation auto-paused");
+                m_WaitRestoreSpeed = -1f;
+                Mod.Log.Info("timed wait finished, simulation state restored");
             }
             while (m_Pending.TryDequeue(out BridgeRequest request))
             {

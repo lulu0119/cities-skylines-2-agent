@@ -34,7 +34,7 @@ namespace CS2MCP
         private string LockStalenessWarning => m_System.SimulationHasTickedSinceLoad
             ? null
             : "simulation has not run since this save was loaded; 'locked' flags and ranges may be STALE " +
-              "(unlock processing is pending). Unpause briefly via /sim/control for accurate values.";
+              "(unlock processing is pending). Run the simulation briefly (wait_simulation) for accurate values.";
 
         /// <summary>
         /// Locked is an IEnableableComponent: unlocking DISABLES it rather than
@@ -123,10 +123,8 @@ namespace CS2MCP
                     return GetNotifications(request);
                 case "/entity/inspect":
                     return InspectEntity(request);
-                case "/sim/control":
-                    return SimControl(request);
-                case "/sim/run":
-                    return SimRun(request);
+                case "/sim/wait":
+                    return SimWait(request);
                 case "/game/save":
                     return SaveGame(request);
                 case "/city/tiles":
@@ -146,7 +144,7 @@ namespace CS2MCP
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +
                         "/city/budget /city/services /city/labor /city/statistics /city/taxes /city/taxes/set " +
                         "/city/policies /city/policies/set /city/service-budgets /city/service-budgets/set " +
-                        "/prefabs /build/place /build/demolish /city/buildings /sim/control /screenshot");
+                        "/prefabs /build/place /build/demolish /city/buildings /sim/wait /screenshot");
             }
         }
 
@@ -250,7 +248,7 @@ namespace CS2MCP
             {
                 note = "buildingDemand uses the game's internal 0-255 scale; companyDemand counters can exceed 255; " +
                        "factors are raw signed contributions (positive pushes demand up, negative down). " +
-                       "Values only refresh while the simulation is running (unpause briefly for fresh numbers).",
+                       "Values only refresh while the simulation is running (use wait_simulation briefly for fresh numbers).",
                 residential = new
                 {
                     householdDemand = residential.householdDemand,
@@ -290,46 +288,6 @@ namespace CS2MCP
                     companyDemand = industrial.storageCompanyDemand,
                     buildingDemand = industrial.storageBuildingDemand,
                 },
-            });
-        }
-
-        private BridgeResponse SimControl(BridgeRequest request)
-        {
-            if (!TryGetCity(out _, out BridgeResponse error))
-            {
-                return error;
-            }
-
-            SimulationSystem sim = World.GetOrCreateSystemManaged<SimulationSystem>();
-            bool changed = false;
-
-            if (request.TryGetFloat("speed", out float speed))
-            {
-                sim.selectedSpeed = Mathf.Clamp(speed, 0f, 8f);
-                changed = true;
-            }
-            if (request.TryGetBool("paused", out bool paused))
-            {
-                if (paused)
-                {
-                    sim.selectedSpeed = 0f;
-                }
-                else if (sim.selectedSpeed <= 0f)
-                {
-                    sim.selectedSpeed = 1f;
-                }
-                changed = true;
-            }
-
-            if (!changed)
-            {
-                return BridgeResponse.Error(400, "provide ?speed=0..8 and/or ?paused=true|false");
-            }
-
-            return BridgeResponse.Json(new
-            {
-                paused = sim.selectedSpeed <= 0f,
-                selectedSpeed = sim.selectedSpeed,
             });
         }
 

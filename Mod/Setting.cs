@@ -57,12 +57,7 @@ namespace CitiesSkylines2Agent
 
         public string StartupPrompt { get; set; } = "";
         public int WindowTokens { get; set; } = 200_000;
-        public float CompactThreshold { get; set; } = 0.85f;
-        public int KeepTailMessages { get; set; } = 20;
-        public int MaxToolRounds { get; set; } = 30;
         public bool EnableVisionTools { get; set; } = true;
-        public int MaxSimWaitSeconds { get; set; } = 180;
-        public string EnabledSkills { get; set; } = "utility-networks";
 
         // ---- Static facade ---------------------------------
 
@@ -70,7 +65,7 @@ namespace CitiesSkylines2Agent
         public static string StaticEndpoint => Instance?.Endpoint ?? "https://api.openai.com/v1";
         public static string StaticModel => Instance?.Model ?? "";
 
-        private const string DefaultStartupPrompt = "Build the city, grow population, solve problems. Keep working until the city thrives.";
+        private const string DefaultStartupPrompt = "持续经营城市：先解决当前限制发展的问题，再按需求扩张；不要只报告，要行动。";
 
         public static string StaticStartupPrompt => string.IsNullOrWhiteSpace(Instance?.StartupPrompt)
             ? DefaultStartupPrompt : Instance.StartupPrompt;
@@ -79,12 +74,7 @@ namespace CitiesSkylines2Agent
         public static bool StaticContinuous => Instance?.Continuous ?? true;
         public static string StaticApiKey => Instance?.ApiKey ?? "";
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
-        public static double StaticCompactThreshold => Instance?.CompactThreshold ?? 0.85;
-        public static int StaticKeepTailMessages => Instance?.KeepTailMessages ?? 20;
-        public static int StaticMaxToolRounds => Instance?.MaxToolRounds ?? 30;
         public static bool StaticEnableVisionTools => Instance?.EnableVisionTools ?? true;
-        public static int StaticMaxSimWaitSeconds => Instance?.MaxSimWaitSeconds ?? 180;
-        public static string StaticEnabledSkills => Instance?.EnabledSkills ?? "utility-networks";
 
         public override void SetDefaults()
         {
@@ -96,12 +86,7 @@ namespace CitiesSkylines2Agent
             Continuous = true;
             StartupPrompt = "";
             WindowTokens = 200_000;
-            CompactThreshold = 0.85f;
-            KeepTailMessages = 20;
-            MaxToolRounds = 30;
             EnableVisionTools = true;
-            MaxSimWaitSeconds = 180;
-            EnabledSkills = "utility-networks";
         }
 
         public void SetProviderWithEndpoint(ProviderKind kind)
