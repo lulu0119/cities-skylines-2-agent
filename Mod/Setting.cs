@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Colossal;
 using Colossal.IO.AssetDatabase;
@@ -69,12 +69,15 @@ namespace CitiesSkylines2Agent
         public static ProviderKind StaticProvider => Instance?.Provider ?? ProviderKind.OpenAI;
         public static string StaticEndpoint => Instance?.Endpoint ?? "https://api.openai.com/v1";
         public static string StaticModel => Instance?.Model ?? "";
+
+        private const string DefaultStartupPrompt = "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
+
+        public static string StaticStartupPrompt => string.IsNullOrWhiteSpace(Instance?.StartupPrompt)
+            ? DefaultStartupPrompt : Instance.StartupPrompt;
+
         public static bool StaticAutoStart => Instance?.AutoStart ?? true;
         public static bool StaticContinuous => Instance?.Continuous ?? true;
-        public static string StaticStartupPrompt => Instance?.StartupPrompt ?? "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
-
         public static string StaticApiKey => Instance?.ApiKey ?? "";
-
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
         public static double StaticCompactThreshold => Instance?.CompactThreshold ?? 0.85;
         public static int StaticKeepTailMessages => Instance?.KeepTailMessages ?? 20;
@@ -91,7 +94,7 @@ namespace CitiesSkylines2Agent
             Model = "";
             AutoStart = true;
             Continuous = true;
-            StartupPrompt = "Observe the current city, identify the highest-priority problem, and report one next step. Do not modify the city.";
+            StartupPrompt = "";
             WindowTokens = 200_000;
             CompactThreshold = 0.85f;
             KeepTailMessages = 20;
@@ -130,18 +133,24 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionGroupLocaleID(Setting.kAgentGroup), "Agent" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Provider)), "Provider" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Select your provider. Endpoint is auto-filled." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Select provider. Endpoint auto-filled." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Endpoint)), "Endpoint" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "API base URL. Auto-filled by provider." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "API base URL. Auto-filled." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApiKey)), "API key" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApiKey)), "Stored in settings file only." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApiKey)), "Stored in settings only." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Model)), "Model" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Model)), "e.g. gpt-5.6-sol, deepseek-v4-flash." },
 
+                // Enum value locale keys: format is {SettingsLocaleID}.{PropertyName}.{EnumType}[{Value}]
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.OpenAI) + "]", "OpenAI" },
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.DeepSeek) + "]", "DeepSeek" },
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.OpenRouter) + "]", "OpenRouter" },
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.Custom) + "]", "Custom" },
+
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AutoStart)), "Auto-start" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.AutoStart)), "Start a turn on city load." },
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Continuous)), "Continuous" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Continuous)), "Keep the agent running turn after turn without stopping." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Continuous)), "Continue" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Continuous)), "Keep the agent running without stopping." },
             };
         }
 
