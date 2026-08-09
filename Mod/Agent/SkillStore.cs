@@ -20,8 +20,8 @@ namespace CitiesSkylines2Agent.Agent
     /// Loads skill packages from &lt;user data&gt;/Mods/CitiesSkylines2Agent/Skills.
     /// Each skill is a folder containing SKILL.md with optional front matter
     /// (name / description) followed by Markdown instructions. Skills are text
-    /// only: the agent loop injects enabled ones into the model context; no
-    /// code from skills is ever executed.
+    /// only: the agent loop injects a small index and loads full instructions
+    /// only when the model requests one; no code from skills is ever executed.
     /// </summary>
     public static class SkillStore
     {
@@ -40,6 +40,11 @@ namespace CitiesSkylines2Agent.Agent
 
         public static List<AgentSkill> LoadAll()
         {
+            return LoadSkills(true);
+        }
+
+        private static List<AgentSkill> LoadSkills(bool includeContent)
+        {
             EnsureDefaults();
             var skills = new List<AgentSkill>();
             if (!Directory.Exists(SkillsDirectory))
@@ -55,7 +60,7 @@ namespace CitiesSkylines2Agent.Agent
                 }
                 try
                 {
-                    skills.Add(ParseSkill(directory, skillFile));
+                    skills.Add(ParseSkill(directory, skillFile, includeContent));
                 }
                 catch (Exception e)
                 {
@@ -65,57 +70,84 @@ namespace CitiesSkylines2Agent.Agent
             return skills;
         }
 
-        /// <summary>Renders the enabled skills as one Markdown block for the model.</summary>
-        public static string RenderEnabled(IReadOnlyCollection<string> enabledNames)
+        /// <summary>Renders skill names and descriptions without full instructions.</summary>
+        public static string RenderIndex()
         {
             var builder = new StringBuilder();
-            foreach (AgentSkill skill in LoadAll())
+            foreach (AgentSkill skill in LoadSkills(false))
             {
-                if (!ContainsIgnoreCase(enabledNames, skill.Name))
-                {
-                    continue;
-                }
-                builder.AppendLine("## Skill: " + skill.Name);
-                if (!string.IsNullOrWhiteSpace(skill.Description))
-                {
-                    builder.AppendLine(skill.Description);
-                }
-                builder.AppendLine(skill.Content);
-                builder.AppendLine();
+                builder.Append("- ").Append(skill.Name).Append(": ")
+                    .AppendLine(string.IsNullOrWhiteSpace(skill.Description)
+                        ? "No description available."
+                        : skill.Description);
             }
-            return builder.ToString().Trim();
+            if (builder.Length == 0)
+            {
+                return "No skills are installed.";
+            }
+            return "Available skills (call agent_read_skill to load full instructions):\n" +
+                builder.ToString().Trim();
         }
 
-        private static AgentSkill ParseSkill(string directory, string skillFile)
+        public static bool TryRead(string name, out AgentSkill skill)
         {
-            string text = File.ReadAllText(skillFile);
+            skill = null;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return false;
+            }
+            foreach (AgentSkill candidate in LoadSkills(false))
+            {
+                if (string.Equals(candidate.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    skill = ParseSkill(
+                        Path.GetDirectoryName(candidate.SourcePath),
+                        candidate.SourcePath,
+                        true);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static AgentSkill ParseSkill(
+            string directory,
+            string skillFile,
+            bool includeContent)
+        {
             string name = Path.GetFileName(directory);
             string description = "";
-            string content = text;
-
-            if (text.StartsWith("---", StringComparison.Ordinal))
+            string content = null;
+            if (includeContent)
             {
-                int end = text.IndexOf("\n---", 3, StringComparison.Ordinal);
-                if (end > 0)
+                string text = File.ReadAllText(skillFile);
+                content = text;
+                if (text.StartsWith("---", StringComparison.Ordinal))
                 {
-                    string header = text.Substring(3, end - 3);
-                    content = text.Substring(end + 4);
-                    foreach (string line in header.Split('\n'))
+                    int end = text.IndexOf("\n---", 3, StringComparison.Ordinal);
+                    if (end > 0)
                     {
-                        int colon = line.IndexOf(':');
-                        if (colon <= 0)
+                        string header = text.Substring(3, end - 3);
+                        content = text.Substring(end + 4);
+                        foreach (string line in header.Split('\n'))
                         {
-                            continue;
+                            ApplyFrontMatterLine(line, ref name, ref description);
                         }
-                        string key = line.Substring(0, colon).Trim();
-                        string value = line.Substring(colon + 1).Trim();
-                        if (key.Equals("name", StringComparison.OrdinalIgnoreCase) && value.Length > 0)
+                    }
+                }
+            }
+            else
+            {
+                using (var reader = File.OpenText(skillFile))
+                {
+                    string firstLine = reader.ReadLine();
+                    if (string.Equals(firstLine, "---", StringComparison.Ordinal))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null &&
+                            !string.Equals(line, "---", StringComparison.Ordinal))
                         {
-                            name = value;
-                        }
-                        else if (key.Equals("description", StringComparison.OrdinalIgnoreCase))
-                        {
-                            description = value;
+                            ApplyFrontMatterLine(line, ref name, ref description);
                         }
                     }
                 }
@@ -125,10 +157,32 @@ namespace CitiesSkylines2Agent.Agent
             {
                 Name = name,
                 Description = description,
-                Content = content.Trim(),
+                Content = content?.Trim(),
                 SourcePath = skillFile,
                 LastWriteTimeUtc = File.GetLastWriteTimeUtc(skillFile),
             };
+        }
+
+        private static void ApplyFrontMatterLine(
+            string line,
+            ref string name,
+            ref string description)
+        {
+            int colon = line.IndexOf(':');
+            if (colon <= 0)
+            {
+                return;
+            }
+            string key = line.Substring(0, colon).Trim();
+            string value = line.Substring(colon + 1).Trim();
+            if (key.Equals("name", StringComparison.OrdinalIgnoreCase) && value.Length > 0)
+            {
+                name = value;
+            }
+            else if (key.Equals("description", StringComparison.OrdinalIgnoreCase))
+            {
+                description = value;
+            }
         }
 
         private static void CopyBuiltin(string name)
@@ -157,16 +211,5 @@ namespace CitiesSkylines2Agent.Agent
             }
         }
 
-        private static bool ContainsIgnoreCase(IReadOnlyCollection<string> names, string name)
-        {
-            foreach (string candidate in names)
-            {
-                if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
     }
 }

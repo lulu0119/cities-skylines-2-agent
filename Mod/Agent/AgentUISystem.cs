@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Threading;
 using Colossal.UI.Binding;
+using Game;
+using Game.SceneFlow;
 using Game.UI;
 using UnityEngine.Scripting;
 
@@ -15,6 +18,7 @@ namespace CitiesSkylines2Agent.Agent
     public sealed partial class AgentUISystem : UISystemBase
     {
         private const string Group = "CitiesSkylines2Agent";
+        private const int MaxEventsPerUpdate = 32;
 
         private readonly ConcurrentQueue<AgentUiEvent> m_Events =
             new ConcurrentQueue<AgentUiEvent>();
@@ -22,6 +26,8 @@ namespace CitiesSkylines2Agent.Agent
         private EventBinding<string> m_EventBinding;
         private int m_StateDirty;
         private bool m_Subscribed;
+        private AgentUiEvent m_DeferredEvent;
+        private bool m_AutoStartSent;
 
         [Preserve]
         protected override void OnCreate()
@@ -85,23 +91,106 @@ namespace CitiesSkylines2Agent.Agent
 
         private void OnAgentEvent(AgentUiEvent agentEvent)
         {
+            if (agentEvent == null || agentEvent.Kind == "tool")
+            {
+                return;
+            }
             m_Events.Enqueue(agentEvent);
-            Interlocked.Exchange(ref m_StateDirty, 1);
+            if (NeedsStateSnapshot(agentEvent))
+            {
+                Interlocked.Exchange(ref m_StateDirty, 1);
+            }
+        }
+
+        private static bool NeedsStateSnapshot(AgentUiEvent agentEvent)
+        {
+            if (agentEvent.Kind == "user" ||
+                agentEvent.Kind == "error" ||
+                agentEvent.Kind == "turn")
+            {
+                return true;
+            }
+            if (agentEvent.Kind != "status")
+            {
+                return false;
+            }
+            return agentEvent.Status == AgentStatus.Idle ||
+                   agentEvent.Status == AgentStatus.Interrupted ||
+                   agentEvent.Status == AgentStatus.Error;
         }
 
         [Preserve]
         protected override void OnUpdate()
         {
             base.OnUpdate();
-            while (m_Events.TryDequeue(out AgentUiEvent agentEvent))
+            TryAutoStart();
+            int processed = 0;
+            while (processed < MaxEventsPerUpdate && TryDequeueForUi(out AgentUiEvent agentEvent))
             {
                 m_EventBinding.Trigger(agentEvent.ToJsonString());
-                Interlocked.Exchange(ref m_StateDirty, 1);
+                processed++;
             }
             if (Interlocked.Exchange(ref m_StateDirty, 0) == 1)
             {
                 PushState();
             }
+        }
+
+        private void TryAutoStart()
+        {
+            GameManager manager = GameManager.instance;
+            if (manager == null || manager.gameMode != GameMode.Game || manager.isGameLoading)
+            {
+                m_AutoStartSent = false;
+                return;
+            }
+            if (m_AutoStartSent || !Setting.StaticAutoStart)
+            {
+                return;
+            }
+
+            m_AutoStartSent = true;
+            string prompt = Setting.StaticStartupPrompt;
+            if (!string.IsNullOrWhiteSpace(prompt))
+            {
+                AgentLoop.EnsureCreated().Send(prompt);
+            }
+        }
+
+        private bool TryDequeueForUi(out AgentUiEvent agentEvent)
+        {
+            if (m_DeferredEvent != null)
+            {
+                agentEvent = m_DeferredEvent;
+                m_DeferredEvent = null;
+            }
+            else if (!m_Events.TryDequeue(out agentEvent))
+            {
+                return false;
+            }
+
+            if (agentEvent.Kind != "delta")
+            {
+                return true;
+            }
+
+            var text = new StringBuilder(agentEvent.Text ?? "");
+            while (m_Events.TryDequeue(out AgentUiEvent next))
+            {
+                if (next.Kind != "delta")
+                {
+                    m_DeferredEvent = next;
+                    break;
+                }
+                text.Append(next.Text ?? "");
+            }
+
+            agentEvent = new AgentUiEvent
+            {
+                Kind = "delta",
+                Text = text.ToString(),
+            };
+            return true;
         }
 
         private void PushState()

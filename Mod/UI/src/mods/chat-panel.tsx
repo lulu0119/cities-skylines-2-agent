@@ -19,11 +19,20 @@ type StateMessage = {
   tool: string | null;
 };
 
+type AgentContext = {
+  windowTokens: number;
+  estimatedTokens: number;
+  compactAtTokens: number;
+  source: string;
+  vision: boolean;
+};
+
 type AgentState = {
   status: string;
   busy: boolean;
   pendingInputs: number;
   session: string;
+  context?: AgentContext;
   messages: StateMessage[];
 };
 
@@ -107,9 +116,6 @@ const inputStyle: CSSProperties = {
 const actionButtonStyle: CSSProperties = {
   flex: "0 0 auto",
   height: "36px",
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
   padding: "0 14px",
   lineHeight: "normal",
   marginLeft: "4px",
@@ -117,6 +123,9 @@ const actionButtonStyle: CSSProperties = {
 
 const interruptStyle: CSSProperties = {
   ...actionButtonStyle,
+  display: "block",
+  lineHeight: "36px",
+  textAlign: "center",
   border: "1px solid rgba(255, 255, 255, 0.35)",
   borderRadius: "4px",
   backgroundColor: "rgba(0, 0, 0, 0.35)",
@@ -140,6 +149,16 @@ const roleLabel: Record<ChatRole, string> = {
   assistant: "Agent",
   system: "System",
   error: "Error",
+};
+
+const formatTokenCount = (value: number): string => {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}k`;
+  }
+  return `${Math.max(0, Math.round(value))}`;
 };
 
 const toUiMessages = (messages: StateMessage[]): UiMessage[] =>
@@ -187,6 +206,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const [busy, setBusy] = useState(store.busy);
   const [pending, setPending] = useState(store.pending);
   const [session, setSession] = useState(store.session);
+  const [context, setContext] = useState<AgentContext | null>(null);
   const stateJson = useValue(state$);
   const subscribed = useRef(false);
 
@@ -315,6 +335,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
       setPending(store.pending);
       setStatus(store.status);
       setBusy(store.busy);
+      setContext(parsed.context ?? null);
       return;
     }
     // #region agent log
@@ -333,6 +354,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
     setStatus(store.status);
     setBusy(store.busy);
     setPending(store.pending);
+    setContext(parsed.context ?? null);
     if (store.messages.length === 0) {
       const hydrated = toUiMessages(parsed.messages ?? []);
       store.nextId = hydrated.length;
@@ -395,7 +417,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
               }
             >
               <div style={statusStyle}>
-                {`${status}${busy ? " | working" : ""}${pending > 0 ? ` | ${pending} queued` : ""}${session ? ` | ${session}` : ""}`}
+                {`${status}${busy ? " | working" : ""}${pending > 0 ? ` | ${pending} queued` : ""}${session ? ` | ${session}` : ""}${context ? ` | ctx ${formatTokenCount(context.estimatedTokens)}/${formatTokenCount(context.windowTokens)}` : ""}`}
               </div>
               <Scrollable vertical trackVisibility="scrollable" style={listStyle}>
                 {messages.map((message) => (

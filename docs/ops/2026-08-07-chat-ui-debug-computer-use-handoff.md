@@ -73,8 +73,9 @@ From screenshots / chat (order approximate):
 | **H-BLK-D** | high-frequency `delta`/`progress` into Cohtml | **PLAUSIBLE** | Huge `delta` volume; coincides with remounts |
 | **H-BLK-E** | agent opens native tool panels → bad frame | **INCONCLUSIVE** | Not proven |
 | **H-BLK-K** | **every delta** → `trigger(debugLog)` → C# `File.AppendAllText` on UI/main path | **HIGH confidence → mitigated** | After H-DUP fix, verify logs still showed per-delta IO; throttled tool logs to ≥100ms only; removed per-delta UI file logging |
+| **H-BLK-M** | Agent timeline/state writes under `Mods\CitiesSkylines2Agent` trigger the game's unfiltered mod watcher and Cohtml media reload | **CONFIRMED → fixed** | `FileSystem.log` watches the mod directory with no filters; moving runtime logs/state outside `Mods` removed the ~10-second reload storm while full event/state UI stayed enabled |
 
-**Still open:** intermittent black/hitch without hard post-fix proof that H-BLK-K was the only cause. Latest hands-off session showed world + HUD + agent panel OK while agent worked (paused city「佩恩顿」).
+**Resolution (2026-08-07):** runtime logs, screenshots, and context state now live under `%LocalLow%\Colossal Order\Cities Skylines II\CitiesSkylines2Agent`, outside the watched mod asset directory. The final hands-off run entered a city, auto-sent the startup prompt, rendered the agent reply, and showed no periodic `Reloading media 0` for three minutes; the single reload was during the normal main-menu-to-city transition.
 
 ### UI total crash (black/missing HUD)
 
@@ -148,14 +149,13 @@ Resolves tool names via CallId map from `FunctionCallContent` → `FunctionResul
 
 ## Current open problems
 
-1. **Black screen / hitch** — mitigated (no per-delta file IO); **not closed** with before/after log proof for every repro.
-2. **H-DUP-C remounts** — store helps; Gameface still reloads media / remounts panel (`UI.log` Reloading media; mount logs). Understand *why* remounts (invalid display? focus? Panel close?).
-3. **`UI.log` spam:** unsupported `gap` / `word-wrap`; `Trying to set display property to invalid value!` while executing `assetdb://gameui/index.js` — may be vanilla + our styles; worth grepping our UI for invalid `display`.
-4. **No auto-scroll** — intentional after ScrollController crash; `Scrollable` only. Product may still want stick-to-bottom without `ScrollController`.
-5. **No resize/drag** — removed after vanish suspicion; fixed geometry only.
-6. **Chat composer automation** — CDP `dispatchEvent` / value setter unreliable for React controlled input; Windows-MCP Type+Enter better. Interrupt div not always found by exact text match in CDP.
-7. **Hardcoded debug path** in `Debug548a1a.cs` is machine-specific (`C:\Users\super\Documents\GitHub\...`) — fine for this box; next machine must edit or generalize **without deleting** the sink until session closed.
-8. Earlier ops issues still open from 2026-08-06 handoff: `list_objects` radius suspect; no footprint in place/inspect; place-before-road agent behavior.
+1. **Black screen / hitch** — fixed for the observed reload storm; keep the runtime-data path outside `Mods`.
+2. **`UI.log` spam:** unsupported `gap` / `word-wrap`; `Trying to set display property to invalid value!` while executing `assetdb://gameui/index.js` — may be vanilla + our styles; worth grepping our UI for invalid `display`.
+3. **No auto-scroll** — intentional after `ScrollController` crash; `Scrollable` only. Product may still want stick-to-bottom without `ScrollController`.
+4. **No resize/drag** — removed after vanish suspicion; fixed geometry only.
+5. **Chat composer automation** — CDP `dispatchEvent` / value setter unreliable for React controlled input; Windows-MCP Type+Enter better. Interrupt div not always found by exact text match in CDP.
+6. **Hardcoded debug path** in `Debug548a1a.cs` is machine-specific (`C:\Users\super\Documents\GitHub\...`) — fine for this box; next machine must edit or generalize **without deleting** the sink until session closed.
+7. Earlier ops issues still open from 2026-08-06 handoff: `list_objects` radius suspect; no footprint in place/inspect; place-before-road agent behavior.
 
 ---
 
@@ -187,7 +187,7 @@ Resolves tool names via CallId map from `FunctionCallContent` → `FunctionResul
 | --- | --- |
 | `%LocalLow%\Colossal Order\Cities Skylines II\Logs\UI.log` | Cohtml errors (`fetch`, ScrollController, focus key, invalid display) |
 | Same tree `Player.log`, `CitiesSkylines2Agent.Mod.log` | Boot / mod load |
-| `...\Mods\CitiesSkylines2Agent\logs\agent-timeline-*.jsonl` | Tool timeline |
+| `...\CitiesSkylines2Agent\logs\agent-timeline-*.jsonl` | Tool timeline; intentionally outside `Mods` so writes do not invalidate the UI asset watcher |
 | Repo `debug-548a1a.log` | Session NDJSON |
 
 ### Launch
@@ -243,7 +243,8 @@ Hands-off operation evidence:
 - Screenshot: paused city, HUD visible, panel **Cities Skylines 2 Agent** bottom-right; Interrupt + Send on one row; Chinese text legible; agent diagnosing utilities for「佩恩顿」.
 - CDP: `textHits` include Agent messages, Interrupt, Send; `button` with text `Send`; viewport `2560×1417`.
 - `debug-548a1a.log`: `mounted` + `session_change` to session `899f517c` with dozens of state messages.
-- `UI.log`: Inspector on port **9444**; repeated media reloads; invalid display warnings continue.
+- `UI.log`: Inspector on port **9444**; final post-fix run has one scene-transition media reload and no periodic reloads during three minutes of agent operation.
+- Auto-start: entering `Game` queues the configured startup prompt once; leaving the city arms it again. Steam/Paradox/main-menu clicks were driven by Windows-MCP/CDP without user input.
 
 ---
 
@@ -263,8 +264,8 @@ Hands-off operation evidence:
 ## Suggested next steps
 
 1. Keep instrumentation; clear `debug-548a1a.log` only via Delete tool before a focused repro.
-2. If black screen returns: correlate timestamps with `tool_end_slow`, remount logs, and timeline JSONL (camera/screenshot).
-3. Investigate remount root (`Reloading media`, focus key, Panel).
+2. If black screen returns: first verify no new runtime files are being written under `Mods\CitiesSkylines2Agent`; then correlate `UI.log` with `tool_end_slow`, remount logs, and timeline JSONL.
+3. Treat a single media reload during a main-menu-to-city transition as expected; investigate only repeated reloads after agent events.
 4. Optional: stick-to-bottom via Scrollable API **without** ScrollController — verify against Gameface types.
 5. Optional: package Gameface CDP as MCP (`@csmodding/gameface-devtools-mcp`) for less ad-hoc Node.
 6. Generalize `Debug548a1a` path off hardcoded username **after** session sign-off.

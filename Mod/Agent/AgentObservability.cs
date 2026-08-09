@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace CitiesSkylines2Agent.Agent
 {
@@ -17,6 +18,16 @@ namespace CitiesSkylines2Agent.Agent
     {
         public const long MaxFileBytes = 50L * 1024 * 1024;
         public const int KeepFiles = 5;
+
+        private static readonly Regex s_JsonSecretPattern = new Regex(
+            "(?i)(\\\"?(?:api[_ -]?key|authorization|x-api-key|token)\\\"?\\s*[:=]\\s*\\\")([^\\\"]*)(\\\")",
+            RegexOptions.Compiled);
+        private static readonly Regex s_SecretPattern = new Regex(
+            "(?i)(\\\"?(?:api[_ -]?key|authorization|x-api-key|token)\\\"?\\s*[:=]\\s*)([^\\\"\\s,}]+)",
+            RegexOptions.Compiled);
+        private static readonly Regex s_BearerPattern = new Regex(
+            "(?i)(bearer\\s+)([^\\s,}]+)",
+            RegexOptions.Compiled);
 
         private readonly object m_Lock = new object();
         private readonly string m_FilePath;
@@ -65,7 +76,7 @@ namespace CitiesSkylines2Agent.Agent
                     ["type"] = type,
                     ["data"] = data ?? new JsonObject(),
                 };
-                string json = line.ToJsonString();
+                string json = RedactSecrets(line.ToJsonString());
                 try
                 {
                     m_Writer.WriteLine(json);
@@ -182,6 +193,18 @@ namespace CitiesSkylines2Agent.Agent
                 return null;
             }
             return value.Length <= maxChars ? value : value.Substring(0, maxChars) + "…[truncated]";
+        }
+
+        public static string RedactSecrets(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value ?? "";
+            }
+            string redacted = s_JsonSecretPattern.Replace(value, "$1[REDACTED]$3");
+            redacted = s_BearerPattern.Replace(redacted, "$1[REDACTED]");
+            redacted = s_SecretPattern.Replace(redacted, "$1[REDACTED]");
+            return redacted;
         }
 
         private void Rotate()

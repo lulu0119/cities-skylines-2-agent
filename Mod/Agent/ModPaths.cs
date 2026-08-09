@@ -4,6 +4,7 @@ using System.IO;
 namespace CitiesSkylines2Agent.Agent
 {
     /// <summary>Filesystem locations for agent state and logs.</summary>
+    /// <remarks>Runtime files stay outside the watched mod asset directory.</remarks>
     public static class ModPaths
     {
         public const string ModId = "CitiesSkylines2Agent";
@@ -34,17 +35,20 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string ModDataDirectory => Path.Combine(UserDataRoot, "Mods", ModId);
 
-        public static string LogsDirectory => Path.Combine(ModDataDirectory, "logs");
+        public static string RuntimeDataDirectory => Path.Combine(UserDataRoot, ModId);
+
+        public static string LogsDirectory => Path.Combine(RuntimeDataDirectory, "logs");
 
         public static string ScreenshotsDirectory => Path.Combine(LogsDirectory, "screenshots");
 
-        public static string StateDirectory => Path.Combine(ModDataDirectory, "state");
+        public static string StateDirectory => Path.Combine(RuntimeDataDirectory, "state");
 
         public static string ContextBlocksFile => Path.Combine(StateDirectory, "context-blocks.json");
 
         public static void EnsureDirectories()
         {
             Directory.CreateDirectory(ModDataDirectory);
+            Directory.CreateDirectory(RuntimeDataDirectory);
             Directory.CreateDirectory(LogsDirectory);
             Directory.CreateDirectory(ScreenshotsDirectory);
             Directory.CreateDirectory(StateDirectory);

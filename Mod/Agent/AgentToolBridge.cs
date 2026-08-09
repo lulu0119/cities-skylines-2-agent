@@ -48,7 +48,7 @@ namespace CitiesSkylines2Agent.Agent
             }
             catch (Exception e)
             {
-                return Error($"invalid arguments for {tool.Name}: {e.Message}");
+                return Error($"invalid arguments for {tool.Name}: {AgentObservability.RedactSecrets(e.Message)}");
             }
 
             bool simRun = string.Equals(tool.Route, "/sim/run", StringComparison.Ordinal);
@@ -181,7 +181,7 @@ namespace CitiesSkylines2Agent.Agent
             }
             catch (Exception e)
             {
-                CS2MCP.Mod.Log.Warn($"post-sim state failed: {e.Message}");
+                CS2MCP.Mod.Log.Warn($"post-sim state failed: {AgentObservability.RedactSecrets(e.Message)}");
             }
 
             try

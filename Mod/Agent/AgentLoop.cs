@@ -1,18 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Channels;
-using System.ClientModel;
 using Microsoft.Extensions.AI;
-using OpenAI;
-using OpenAI.Chat;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace CitiesSkylines2Agent.Agent
@@ -68,11 +63,12 @@ Working style:
 1. Observe briefly first (game_state / city_overview / demand / screenshot), then act. Do not repeat the same read tool more than twice without a write. terrain / gridmap require a map range and return compact 8×8 samples (not full arrays).
 2. No tool requires the game to be paused. The game validates construction while the simulation runs; if a build/zone/upgrade call fails, the world changed between your read and the write — retry with find_placement or a nearby position instead of repeating the same call.
 3. Before destructive actions (demolish), list the targets and explain why.
-4. Use screenshot to verify your work; use set_camera to inspect the city.
+4. When visual tools are available, use screenshot to verify your work and set_camera to inspect the city.
 5. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
 6. End every turn with a concise summary (what was done, results, next steps).
 7. Use agent_advance_time to advance time; it waits (progress is shown in the chat), auto-pauses and returns the final state. Never poll game_state in a loop waiting for simulation.
 8. Prefer place / road / zone tools that change the city over endless prefab listing and state reads. For roads: short segments on owned land near existing nodes; e1/e2 are elevation meters, never entity ids.
+9. Tool schemas are grouped to keep the request small. If a needed domain tool is not listed, call agent_enable_tool_group with construction, finance, districts, or visual before calling that tool. Only call tools present in the current schema.
 
 Context blocks (map pins / selected networks) arrive as system messages and are the player's precise positions or targets; prefer them over guessing.";
 
@@ -102,7 +98,7 @@ and stale notices. Do not keep stale relative-time phrases; convert them into
 stable facts or timeline notes. Keep each list item short and concrete.";
 
         private const string SummaryPrefix = "[context summary] ";
-        private const int MaxIdenticalToolRepeats = 3;
+        private const int MaxToolRoundsPerTurn = 30;
 
         public static AgentLoop Instance { get; private set; }
 
@@ -120,22 +116,18 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         private readonly List<ChatMessage> m_History = new List<ChatMessage>();
         private readonly object m_Lock = new object();
         private readonly AgentObservability m_Observability;
+        private readonly AgentToolSurface m_ToolSurface = new AgentToolSurface();
+        private readonly AgentPromptAssembler m_PromptAssembler;
+        private readonly AgentToolExecutor m_ToolExecutor;
 
-        private IChatClient m_ChatClient;
+        private readonly AgentClientFactory m_ClientFactory;
         private Task m_LoopTask;
         private CancellationTokenSource m_TurnCts;
         private CancellationTokenSource m_LoopCts = new CancellationTokenSource();
         private string m_SessionId;
         private string m_TurnId;
-        private string m_ConfigSignature;
         private long m_EstimatedTokens;
         private int m_TurnGenerationCount;
-        private int m_TurnFunctionCount;
-        private string m_TurnLastToolSignature = "";
-        private int m_TurnIdenticalToolCount;
-        private string m_ContextSignature = "";
-        private string m_SkillsRendered = "";
-        private int m_SkillsMessageIndex = -1;
         private bool m_Disposed;
 
         public AgentLoop()
@@ -143,6 +135,14 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             Instance = this;
             m_SessionId = Guid.NewGuid().ToString("N").Substring(0, 8);
             m_Observability = new AgentObservability(m_SessionId);
+            m_ClientFactory = new AgentClientFactory(m_Observability);
+            m_PromptAssembler = new AgentPromptAssembler(SystemPrompt, SummaryPrefix);
+            m_ToolExecutor = new AgentToolExecutor(
+                m_ToolSurface,
+                m_ClientFactory,
+                m_Observability,
+                Emit,
+                AppendHistoryMessage);
         }
 
         public event Action<AgentUiEvent> UiEvent;
@@ -178,10 +178,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         public void RefreshConfig()
         {
-            lock (m_Lock)
-            {
-                m_ChatClient = null;
-            }
+            m_ClientFactory.Refresh();
         }
 
         public string RenderChatStateJson()
@@ -207,6 +204,11 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     // System prompt / compaction / context blocks stay in the
                     // model history only — do not dump them into the chat UI.
                     if (message.Role == ChatRole.System)
+                    {
+                        continue;
+                    }
+                    if (message.Role == ChatRole.User &&
+                        message.Contents.Any(content => content is DataContent))
                     {
                         continue;
                     }
@@ -259,6 +261,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     };
                     messages.Add(entry);
                 }
+                AgentModelProfile profile = m_ClientFactory.GetProfile();
                 return new JsonObject
                 {
                     ["status"] = Status.ToString(),
@@ -266,6 +269,14 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     ["pendingInputs"] = m_Pending.Reader.Count,
                     ["session"] = m_SessionId,
                     ["turn"] = m_TurnId,
+                    ["context"] = new JsonObject
+                    {
+                        ["windowTokens"] = profile.ContextWindowTokens,
+                        ["estimatedTokens"] = m_EstimatedTokens,
+                        ["compactAtTokens"] = profile.CompactAtTokens,
+                        ["source"] = profile.Source,
+                        ["vision"] = profile.SupportsVision && Setting.StaticEnableVisionTools,
+                    },
                     ["contextBlocks"] = JsonNode.Parse(ContextBlockStore.ToJsonString()),
                     ["messages"] = messages,
                 }.ToJsonString();
@@ -282,11 +293,11 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         private async Task RunLoopAsync()
         {
-            m_Observability.TaskStart(Setting.StaticModel, Setting.StaticWindowTokens, Setting.StaticCompactThreshold);
-            lock (m_Lock)
-            {
-                m_History.Add(new ChatMessage(ChatRole.System, SystemPrompt));
-            }
+            AgentModelProfile profile = m_ClientFactory.GetProfile();
+            m_Observability.TaskStart(
+                Setting.StaticModel,
+                profile.ContextWindowTokens,
+                (double)profile.CompactAtTokens / profile.ContextWindowTokens);
             while (!m_LoopCts.IsCancellationRequested)
             {
                 AgentInput first;
@@ -308,9 +319,8 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnId = Guid.NewGuid().ToString("N").Substring(0, 8);
                 m_TurnCts = new CancellationTokenSource();
                 m_TurnGenerationCount = 0;
-                m_TurnFunctionCount = 0;
-                m_TurnLastToolSignature = "";
-                m_TurnIdenticalToolCount = 0;
+                m_ToolSurface.Reset();
+                m_ToolExecutor.Reset();
                 Stopwatch turnTimer = Stopwatch.StartNew();
 
                 try
@@ -347,7 +357,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
                         if (round.ToolCalls.Count > 0)
                         {
-                            await ExecuteToolCallsAsync(round.ToolCalls, m_TurnCts.Token);
+                            await m_ToolExecutor.ExecuteAsync(round.ToolCalls, m_TurnCts.Token);
                             await MaybeCompactAsync(m_TurnCts.Token);
                             DrainPending(inputs);
                             if (inputs.Count > 0)
@@ -361,7 +371,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                                 });
                                 continue;
                             }
-                            if (m_TurnGenerationCount >= Setting.StaticMaxToolRounds)
+                            if (m_TurnGenerationCount >= MaxToolRoundsPerTurn)
                             {
                                 Emit(new AgentUiEvent
                                 {
@@ -386,13 +396,17 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 catch (Exception e)
                 {
                     m_Observability.Error("loop", e.ToString());
-                    Emit(new AgentUiEvent { Kind = "error", Text = "循环错误：" + e.Message });
+                    Emit(new AgentUiEvent
+                    {
+                        Kind = "error",
+                        Text = "循环错误：" + AgentObservability.RedactSecrets(e.Message),
+                    });
                 }
 
                 turnTimer.Stop();
                 m_Observability.TurnFinish(
                     m_TurnGenerationCount,
-                    m_TurnFunctionCount,
+                    m_ToolExecutor.FunctionCount,
                     turnTimer.ElapsedMilliseconds,
                     null);
                 Status = AgentStatus.Idle;
@@ -401,76 +415,20 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             }
         }
 
-        /// <summary>
-        /// Injects player context blocks (map pins / selected networks) as a
-        /// system message whenever the set changes.
-        /// </summary>
         private void InjectContextBlocks()
         {
-            EnsureSkillsInjected();
-            string signature = string.Join(",", ContextBlockStore.Blocks.ConvertAll(b => b.Id));
-            if (signature == m_ContextSignature)
-            {
-                return;
-            }
-            string rendered = ContextBlockStore.RenderAll();
-            if (string.IsNullOrWhiteSpace(rendered))
-            {
-                m_ContextSignature = signature;
-                return;
-            }
             lock (m_Lock)
             {
-                m_History.Add(new ChatMessage(
-                    ChatRole.System,
-                    "Player context blocks:\n" + rendered));
+                m_PromptAssembler.Apply(m_History);
             }
-            m_ContextSignature = signature;
         }
 
-        /// <summary>
-        /// Injects the enabled skills (from Setting.EnabledSkills) as one system
-        /// message and swaps it in place when the set or content changes.
-        /// </summary>
-        private void EnsureSkillsInjected()
+        private void AppendHistoryMessage(ChatMessage message)
         {
-            string rendered = SkillStore.RenderEnabled(ParseEnabledSkills());
-            if (string.Equals(rendered, m_SkillsRendered, StringComparison.Ordinal))
-            {
-                return;
-            }
             lock (m_Lock)
             {
-                if (m_SkillsMessageIndex >= 0 && m_SkillsMessageIndex < m_History.Count)
-                {
-                    m_History.RemoveAt(m_SkillsMessageIndex);
-                }
-                if (!string.IsNullOrWhiteSpace(rendered))
-                {
-                    m_History.Add(new ChatMessage(ChatRole.System, "Active skills:\n" + rendered));
-                    m_SkillsMessageIndex = m_History.Count - 1;
-                }
-                else
-                {
-                    m_SkillsMessageIndex = -1;
-                }
+                m_History.Add(message);
             }
-            m_SkillsRendered = rendered;
-        }
-
-        private static List<string> ParseEnabledSkills()
-        {
-            var names = new List<string>();
-            string raw = Setting.StaticEnabledSkills ?? "";
-            foreach (string part in raw.Split(','))
-            {
-                string name = part.Trim();
-                if (name.Length > 0)
-                {
-                    names.Add(name);
-                }
-            }
-            return names;
         }
 
         private void DrainPending(List<AgentInput> inputs)
@@ -482,11 +440,13 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             }
         }
 
-        private async Task<ModelRound> RunModelRoundAsync(CancellationToken cancellationToken)
+        private async Task<ModelRound> RunModelRoundAsync(
+            CancellationToken cancellationToken,
+            bool allowContextRetry = true)
         {
             await MaybeCompactAsync(cancellationToken);
 
-            IChatClient client = EnsureChatClient();
+            IChatClient client = m_ClientFactory.GetClient();
             if (client == null)
             {
                 Emit(new AgentUiEvent
@@ -497,15 +457,18 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 return ModelRound.Error("no client");
             }
 
+            AgentModelProfile profile = m_ClientFactory.GetProfile();
             var options = new ChatOptions
             {
                 ModelId = Setting.StaticModel,
                 Temperature = 0.3f,
-                Tools = BuildToolDeclarations(),
+                MaxOutputTokens = (int)Math.Min(int.MaxValue, profile.OutputReserveTokens),
+                Tools = m_ToolSurface.Build(profile, Setting.StaticEnableVisionTools),
                 ToolMode = ChatToolMode.Auto,
             };
 
             var updates = new List<ChatResponseUpdate>();
+            var pendingDelta = new StringBuilder();
             Stopwatch timer = Stopwatch.StartNew();
             try
             {
@@ -516,8 +479,12 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     updates.Add(update);
                     if (!string.IsNullOrEmpty(update.Text))
                     {
-                        Emit(new AgentUiEvent { Kind = "delta", Text = update.Text });
+                        pendingDelta.Append(update.Text);
                     }
+                }
+                if (pendingDelta.Length > 0)
+                {
+                    Emit(new AgentUiEvent { Kind = "delta", Text = pendingDelta.ToString() });
                 }
                 timer.Stop();
 
@@ -546,7 +513,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     }
                 }
 
-                UpdateTokenEstimate(response, toolCalls.Count);
+                UpdateTokenEstimate(response);
                 EmitGeneration(response, toolCalls, CollectReasoning(updates), timer.ElapsedMilliseconds);
                 return new ModelRound
                 {
@@ -562,236 +529,56 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             catch (Exception e)
             {
                 timer.Stop();
+                if (allowContextRetry && IsContextLengthError(e.ToString()))
+                {
+                    int historyCount = m_History.Count;
+                    long estimateBefore = m_EstimatedTokens;
+                    m_Observability.Error("generation-context", e.ToString());
+                    await MaybeCompactAsync(cancellationToken, true);
+                    if (m_History.Count < historyCount || m_EstimatedTokens < estimateBefore)
+                    {
+                        return await RunModelRoundAsync(cancellationToken, false);
+                    }
+                }
                 m_Observability.Error("generation", e.ToString());
-                Emit(new AgentUiEvent { Kind = "error", Text = "模型调用失败：" + e.Message });
-                return ModelRound.Error(e.Message);
+                string safeMessage = AgentObservability.RedactSecrets(e.Message);
+                Emit(new AgentUiEvent { Kind = "error", Text = "模型调用失败：" + safeMessage });
+                return ModelRound.Error(safeMessage);
             }
         }
 
-        private async Task ExecuteToolCallsAsync(
-            List<FunctionCallContent> toolCalls,
-            CancellationToken cancellationToken)
+        private static bool IsContextLengthError(string message)
         {
-            Status = AgentStatus.Working;
-            Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Working });
-
-            foreach (FunctionCallContent call in toolCalls)
-            {
-                string argumentsJson = SerializeArguments(call.Arguments);
-                string signature = (call.Name ?? "") + "|" + argumentsJson;
-                if (string.Equals(signature, m_TurnLastToolSignature, StringComparison.Ordinal))
-                {
-                    m_TurnIdenticalToolCount++;
-                }
-                else
-                {
-                    m_TurnLastToolSignature = signature;
-                    m_TurnIdenticalToolCount = 1;
-                }
-
-                Stopwatch timer = Stopwatch.StartNew();
-                // #region agent log
-                // Skip tool_start spam; only log slow/end results (H-BLK-K).
-                // #endregion
-                Emit(new AgentUiEvent
-                {
-                    Kind = "tool",
-                    Tool = call.Name ?? call.CallId,
-                    Text = argumentsJson,
-                });
-
-                ToolInvocationResult result;
-                if (m_TurnIdenticalToolCount > MaxIdenticalToolRepeats)
-                {
-                    result = new ToolInvocationResult
-                    {
-                        Success = false,
-                        Text = "{\"error\":\"refused repeated identical tool call (" +
-                            (call.Name ?? "") +
-                            "); change arguments or take a write action instead of polling\"}",
-                    };
-                }
-                else
-                {
-                    bool isMeta = call.Name != null && call.Name.StartsWith("agent_", StringComparison.Ordinal);
-                    if (isMeta)
-                    {
-                        result = await InvokeMetaToolAsync(call.Name, argumentsJson, cancellationToken);
-                    }
-                else
-                {
-                    ToolDefinition tool = ToolCatalog.Find(call.Name);
-                    if (tool == null)
-                        {
-                            result = new ToolInvocationResult
-                            {
-                                Success = false,
-                                Text = "{\"error\":\"unknown tool: " + call.Name + "\"}",
-                            };
-                        }
-                        else
-                        {
-                            Action<string> progress = null;
-                            if (string.Equals(call.Name, "agent_advance_time", StringComparison.Ordinal))
-                            {
-                                progress = text => Emit(new AgentUiEvent { Kind = "progress", Text = text });
-                            }
-                            result = await AgentToolBridge.InvokeAsync(
-                                tool,
-                                argumentsJson,
-                                cancellationToken,
-                                progress);
-                        }
-                    }
-                }
-                timer.Stop();
-                m_TurnFunctionCount++;
-                // #region agent log
-                if (timer.ElapsedMilliseconds >= 100)
-                {
-                    string blkId =
-                        string.Equals(call.Name, "screenshot", StringComparison.Ordinal) ? "H-BLK-B" :
-                        (call.Name != null && (call.Name.Contains("simulation") || call.Name.Contains("advance_time")))
-                            ? "H-BLK-A" : "H-BLK-C";
-                    Debug548a1a.Log(
-                        blkId,
-                        "AgentLoop.ExecuteToolCallsAsync",
-                        "tool_end_slow",
-                        "{\"tool\":\"" + (call.Name ?? "") +
-                        "\",\"ms\":" + timer.ElapsedMilliseconds +
-                        ",\"ok\":" + (result.Success ? "true" : "false") + "}");
-                }
-                // #endregion
-
-                m_Observability.Function(
-                    call.Name,
-                    argumentsJson,
-                    result.Text,
-                    result.Success,
-                    timer.ElapsedMilliseconds,
-                    0,
-                    result.Success ? null : result.Text);
-
-                var toolMessage = new ChatMessage(
-                    ChatRole.Tool,
-                    new List<AIContent>
-                    {
-                        new FunctionResultContent(call.CallId, result.Text),
-                    });
-                lock (m_Lock)
-                {
-                    m_History.Add(toolMessage);
-                }
-            }
+            string normalized = (message ?? "").ToLowerInvariant();
+            return normalized.Contains("context_length_exceeded") ||
+                normalized.Contains("context length") ||
+                normalized.Contains("maximum context") ||
+                normalized.Contains("too many tokens") ||
+                normalized.Contains("token limit") ||
+                normalized.Contains("prompt is too long") ||
+                normalized.Contains("input is too long");
         }
 
-        private async Task<ToolInvocationResult> InvokeMetaToolAsync(
-            string name,
-            string argumentsJson,
-            CancellationToken cancellationToken)
+        private void UpdateTokenEstimate(ChatResponse response)
         {
-            try
-            {
-                switch (name)
-                {
-                    case "agent_list_context_blocks":
-                        return Ok(ContextBlockStore.ToJsonString());
-                    case "agent_add_context_block":
-                        return AddContextBlock(argumentsJson);
-                    case "agent_remove_context_block":
-                        return RemoveContextBlock(argumentsJson);
-                    default:
-                        return Ok("{\"error\":\"unknown meta tool " + name + "\"}");
-                }
-            }
-            catch (Exception e)
-            {
-                m_Observability.Error("meta-tool", e.ToString());
-                return Ok("{\"error\":\"" + JsonEncodedText.Encode(e.Message).ToString() + "\"}");
-            }
-        }
-
-        private ToolInvocationResult AddContextBlock(string argumentsJson)
-        {
-            using (JsonDocument document = JsonDocument.Parse(argumentsJson))
-            {
-                JsonElement root = document.RootElement;
-                ContextBlock block = ContextBlockStore.Add(
-                    GetString(root, "name", ""),
-                    GetString(root, "kind", "note"),
-                    root.TryGetProperty("data", out JsonElement dataElement)
-                        ? dataElement.GetRawText()
-                        : "{}");
-                Emit(new AgentUiEvent { Kind = "status", Text = "已添加上下文块：" + block.Name });
-                return Ok("{\"id\":\"" + block.Id + "\",\"name\":\"" + block.Name + "\"}");
-            }
-        }
-
-        private ToolInvocationResult RemoveContextBlock(string argumentsJson)
-        {
-            using (JsonDocument document = JsonDocument.Parse(argumentsJson))
-            {
-                string id = GetString(document.RootElement, "id", "");
-                bool removed = ContextBlockStore.Remove(id);
-                return Ok("{\"removed\":" + (removed ? "true" : "false") + "}");
-            }
-        }
-
-        private static ToolInvocationResult Ok(string json)
-        {
-            return new ToolInvocationResult { Success = true, Text = json };
-        }
-
-        private static string GetString(JsonElement element, string name, string fallback)
-        {
-            if (element.TryGetProperty(name, out JsonElement value) && value.ValueKind == JsonValueKind.String)
-            {
-                return value.GetString();
-            }
-            return fallback;
-        }
-
-        private static string SerializeArguments(IDictionary<string, object> arguments)
-        {
-            if (arguments == null || arguments.Count == 0)
-            {
-                return "{}";
-            }
-            return JsonSerializer.Serialize(arguments);
-        }
-
-        private void UpdateTokenEstimate(ChatResponse response, int toolCallCount)
-        {
+            long historyEstimate = new AgentContextBudget(m_ClientFactory.GetProfile()).Estimate(m_History);
             if (response.Usage != null && response.Usage.InputTokenCount > 0)
             {
-                m_EstimatedTokens = (response.Usage.InputTokenCount ?? 0) +
-                                     EstimateTokens(response.Text ?? "", toolCallCount);
+                m_EstimatedTokens = Math.Max(historyEstimate, response.Usage.InputTokenCount ?? 0);
             }
             else
             {
-                m_EstimatedTokens = EstimateTokens(m_History);
+                m_EstimatedTokens = historyEstimate;
             }
         }
 
-        private long EstimateTokens(List<ChatMessage> messages)
+        private async Task MaybeCompactAsync(
+            CancellationToken cancellationToken,
+            bool forceAggressive = false)
         {
-            long total = 0;
-            foreach (ChatMessage message in messages)
-            {
-                total += EstimateTokens(message.Text ?? "", message.Contents.Count);
-            }
-            return total;
-        }
-
-        private static long EstimateTokens(string text, int contentCount)
-        {
-            return (text == null ? 0 : text.Length / 4) + contentCount;
-        }
-
-        private async Task MaybeCompactAsync(CancellationToken cancellationToken)
-        {
-            if (m_EstimatedTokens <= 0 ||
-                m_EstimatedTokens < Setting.StaticWindowTokens * Setting.StaticCompactThreshold)
+            AgentModelProfile profile = m_ClientFactory.GetProfile();
+            var budget = new AgentContextBudget(profile);
+            if (!budget.ShouldCompact(m_EstimatedTokens, forceAggressive))
             {
                 return;
             }
@@ -800,16 +587,15 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             List<ChatMessage> keptMessages;
             lock (m_Lock)
             {
-                int totalCount = m_History.Count;
-                int keepStart = FindSafeKeepStart(m_History, Setting.StaticKeepTailMessages);
-                if (keepStart <= 1 || keepStart >= totalCount)
+                AgentContextBudget.CompactionSlice slice = budget.CreateSlice(m_History, forceAggressive);
+                if (slice == null)
                 {
                     return;
                 }
-                oldMessages = m_History.Take(keepStart).ToList();
-                keptMessages = m_History.Skip(keepStart).ToList();
+                oldMessages = slice.OldMessages;
+                keptMessages = slice.KeptMessages;
             }
-            IChatClient client = EnsureChatClient();
+            IChatClient client = m_ClientFactory.GetClient();
             if (client == null)
             {
                 return;
@@ -823,7 +609,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 {
                     new ChatMessage(ChatRole.System, CompactionTaskPrompt),
                 };
-                summaryInput.AddRange(FlattenMessagesForSummary(oldMessages));
+                summaryInput.AddRange(AgentContextBudget.FlattenForSummary(oldMessages));
                 ChatResponse summaryResponse = await client.GetResponseAsync(
                     summaryInput,
                     new ChatOptions
@@ -835,11 +621,11 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     cancellationToken);
 
                 string summary = (summaryResponse.Text ?? "").Trim();
-                if (!IsUsableSummary(summary))
+                if (!AgentContextBudget.IsUsableSummary(summary))
                 {
                     m_Observability.Error(
                         "compact",
-                        "rejected unusable summary: " + TruncateForLog(summary, 400));
+                        "rejected unusable summary: " + AgentContextBudget.Truncate(summary, 400));
                     Emit(new AgentUiEvent
                     {
                         Kind = "error",
@@ -851,22 +637,17 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 lock (m_Lock)
                 {
                     int nowCount = m_History.Count;
-                    int keepStart = FindSafeKeepStart(m_History, keptMessages.Count);
+                    int keepStart = AgentContextBudget.FindSafeKeepStart(m_History, keptMessages.Count);
                     if (keepStart < nowCount)
                     {
                         keptMessages = m_History.Skip(keepStart).ToList();
                     }
-                    m_History.Clear();
-                    m_History.Add(new ChatMessage(ChatRole.System, SystemPrompt));
-                    m_History.Add(new ChatMessage(ChatRole.System, SummaryPrefix + summary));
-                    m_History.AddRange(keptMessages);
-                    m_SkillsMessageIndex = -1;
-                    m_SkillsRendered = "";
+                    m_PromptAssembler.Rebuild(m_History, summary, keptMessages);
                 }
-                m_EstimatedTokens = EstimateTokens(m_History);
+                m_EstimatedTokens = budget.Estimate(m_History);
 
                 m_Observability.Compact(
-                    Setting.StaticCompactThreshold,
+                    (double)profile.CompactAtTokens / profile.ContextWindowTokens,
                     oldMessages.Count,
                     keptMessages.Count,
                     summary,
@@ -884,7 +665,11 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             catch (Exception e)
             {
                 m_Observability.Error("compact", e.ToString());
-                Emit(new AgentUiEvent { Kind = "error", Text = "压缩失败：" + e.Message });
+                Emit(new AgentUiEvent
+                {
+                    Kind = "error",
+                    Text = "压缩失败：" + AgentObservability.RedactSecrets(e.Message),
+                });
             }
         }
 
@@ -892,103 +677,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         /// Chooses a keep-tail start index that does not split an assistant
         /// tool_calls message from its following tool results.
         /// </summary>
-        private static int FindSafeKeepStart(List<ChatMessage> history, int desiredKeepCount)
-        {
-            if (history == null || history.Count == 0)
-            {
-                return 0;
-            }
-            int start = Math.Max(0, history.Count - Math.Max(1, desiredKeepCount));
-            while (start < history.Count && IsToolResultMessage(history[start]))
-            {
-                if (start == 0)
-                {
-                    start++;
-                    break;
-                }
-                start--;
-            }
-            return start;
-        }
-
-        private static bool IsToolResultMessage(ChatMessage message)
-        {
-            if (message.Role == ChatRole.Tool)
-            {
-                return true;
-            }
-            foreach (AIContent content in message.Contents)
-            {
-                if (content is FunctionResultContent)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private static List<ChatMessage> FlattenMessagesForSummary(List<ChatMessage> messages)
-        {
-            var flattened = new List<ChatMessage>();
-            foreach (ChatMessage message in messages)
-            {
-                var builder = new StringBuilder();
-                string role = message.Role == ChatRole.Assistant ? "assistant"
-                    : message.Role == ChatRole.Tool ? "tool"
-                    : message.Role == ChatRole.System ? "system"
-                    : "user";
-                builder.Append(role).Append(": ");
-                if (!string.IsNullOrWhiteSpace(message.Text))
-                {
-                    builder.Append(message.Text.Trim());
-                }
-                foreach (AIContent content in message.Contents)
-                {
-                    if (content is FunctionCallContent call)
-                    {
-                        builder.Append(" [call:").Append(call.Name).Append(']');
-                    }
-                    else if (content is FunctionResultContent result)
-                    {
-                        string value = result.Result?.ToString() ?? "";
-                        builder.Append(" [result:").Append(TruncateForLog(value, 240)).Append(']');
-                    }
-                }
-                string line = builder.ToString().Trim();
-                if (line.Length == 0)
-                {
-                    continue;
-                }
-                flattened.Add(new ChatMessage(ChatRole.User, TruncateForLog(line, 2500)));
-            }
-            return flattened;
-        }
-
-        private static bool IsUsableSummary(string summary)
-        {
-            if (string.IsNullOrWhiteSpace(summary) || summary.Length < 8)
-            {
-                return false;
-            }
-            if (summary.IndexOf("DSML", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return false;
-            }
-            if (summary.IndexOf("tool_calls", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return false;
-            }
-            if (summary.IndexOf("<|", StringComparison.Ordinal) >= 0)
-            {
-                return false;
-            }
-            if (summary.IndexOf("invoke name=", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return false;
-            }
-            return true;
-        }
-
         private static string TruncateForLog(string text, int maxChars)
         {
             if (string.IsNullOrEmpty(text) || text.Length <= maxChars)
@@ -1026,7 +714,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 calls.Add(new JsonObject
                 {
                     ["name"] = call.Name,
-                    ["arguments"] = SerializeArguments(call.Arguments),
+                    ["arguments"] = AgentToolExecutor.SerializeArguments(call.Arguments),
                 });
             }
             var usage = new JsonObject();
@@ -1086,92 +774,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             return names.Count == 0 ? null : string.Join(",", names);
         }
 
-        private IChatClient EnsureChatClient()
-        {
-            string signature = Setting.StaticProvider + "|" + Setting.StaticEndpoint + "|" + Setting.StaticApiKey + "|" + Setting.StaticModel;
-            lock (m_Lock)
-            {
-                if (m_ChatClient != null && string.Equals(m_ConfigSignature, signature, StringComparison.Ordinal))
-                {
-                    return m_ChatClient;
-                }
-                m_ChatClient?.Dispose();
-                m_ChatClient = null;
-                m_ConfigSignature = signature;
-
-                if (string.IsNullOrWhiteSpace(Setting.StaticEndpoint) ||
-                    string.IsNullOrWhiteSpace(Setting.StaticApiKey) ||
-                    string.IsNullOrWhiteSpace(Setting.StaticModel))
-                {
-                    return null;
-                }
-
-                try
-                {
-                    var options = new OpenAIClientOptions
-                    {
-                        Endpoint = new Uri(Setting.StaticEndpoint),
-                    };
-                    var openAiClient = new OpenAIClient(new ApiKeyCredential(Setting.StaticApiKey), options);
-                    ChatClient chatClient = openAiClient.GetChatClient(Setting.StaticModel);
-                    m_ChatClient = chatClient.AsIChatClient();
-                    return m_ChatClient;
-                }
-                catch (Exception e)
-                {
-                    m_Observability.Error("client-create", e.ToString());
-                    return null;
-                }
-            }
-        }
-
-        private static List<AITool> BuildToolDeclarations()
-        {
-            var tools = new List<AITool>();
-            foreach (ToolDefinition tool in ToolCatalog.Tools)
-            {
-                if (!Setting.StaticEnableVisionTools &&
-                    (string.Equals(tool.Name, "screenshot", StringComparison.Ordinal) ||
-                     string.Equals(tool.Name, "set_camera", StringComparison.Ordinal)))
-                {
-                    continue;
-                }
-                tools.Add(AIFunctionFactory.CreateDeclaration(
-                    tool.Name,
-                    tool.Description,
-                    tool.Parameters,
-                    null));
-            }
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_list_context_blocks",
-                "List the named context blocks the player created (map pins / selected networks).",
-                JsonDocument.Parse("{\"type\":\"object\",\"properties\":{}}").RootElement.Clone(),
-                null));
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_add_context_block",
-                "Register a piece of natural-language information as a named context block; it is provided to the model every turn.",
-                JsonDocument.Parse(@"{
-  ""type"":""object"",
-  ""properties"":{
-    ""name"":{""type"":""string"",""description"":""Block name""},
-    ""kind"":{""type"":""string"",""enum"":[""pin"",""network"",""note""]},
-    ""data"":{""type"":""string"",""description"":""Content (coordinates / network description, etc.)""}
-  },
-  ""required"":[""name"",""data""]
-}").RootElement.Clone(),
-                null));
-            tools.Add(AIFunctionFactory.CreateDeclaration(
-                "agent_remove_context_block",
-                "Delete a context block by id.",
-                JsonDocument.Parse(@"{
-  ""type"":""object"",
-  ""properties"":{""id"":{""type"":""string""}},
-  ""required"":[""id""]
-}").RootElement.Clone(),
-                null));
-            return tools;
-        }
-
         private void Emit(AgentUiEvent uiEvent)
         {
             if (uiEvent.Kind == "status")
@@ -1191,7 +793,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             m_LoopCts.Cancel();
             m_TurnCts?.Cancel();
             m_Observability.Dispose();
-            m_ChatClient?.Dispose();
+            m_ClientFactory.Dispose();
             if (Instance == this)
             {
                 Instance = null;
