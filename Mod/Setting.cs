@@ -70,7 +70,7 @@ namespace CitiesSkylines2Agent
         public static string StaticEndpoint => Instance?.Endpoint ?? "https://api.openai.com/v1";
         public static string StaticModel => Instance?.Model ?? "";
 
-        private const string DefaultStartupPrompt = "Observe the city and take the most impactful action to improve it.";
+        private const string DefaultStartupPrompt = "Build the city, grow population, solve problems. Keep working until the city thrives.";
 
         public static string StaticStartupPrompt => string.IsNullOrWhiteSpace(Instance?.StartupPrompt)
             ? DefaultStartupPrompt : Instance.StartupPrompt;

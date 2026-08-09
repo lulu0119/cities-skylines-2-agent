@@ -148,13 +148,13 @@ namespace CitiesSkylines2Agent.Agent
             {
                 return;
             }
-
             m_AutoStartSent = true;
             string prompt = Setting.StaticStartupPrompt;
-            if (!string.IsNullOrWhiteSpace(prompt))
+            if (string.IsNullOrWhiteSpace(prompt))
             {
-                AgentLoop.EnsureCreated().Send(prompt);
+                prompt = "Build the city, grow population, solve problems. Keep working until the city thrives.";
             }
+            AgentLoop.EnsureCreated().Send(prompt);
         }
 
         private bool TryDequeueForUi(out AgentUiEvent agentEvent)
