@@ -1,5 +1,3 @@
-using System;
-
 namespace CitiesSkylines2Agent.Agent
 {
     internal sealed class DeepSeekProfile : IProviderProfile
@@ -17,10 +15,12 @@ namespace CitiesSkylines2Agent.Agent
 
             if (model.StartsWith("deepseek-v4") || model.Contains("deepseek-v4"))
             {
+                // Flash / Pro ¡ª 1M context / ×î´ó 384K output / Ÿo vision
+                // https://api-docs.deepseek.com/quick_start/pricing
                 return new ModelCapabilities
                 {
                     ContextWindowTokens = 1_000_000,
-                    MaxOutputTokens = 8_192,
+                    MaxOutputTokens = 384_000,
                     SupportsVision = false,
                     Source = "deepseek-v4",
                 };
