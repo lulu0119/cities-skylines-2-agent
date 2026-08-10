@@ -1,7 +1,9 @@
 # 10k acceptance follow-up: gameplay capability backlog (2026-08-10)
 
-**Status:** Findings and implementation candidates only. The 10k city is accepted;
-none of the Tool/API gaps below are implemented by this note.
+**Status:** Rectangle zoning and progression tools are implemented. Rectangle
+zoning and progression reads are accepted on a fresh normal-mode map; a positive
+node purchase plus save/reload still needs a city with a Development Point.
+Operational areas and specialized industry remain backlog items.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -11,8 +13,8 @@ does not try to fix every symptom in the prompt.
 
 | Priority | Gap | Player-visible cost | Next seam |
 | --- | --- | --- | --- |
-| P0 | Circular-only zoning | Low frontage coverage and accidental overlap with occupied blocks | `zone_rectangle` request handled during `ToolUpdate` |
-| P0 | No milestone/development-tree tools | Agent earns progression but keeps choosing basic services | Read progression + purchase an eligible development node |
+| Closed | Circular-only zoning | Low frontage coverage and accidental overlap with occupied blocks | `zone_rectangle` mutates cells during `ToolUpdate` |
+| Implemented | No milestone/development-tree tools | Agent earns progression but keeps choosing basic services | Compact progression frontier + native node purchase; positive purchase/reload acceptance pending |
 | P1 | No building-owned area editing | Specialized industry hubs and landfill storage areas stay at their tiny defaults | Shared operational-area Tool over the native Area Tool pipeline |
 | P1 | No specialized-industry workflow | Raw materials are imported and freight/economy opportunities are missed | Resource perception + hub placement + extraction polygon |
 | Policy | No road hierarchy | Local streets and a few junctions absorb most through/freight traffic | Gameplay skill updated in this change |
@@ -56,6 +58,18 @@ caller to understand road-edge ECS data.
 - No cells outside the rectangle change.
 - VacantLots appear after simulation advances.
 - A rectangle adjacent to occupied zoning does not touch the occupied cells.
+
+### Implemented; read path live-accepted
+
+`zone_rectangle(zone, x, z, width, depth, rotation=0)` is now in the construction
+group. It shares zone-name/theme resolution with `zone_area`, queues the rectangle
+into `BridgeToolSystem`, and performs the rotated cell-center test during
+`ToolUpdate`.
+
+Fresh-map acceptance on `ToolLoop-20260810卢艾` (Ribbon Isles, normal mode,
+tutorial disabled) resolved generic `Residential Low` to `EU Residential Low` and
+changed 222 cells across five zone blocks for a `44m x 290m` rectangle at
+`(165, 460)`. The game process remained responsive.
 
 ## 2. Milestones and development-tree unlocks
 
@@ -104,7 +118,84 @@ capacity is limiting growth, and transport when traffic volume warrants it.
 - Insufficient points and missing prerequisites leave state unchanged.
 - Save/reload preserves the purchase.
 
-## 3. Road hierarchy policy
+### Implemented and live-accepted
+
+The progression tool group now contains `get_progression` and
+`purchase_development_node`. Purchases resolve a node by name and use the native
+`DevTreeSystem.Purchase` path; ECS entity ids are not part of the model-facing
+interface.
+
+The first live read exposed an interface defect: returning all 71 nodes expanded
+the turn context from about 4k to 63k tokens. The default response now returns only
+the unlocked frontier plus purchased-node and locked-service summaries; `service`
+explicitly expands one service tree. The same live city returned six frontier
+nodes, three purchased nodes and 71 total nodes in a 3.6 KB result. Purchase remains
+to be accepted after the city earns a Development Point; the zero-point rejection
+path is represented directly in each node's blockers.
+
+## 3. Current Tool-module review
+
+### Evidence boundaries
+
+The historical timeline corpus contains 47 JSONL files, 4,134 calls and 42
+sessions from August 8-10. Those totals span multiple catalog/handler revisions and
+must not be treated as failure rates for current code. For current behavior, the
+authoritative historical comparison is the latest earlier session whose recorded
+catalog SHA and handler MVID match the then-deployed source; the fresh-map session
+above is the authority for this change.
+
+The current catalog has 49 tools. A normal turn exposes 12 core tools plus five
+agent/meta tools; optional groups expose construction, finance, progression,
+district and visual capabilities only when requested. Group gating reduces model
+schema load, but it does not by itself make the Tool module deep.
+
+### Depth assessment
+
+The execution host is deep in several places:
+
+- `place_building` hides road-facing search, rotation, native validation and short
+  utility connector construction behind one call;
+- zoning hides Zone Cell mutation order and the `ToolUpdate` barrier;
+- `wait_simulation` owns speed/pause restoration instead of requiring polling;
+- aggregate perception tools translate ECS state into city concepts.
+
+The model-facing Tool module as a whole is still shallow. The caller must compose
+too much map, prefab, geometry and retry knowledge across a 49-tool surface, while
+the same tool/group/route knowledge is repeated in `ToolCatalog.json`,
+`AgentToolSurface`, the route switch, handlers and gameplay skills. The fresh-map
+loop made this visible: native tool execution was normally 10-500 ms, but the first
+write arrived after roughly three minutes and 34 tool calls because the model had
+to assemble a starter-site plan from `terrain`, `gridmap`, roads and prefab search.
+`find_prefabs("Water")` was especially weak: it returned 50 mostly unrelated
+waterfront growables from 530 matches before narrower queries found the two useful
+pumps.
+
+The next deepening opportunity is therefore not another loop rewrite. It is a
+starter-site/infrastructure planning Tool, or at minimum role/category filters on
+prefab discovery, that owns the knowledge needed to turn an outside connection and
+map resources into a small set of legal road/utility candidates. A second
+opportunity is generating group membership and routing metadata from one catalog
+source so tool knowledge stops leaking across modules.
+
+### Tools with no observed historical calls
+
+Against the current names, these tools had no calls in the 47-file corpus:
+
+`create_district`, `district_policies`, `get_fees`, `get_loan`, `list_districts`,
+`policies`, `set_district_policy`, `set_fee`, `set_loan`, `set_policy`, and
+`upgrade_road`.
+
+This is not evidence that all eleven should be deleted. District tools were never
+exposed because the districts group was enabled zero times; finance was enabled
+only three times, versus construction 49 times. `upgrade_road` is different: it is
+in the frequently enabled construction group, but its implementation only applies
+decorations and cannot widen/change a road type, so its name promises more than the
+Tool can do. Rename/narrow it or implement real type replacement before relying on
+usage statistics. `agent_add_context_block` and `agent_remove_context_block` also
+had no observed calls; map-pin ownership currently sits with the player/UI, so
+model-side mutation is not part of the common mayor workflow.
+
+## 4. Road hierarchy policy
 
 The official road catalog groups roads into small, medium, large and highway
 categories and supports ramps, one-way/asymmetric roads and intersection controls:
@@ -133,7 +224,7 @@ A future perception improvement could expose road traffic volume and Traffic Rou
 Until then, the Agent can apply hierarchy while expanding and use bottleneck
 notifications/locations as coarse evidence for targeted alternate connections.
 
-## 4. Trees and growable buildings
+## 5. Trees and growable buildings
 
 This is already closed at the policy layer. The live zoning run established that
 trees, bushes and ruins do not prevent a valid growable from appearing; construction
@@ -141,7 +232,7 @@ clears them. The city-building skill already directs the Agent to inspect road
 adjacency, registered zoning, demand and outside connectivity instead of demolishing
 vegetation. No new Tool is required for this issue.
 
-## 5. Specialized industry areas
+## 6. Specialized industry areas
 
 The official production description says specialized extraction is created by
 placing a specialized-industry hub, which activates an area tool. The extraction
@@ -184,7 +275,7 @@ the polygon/owner bookkeeping inside the Tool.
   is not success.
 - Production/exports and additional truck traffic become visible to the Agent.
 
-## 6. Landfill storage area size
+## 7. Landfill storage area size
 
 The official garbage overview confirms that landfills store and slowly process
 garbage and can consume significant land:
@@ -218,12 +309,12 @@ building-facing locked edge, and return old/new surface area and capacity.
 
 ## Suggested implementation order
 
-1. Rectangle zoning: smallest change with immediate coverage and safety benefit.
-2. Read-only progression: lets the Agent understand why assets remain unavailable.
-3. Development-node purchase: unlock advanced services through normal game rules.
-4. Read-only natural-resource and building-owned-area diagnostics.
-5. Native operational-area edit spike using landfill on a disposable new map.
-6. Specialized-industry placement built on the proven area seam.
+1. Add role/category filtering or a deeper starter-site candidate Tool so early-city
+   setup does not require dozens of perception/search calls.
+2. Resolve the `upgrade_road` name/capability mismatch.
+3. Read-only natural-resource and building-owned-area diagnostics.
+4. Native operational-area edit spike using landfill on a disposable new map.
+5. Specialized-industry placement built on the proven area seam.
 
 Keep each change independently hot-reloadable when it stays inside request handlers,
 catalog or skills. Changes to `BridgeToolSystem`, ECS scheduling or the area-operation

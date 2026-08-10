@@ -57,6 +57,10 @@ namespace CS2MCP
                     return GetState();
                 case "/city/overview":
                     return GetCityOverview();
+                case "/city/progression":
+                    return GetProgression(request);
+                case "/city/progression/purchase":
+                    return PurchaseDevelopmentNode(request);
                 case "/city/demand":
                     return GetDemand();
                 case "/city/budget":
@@ -93,6 +97,8 @@ namespace CS2MCP
                     return GetZoneTypes();
                 case "/build/zone":
                     return ZoneArea(request);
+                case "/build/zone/rectangle":
+                    return ZoneRectangle(request);
                 case "/debug/zone-blocks":
                     return DebugZoneBlocks(request);
                 case "/build/demolish":

@@ -39,6 +39,52 @@
       "response": "json"
     },
     {
+      "name": "get_progression",
+      "description": "Read milestone/XP progress, unspent Development Points, purchased node names, and the current Development Tree frontier. The default omits distant locked branches; pass service to inspect one service tree. Use this after a milestone or when an advanced service is locked.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string",
+            "description": "Optional service name or unambiguous substring, such as Electricity or Water & Sewage, to inspect that service's full development tree"
+          }
+        },
+        "required": []
+      },
+      "route": "/city/progression",
+      "query": [
+        {
+          "key": "service",
+          "arg": "service"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "purchase_development_node",
+      "description": "Purchase one eligible Development Tree node by name from get_progression. Uses the game's native DevTreeSystem validation, spends legitimately earned points, emits the normal unlock event and leaves state unchanged when points, service availability or prerequisites are insufficient.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Development node name from get_progression; an unambiguous substring is accepted"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "route": "/city/progression/purchase",
+      "query": [
+        {
+          "key": "name",
+          "arg": "name"
+        }
+      ],
+      "response": "json"
+    },
+    {
       "name": "demand",
       "description": "Residential (low/medium/high density), commercial, industrial, office and storage demand of the loaded city. buildingDemand uses the game's internal 0-255 scale (NOT 0-100); companyDemand counters can exceed 255. Includes the demand factors that explain WHY demand is high or low (e.g. Taxes, Unemployment, EmptyZones, Homelessness). Positive factor values push demand up, negative values push it down.",
       "parameters": {
@@ -729,7 +775,7 @@
     },
     {
       "name": "list_zones",
-      "description": "All zone TYPES (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. This is a small type list (not the painted cells); use zoning for per-type cell counts. Use the exact name with zone_area.",
+      "description": "All zone TYPES (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. This is a small type list (not the painted cells); use zoning for per-type cell counts. Use the exact name with zone_rectangle or zone_area.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -741,7 +787,7 @@
     },
     {
       "name": "zone_area",
-      "description": "Paint zoning on all zonable cells within a radius of a point. This is the PRIMARY way to add residential, commercial, and industrial areas. Do NOT use place_building for zoneable buildings. Generic residential/commercial names such as 'Residential Low' automatically resolve to the current map theme (for example 'NA Residential Low') so matching buildings can grow. Buildings grow automatically while the simulation runs. Default radius 80m. Check demand first.",
+      "description": "Paint zoning on all zonable cells within a circular radius. Use this for small irregular patches; prefer zone_rectangle along straight road frontage because circles can spill into occupied neighboring blocks. Do NOT use place_building for zoneable buildings. Generic residential/commercial names automatically resolve to the current map theme. Buildings grow while the simulation runs. Default radius 32m. Check demand first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -796,6 +842,87 @@
         {
           "key": "radius",
           "arg": "radius"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "zone_rectangle",
+      "description": "Paint zoning inside one rotated rectangle. This is the PRIMARY zoning tool for straight road frontage: choose a center, width, depth and rotation that cover fresh zonable strips without touching occupied neighboring blocks. Width follows the rectangle's local X axis; depth follows local Z; rotation is clockwise in world-view degrees. Generic residential/commercial names automatically resolve to the current map theme. Buildings grow while the simulation runs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "zone": {
+            "type": "string",
+            "description": "Zone name from list_zones, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
+          },
+          "x": {
+            "type": "number",
+            "description": "Rectangle center X (meters)"
+          },
+          "z": {
+            "type": "number",
+            "description": "Rectangle center Z (meters)"
+          },
+          "width": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 1000,
+            "description": "Full rectangle width in meters along its local X axis"
+          },
+          "depth": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 1000,
+            "description": "Full rectangle depth in meters along its local Z axis"
+          },
+          "rotation": {
+            "type": "number",
+            "description": "Rectangle rotation in degrees (default 0)"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Zone even if the zone type is milestone-locked"
+          }
+        },
+        "required": [
+          "zone",
+          "x",
+          "z",
+          "width",
+          "depth"
+        ]
+      },
+      "route": "/build/zone/rectangle",
+      "query": [
+        {
+          "key": "zone",
+          "arg": "zone"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "width",
+          "arg": "width"
+        },
+        {
+          "key": "depth",
+          "arg": "depth"
+        },
+        {
+          "key": "rotation",
+          "arg": "rotation"
+        },
+        {
+          "key": "force",
+          "arg": "force",
+          "boolMode": "trueOnly"
         }
       ],
       "response": "json"

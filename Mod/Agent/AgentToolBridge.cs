@@ -63,14 +63,10 @@ namespace CitiesSkylines2Agent.Agent
                 return Error($"tool '{tool.Name}' did not complete within {BridgeTimeoutMs / 1000}s; " +
                              "the game may be busy, retry once or switch approach");
             }
-            if (response == null)
-            {
-                return Error("bridge returned no response");
-            }
             if (response.Status != 200)
             {
                 string body = Encoding.UTF8.GetString(response.Body ?? Array.Empty<byte>());
-                return Error(body);
+                return BridgeError(body);
             }
             if (string.Equals(tool.Response, "png", StringComparison.Ordinal))
             {
@@ -206,6 +202,34 @@ namespace CitiesSkylines2Agent.Agent
         {
             string json = JsonSerializer.Serialize(new { error = message });
             return new ToolInvocationResult { Success = false, Text = json };
+        }
+
+        /// <summary>
+        /// Bridge errors already use a JSON { error } envelope. Preserve that
+        /// envelope instead of serializing the whole body as a second error
+        /// string, which forces the model to decode nested JSON.
+        /// </summary>
+        private static ToolInvocationResult BridgeError(string body)
+        {
+            if (!string.IsNullOrWhiteSpace(body))
+            {
+                try
+                {
+                    using (JsonDocument document = JsonDocument.Parse(body))
+                    {
+                        if (document.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            return new ToolInvocationResult { Success = false, Text = body };
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    // Fall through and give non-JSON bridge failures the normal
+                    // local error envelope.
+                }
+            }
+            return Error(string.IsNullOrWhiteSpace(body) ? "bridge request failed" : body);
         }
 
         private static string SaveScreenshot(byte[] png)

@@ -17,7 +17,7 @@ namespace CitiesSkylines2Agent.Agent
                 ["construction"] = new[]
                 {
                     "find_prefabs", "place_building", "build_road", "find_placement",
-                    "list_buildings", "list_zones", "zone_area", "upgrade_road",
+                    "list_buildings", "list_zones", "zone_area", "zone_rectangle", "upgrade_road",
                     "list_roads", "demolish", "terrain", "gridmap", "zoning",
                     "list_tiles", "buy_tiles", "debug_zone_blocks", "list_objects",
                 },
@@ -25,6 +25,10 @@ namespace CitiesSkylines2Agent.Agent
                 {
                     "get_taxes", "set_tax", "policies", "set_policy", "service_budgets",
                     "set_service_budget", "get_loan", "set_loan", "get_fees", "set_fee",
+                },
+                ["progression"] = new[]
+                {
+                    "get_progression", "purchase_development_node",
                 },
                 ["districts"] = new[]
                 {
@@ -135,13 +139,13 @@ namespace CitiesSkylines2Agent.Agent
         private static void AddMetaTools(List<AITool> tools, bool visionAvailable)
         {
             string groupEnum = visionAvailable
-                ? "[\"construction\",\"finance\",\"districts\",\"visual\"]"
-                : "[\"construction\",\"finance\",\"districts\"]";
+                ? "[\"construction\",\"finance\",\"progression\",\"districts\",\"visual\"]"
+                : "[\"construction\",\"finance\",\"progression\",\"districts\"]";
             tools.Add(AIFunctionFactory.CreateDeclaration(
                 "agent_enable_tool_group",
                 visionAvailable
-                    ? "Enable a specialized tool group for the current turn. Available groups: construction, finance, districts, visual."
-                    : "Enable a specialized tool group for the current turn. Available groups: construction, finance, districts. Visual tools are unavailable for this model.",
+                    ? "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, districts, visual."
+                    : "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, districts. Visual tools are unavailable for this model.",
                 ParseSchema("{\"type\":\"object\",\"properties\":{\"group\":{\"type\":\"string\",\"enum\":" +
                     groupEnum + "}},\"required\":[\"group\"]}"),
                 null));

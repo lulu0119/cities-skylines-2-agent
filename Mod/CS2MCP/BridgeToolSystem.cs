@@ -70,6 +70,9 @@ namespace CS2MCP
         private ZoneType m_PendingZone;
         private float2 m_PendingZoneCenter;
         private float m_PendingZoneRadius;
+        private float2 m_PendingZoneSize;
+        private float m_PendingZoneRotationDegrees;
+        private bool m_PendingZoneIsRectangle;
         private float2 m_PendingElevations;
         private quaternion m_PendingRotation;
         private readonly List<float3> m_ProbePositions = new List<float3>();
@@ -320,7 +323,7 @@ namespace CS2MCP
         /// open and the game's zone cell-check lifecycle can observe Updated.
         /// Must be called on the simulation thread.
         /// </summary>
-        public bool TryQueueZone(ZoneType zone, string label, float2 center, float radius, BridgeRequest request)
+        public bool TryQueueZoneCircle(ZoneType zone, string label, float2 center, float radius, BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
             {
@@ -331,6 +334,35 @@ namespace CS2MCP
             m_PendingLabel = label;
             m_PendingZoneCenter = center;
             m_PendingZoneRadius = radius;
+            m_PendingZoneSize = default;
+            m_PendingZoneRotationDegrees = 0f;
+            m_PendingZoneIsRectangle = false;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>Queues a rotated rectangular zone brush for ToolUpdate.</summary>
+        public bool TryQueueZoneRectangle(
+            ZoneType zone,
+            string label,
+            float2 center,
+            float2 size,
+            float rotationDegrees,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.Zone;
+            m_PendingZone = zone;
+            m_PendingLabel = label;
+            m_PendingZoneCenter = center;
+            m_PendingZoneSize = size;
+            m_PendingZoneRotationDegrees = rotationDegrees;
+            m_PendingZoneRadius = math.length(size * 0.5f);
+            m_PendingZoneIsRectangle = true;
             m_PendingRequest = request;
             Activate();
             return true;
@@ -594,7 +626,7 @@ namespace CS2MCP
                                 continue;
                             }
                             float3 cellPosition = ZoneUtils.GetCellPosition(block, new int2(cellX, cellZ));
-                            if (math.distance(cellPosition.xz, m_PendingZoneCenter) > m_PendingZoneRadius)
+                            if (!PendingZoneContains(cellPosition.xz))
                             {
                                 continue;
                             }
@@ -617,17 +649,46 @@ namespace CS2MCP
                 }
             }
 
-            CompletePending(BridgeResponse.Json(new
+            var payload = new Dictionary<string, object>
             {
-                zone = m_PendingLabel,
-                center = new { x = m_PendingZoneCenter.x, z = m_PendingZoneCenter.y },
-                radius = m_PendingZoneRadius,
-                cellsChanged,
-                blocksTouched,
-                note = cellsChanged == 0
-                    ? "no zonable cells found in radius - zone cells only exist along roads and must be unoccupied"
+                ["zone"] = m_PendingLabel,
+                ["shape"] = m_PendingZoneIsRectangle ? "rectangle" : "circle",
+                ["center"] = new { x = m_PendingZoneCenter.x, z = m_PendingZoneCenter.y },
+                ["cellsChanged"] = cellsChanged,
+                ["blocksTouched"] = blocksTouched,
+                ["note"] = cellsChanged == 0
+                    ? "no zonable cells found in shape - zone cells only exist along roads and must be unoccupied"
                     : "painted zone cells during ToolUpdate; run the simulation for VacantLots/buildings",
-            }));
+            };
+            if (m_PendingZoneIsRectangle)
+            {
+                payload["width"] = m_PendingZoneSize.x;
+                payload["depth"] = m_PendingZoneSize.y;
+                payload["rotation"] = m_PendingZoneRotationDegrees;
+            }
+            else
+            {
+                payload["radius"] = m_PendingZoneRadius;
+            }
+            CompletePending(BridgeResponse.Json(payload));
+        }
+
+        private bool PendingZoneContains(float2 position)
+        {
+            float2 delta = position - m_PendingZoneCenter;
+            if (!m_PendingZoneIsRectangle)
+            {
+                return math.length(delta) <= m_PendingZoneRadius;
+            }
+
+            float radians = math.radians(m_PendingZoneRotationDegrees);
+            float sine = math.sin(radians);
+            float cosine = math.cos(radians);
+            float2 local = new float2(
+                cosine * delta.x + sine * delta.y,
+                -sine * delta.x + cosine * delta.y);
+            float2 halfSize = m_PendingZoneSize * 0.5f;
+            return math.abs(local.x) <= halfSize.x && math.abs(local.y) <= halfSize.y;
         }
 
         private BridgeResponse BuildAutoConnectResponse()

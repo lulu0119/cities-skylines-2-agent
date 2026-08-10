@@ -109,10 +109,6 @@ namespace CS2MCP
                 return error;
             }
 
-            if (!request.Query.TryGetValue("zone", out string zoneName) || string.IsNullOrEmpty(zoneName))
-            {
-                return BridgeResponse.Error(400, "provide ?zone=<name from /zones, or 'None' to dezone>");
-            }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
                 return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
@@ -121,36 +117,92 @@ namespace CS2MCP
                 ? math.clamp(rawRadius, kCellSize, 200f)
                 : 32f;
 
-            ZoneType targetZone;
-            string resolvedName;
-            if (string.Equals(zoneName, "None", StringComparison.OrdinalIgnoreCase))
+            if (!TryResolveZone(request, out ZoneType targetZone, out string resolvedName, out error))
             {
-                targetZone = ZoneType.None;
-                resolvedName = "None";
-            }
-            else
-            {
-                string lookupName = ResolveZoneNameForTheme(zoneName);
-                if (!TryFindPrefabByName(ZonePrefabQuery, lookupName, out Entity zonePrefabEntity, out PrefabBase zonePrefab))
-                {
-                    return BridgeResponse.Error(404, $"unknown zone '{zoneName}'; list via /zones");
-                }
-                if (IsLocked(zonePrefabEntity) && !IsForced(request))
-                {
-                    return BridgeResponse.Error(409, $"zone '{zonePrefab.name}' is locked (milestone not reached); pass force=true to zone anyway");
-                }
-                targetZone = EntityManager.GetComponentData<ZoneData>(zonePrefabEntity).m_ZoneType;
-                resolvedName = zonePrefab.name;
+                return error;
             }
 
             float2 center = new float2(x, z);
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueueZone(targetZone, resolvedName, center, radius, request))
+            if (!tool.TryQueueZoneCircle(targetZone, resolvedName, center, radius, request))
             {
                 return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
             }
             // Completed asynchronously by BridgeToolSystem during ToolUpdate.
             return null;
+        }
+
+        private BridgeResponse ZoneRectangle(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            {
+                return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
+            }
+            if (!request.TryGetFloat("width", out float rawWidth)
+                || !request.TryGetFloat("depth", out float rawDepth))
+            {
+                return BridgeResponse.Error(400, "provide ?width=&depth= rectangle dimensions in meters");
+            }
+            float width = math.clamp(rawWidth, kCellSize, 1000f);
+            float depth = math.clamp(rawDepth, kCellSize, 1000f);
+            request.TryGetFloat("rotation", out float rotationDegrees);
+            if (!TryResolveZone(request, out ZoneType targetZone, out string resolvedName, out error))
+            {
+                return error;
+            }
+
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueueZoneRectangle(
+                    targetZone,
+                    resolvedName,
+                    new float2(x, z),
+                    new float2(width, depth),
+                    rotationDegrees,
+                    request))
+            {
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            }
+            return null;
+        }
+
+        private bool TryResolveZone(
+            BridgeRequest request,
+            out ZoneType targetZone,
+            out string resolvedName,
+            out BridgeResponse error)
+        {
+            targetZone = ZoneType.None;
+            resolvedName = null;
+            error = null;
+            if (!request.Query.TryGetValue("zone", out string zoneName) || string.IsNullOrEmpty(zoneName))
+            {
+                error = BridgeResponse.Error(400, "provide ?zone=<name from /zones, or 'None' to dezone>");
+                return false;
+            }
+            if (string.Equals(zoneName, "None", StringComparison.OrdinalIgnoreCase))
+            {
+                resolvedName = "None";
+                return true;
+            }
+
+            string lookupName = ResolveZoneNameForTheme(zoneName);
+            if (!TryFindPrefabByName(ZonePrefabQuery, lookupName, out Entity zonePrefabEntity, out PrefabBase zonePrefab))
+            {
+                error = BridgeResponse.Error(404, $"unknown zone '{zoneName}'; list via /zones");
+                return false;
+            }
+            if (IsLocked(zonePrefabEntity) && !IsForced(request))
+            {
+                error = BridgeResponse.Error(409, $"zone '{zonePrefab.name}' is locked (milestone not reached); pass force=true to zone anyway");
+                return false;
+            }
+            targetZone = EntityManager.GetComponentData<ZoneData>(zonePrefabEntity).m_ZoneType;
+            resolvedName = zonePrefab.name;
+            return true;
         }
 
         /// <summary>

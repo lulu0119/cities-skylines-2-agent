@@ -75,9 +75,28 @@ The observed server identified itself as `windows-mcp` `3.4.6`. Do not assume th
 
 If the MCP host does not start the service for you, launch the installed server once and then verify the endpoint. Do not start a second copy when port `8000` is already serving MCP:
 
+`windows-mcp 3.4.6` defaults `serve` to `stdio`; an HTTP client therefore needs an
+explicit transport. On this machine, Smart App Control also blocks `_socket.pyd`
+from uv-managed Python 3.14, so use the PSF-signed Python installation:
+
 ```powershell
-uvx windows-mcp serve
+$python = 'C:\Users\super\AppData\Local\Programs\Python\Python313\python.exe'
+uvx --python $python --no-managed-python --no-python-downloads windows-mcp serve `
+  --transport streamable-http --host 127.0.0.1 --port 8000
 ```
+
+For persistence, the package's installer creates `windows-mcp-server`, a logon
+scheduled task. The same explicit Python selection makes the generated environment
+inherit the signed interpreter and native modules:
+
+```powershell
+uvx --python $python --no-managed-python --no-python-downloads windows-mcp install `
+  --transport streamable-http --host 127.0.0.1 --port 8000 --force
+```
+
+The 2026-08-10 repair was cold-accepted by stopping the manual listener, starting
+only that scheduled task, then completing MCP `initialize`,
+`notifications/initialized`, `tools/list` (20 tools) and a real desktop `Snapshot`.
 
 The minimum JSON-RPC sequence is:
 
@@ -351,6 +370,8 @@ A text-only DeepSeek V4 Flash profile must not expose `screenshot`, `get_camera`
 | --- | --- | --- |
 | MCP GET returns `406 Not Acceptable` | POST an MCP `initialize` request with `Accept: application/json, text/event-stream` | Treat the endpoint as a normal REST GET API |
 | MCP tools are unavailable | Reinitialize, retain `mcp-session-id`, then call `tools/list` | Issue blind tool calls from a stale session |
+| `uvx windows-mcp` fails importing `_socket`/`_ssl` with Application Control policy | Use the PSF-signed Python and `--no-managed-python --no-python-downloads`; reinstall the logon task | Disable Smart App Control or keep retrying the unsigned uv runtime |
+| `windows-mcp serve` exits successfully but port 8000 never listens | Pass `--transport streamable-http --host 127.0.0.1 --port 8000` | Assume `serve` defaults to HTTP |
 | Stuck at Paradox Launcher | `Snapshot`, click the exact **Play** element, `Wait`, then snapshot again | Start `Cities2.exe` directly for the normal acceptance path |
 | UIA sees only Minimize/Close in CS2 | Use CDP `:9444` for Gameface DOM and localization | Assume the React controls are missing from the product |
 | CDP cannot find **Continue Game** | Wait, probe body text, and check the current locale/page | Blind-click a remembered coordinate |
