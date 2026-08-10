@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using Game.Areas;
 using Game.Common;
 using Game.Prefabs;
+using Game.Simulation;
 using Unity.Entities;
+using Unity.Mathematics;
 
 namespace CS2MCP
 {
@@ -68,6 +70,214 @@ namespace CS2MCP
                     ? "this building has no owned operational area"
                     : "read-only snapshot; storage capacity is calculated with the game's AreaUtils and extractor fields are current simulation state",
             });
+        }
+
+        private BridgeResponse ExpandOperationalArea(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.TryGetInt("index", out int index)
+                || !request.TryGetInt("version", out int version))
+            {
+                return BridgeResponse.Error(400,
+                    "provide ?index=&version= of a landfill building from /city/buildings");
+            }
+            if (!request.TryGetFloat("extra_depth_m", out float extraDepth)
+                || extraDepth < 8f
+                || extraDepth > 64f)
+            {
+                return BridgeResponse.Error(400,
+                    "extra_depth_m must be between 8 and 64 metres");
+            }
+
+            var building = new Entity { Index = index, Version = version };
+            if (!EntityManager.Exists(building)
+                || !EntityManager.HasComponent<Game.Buildings.Building>(building))
+            {
+                return BridgeResponse.Error(404,
+                    $"entity {index}:{version} is not an existing building");
+            }
+            if (!TryResolveExpandableStorageArea(
+                    building,
+                    out Entity area,
+                    out Entity owner,
+                    out Entity prefabEntity,
+                    out DynamicBuffer<Node> currentNodes,
+                    out BridgeResponse areaError))
+            {
+                return areaError;
+            }
+
+            var expandedNodes = new Node[currentNodes.Length];
+            for (int i = 0; i < currentNodes.Length; i++)
+            {
+                expandedNodes[i] = currentNodes[i];
+            }
+
+            float2 lockedStart = expandedNodes[0].m_Position.xz;
+            float2 lockedEnd = expandedNodes[1].m_Position.xz;
+            float2 lockedEdge = lockedEnd - lockedStart;
+            float lockedLength = math.length(lockedEdge);
+            if (lockedLength < 8f)
+            {
+                return BridgeResponse.Error(409,
+                    "the building-side locked edge is too short to expand safely");
+            }
+
+            float2 normal = new float2(-lockedEdge.y, lockedEdge.x) / lockedLength;
+            float2 lockedMid = (lockedStart + lockedEnd) * 0.5f;
+            float2 freeMid = (expandedNodes[2].m_Position.xz
+                + expandedNodes[3].m_Position.xz) * 0.5f;
+            float signedDepth = math.dot(freeMid - lockedMid, normal);
+            if (math.abs(signedDepth) < 8f)
+            {
+                return BridgeResponse.Error(409,
+                    "the operational area is not a supported four-corner extrusion");
+            }
+            if (signedDepth < 0f)
+            {
+                normal = -normal;
+            }
+
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            for (int i = 2; i < 4; i++)
+            {
+                Node node = expandedNodes[i];
+                float2 moved = node.m_Position.xz + normal * extraDepth;
+                float3 position = new float3(moved.x, node.m_Position.y, moved.y);
+                position.y = TerrainUtils.SampleHeight(ref heightData, position);
+                node.m_Position = position;
+                expandedNodes[i] = node;
+            }
+
+            float previousPolygonArea = CalculatePolygonArea(currentNodes);
+            float expandedPolygonArea = CalculatePolygonArea(expandedNodes);
+            if (expandedPolygonArea <= previousPolygonArea + 1f)
+            {
+                return BridgeResponse.Error(409,
+                    "requested geometry did not increase the operational area");
+            }
+
+            Geometry geometry = EntityManager.GetComponentData<Geometry>(area);
+            StorageAreaData storageData =
+                EntityManager.GetComponentData<StorageAreaData>(prefabEntity);
+            int previousCapacity = AreaUtils.CalculateStorageCapacity(geometry, storageData);
+            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabEntity);
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueueOperationalAreaExpansion(
+                    area,
+                    owner,
+                    prefabEntity,
+                    prefab,
+                    expandedNodes,
+                    geometry.m_SurfaceArea,
+                    previousCapacity,
+                    extraDepth,
+                    request))
+            {
+                return BridgeResponse.Error(409,
+                    "another build operation is in progress, retry shortly");
+            }
+            return null;
+        }
+
+        private bool TryResolveExpandableStorageArea(
+            Entity building,
+            out Entity area,
+            out Entity owner,
+            out Entity prefabEntity,
+            out DynamicBuffer<Node> nodes,
+            out BridgeResponse error)
+        {
+            area = Entity.Null;
+            owner = Entity.Null;
+            prefabEntity = Entity.Null;
+            nodes = default;
+            error = null;
+            if (!EntityManager.HasBuffer<Game.Areas.SubArea>(building))
+            {
+                error = BridgeResponse.Error(409,
+                    "building has no owned operational areas");
+                return false;
+            }
+
+            DynamicBuffer<Game.Areas.SubArea> subAreas =
+                EntityManager.GetBuffer<Game.Areas.SubArea>(building, isReadOnly: true);
+            foreach (Game.Areas.SubArea subArea in subAreas)
+            {
+                Entity candidate = subArea.m_Area;
+                if (candidate == Entity.Null
+                    || !EntityManager.Exists(candidate)
+                    || EntityManager.HasComponent<Deleted>(candidate)
+                    || !EntityManager.HasComponent<Storage>(candidate)
+                    || !EntityManager.HasComponent<Lot>(candidate)
+                    || !EntityManager.HasComponent<Geometry>(candidate)
+                    || !EntityManager.HasComponent<PrefabRef>(candidate)
+                    || !EntityManager.HasComponent<Owner>(candidate)
+                    || !EntityManager.HasBuffer<Node>(candidate)
+                    || !IsAreaOwnedBy(candidate, building))
+                {
+                    continue;
+                }
+
+                Entity candidatePrefab =
+                    EntityManager.GetComponentData<PrefabRef>(candidate).m_Prefab;
+                DynamicBuffer<Node> candidateNodes =
+                    EntityManager.GetBuffer<Node>(candidate, isReadOnly: true);
+                if (candidateNodes.Length != 4
+                    || !EntityManager.HasComponent<StorageAreaData>(candidatePrefab)
+                    || (EntityManager.GetComponentData<StorageAreaData>(candidatePrefab).m_Resources
+                        & Game.Economy.Resource.Garbage) == 0)
+                {
+                    continue;
+                }
+                if (area != Entity.Null)
+                {
+                    error = BridgeResponse.Error(409,
+                        "building has multiple expandable storage areas; v0 requires exactly one");
+                    return false;
+                }
+                area = candidate;
+                owner = EntityManager.GetComponentData<Owner>(candidate).m_Owner;
+                prefabEntity = candidatePrefab;
+                nodes = candidateNodes;
+            }
+
+            if (area == Entity.Null)
+            {
+                error = BridgeResponse.Error(409,
+                    "no owner-linked four-corner landfill storage area is available; v0 does not edit extractor or irregular polygons");
+                return false;
+            }
+            return true;
+        }
+
+        private static float CalculatePolygonArea(DynamicBuffer<Node> nodes)
+        {
+            float area = 0f;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                float2 current = nodes[i].m_Position.xz;
+                float2 next = nodes[(i + 1) % nodes.Length].m_Position.xz;
+                area += current.x * next.y - next.x * current.y;
+            }
+            return math.abs(area) * 0.5f;
+        }
+
+        private static float CalculatePolygonArea(Node[] nodes)
+        {
+            float area = 0f;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                float2 current = nodes[i].m_Position.xz;
+                float2 next = nodes[(i + 1) % nodes.Length].m_Position.xz;
+                area += current.x * next.y - next.x * current.y;
+            }
+            return math.abs(area) * 0.5f;
         }
 
         private object BuildOperationalAreaView(

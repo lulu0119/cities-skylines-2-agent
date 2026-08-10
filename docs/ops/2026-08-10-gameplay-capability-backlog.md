@@ -2,9 +2,9 @@
 
 **Status:** Rectangle zoning, progression reads, typed prefab roles, road-feature
 editing, restricted road-type replacement, and operational-area inspection are
-implemented and live-accepted. A positive development-node purchase plus
-save/reload, operational-area writes, and specialized industry remain backlog
-items.
+implemented and live-accepted. Restricted landfill expansion also survives a cold
+save/reload. A positive development-node purchase, non-empty landfill behavior,
+and specialized-industry extraction areas remain backlog items.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -16,7 +16,7 @@ does not try to fix every symptom in the prompt.
 | --- | --- | --- | --- |
 | Closed | Circular-only zoning | Low frontage coverage and accidental overlap with occupied blocks | `zone_rectangle` mutates cells during `ToolUpdate` |
 | Implemented | No milestone/development-tree tools | Agent earns progression but keeps choosing basic services | Compact progression frontier + native node purchase; positive purchase/reload acceptance pending |
-| P1 | No building-owned area editing | Specialized industry hubs and landfill storage areas stay at their tiny defaults | Read-only owner/capacity inspection accepted; native area-write spike next |
+| Implemented | Landfill storage area stuck at its default | Capacity cannot grow with the site's available land | `expand_operational_area(building, extra_depth_m)` accepted through save/reload |
 | P1 | No specialized-industry workflow | Raw materials are imported and freight/economy opportunities are missed | Resource perception + hub placement + extraction polygon |
 | Policy | No road hierarchy | Local streets and a few junctions absorb most through/freight traffic | Gameplay skill updated in this change |
 | Closed | Trees treated as obstacles | Wasted demolish/placement turns | Existing skill already states that growables clear vegetation |
@@ -146,7 +146,7 @@ catalog SHA and handler MVID match the then-deployed source; the fresh-map sessi
 above is the authority for this change.
 
 The `e53c750` catalog reviewed against the historical corpus had 49 tools; the
-catalog after this change has 52. A normal turn exposes 12 core tools plus five
+catalog after the landfill expansion has 53. A normal turn exposes 12 core tools plus five
 agent/meta tools; optional groups expose construction, finance, progression,
 district and visual capabilities only when requested. Group gating reduces model
 schema load, but it does not by itself make the Tool module deep.
@@ -319,10 +319,11 @@ Therefore a later implementation should resize the owned storage polygon and all
 the game to recalculate geometry/capacity. It must not fake capacity by editing
 `Storage.m_Amount` or the prefab's fixed garbage values.
 
-The preferred seam is the same general `set_operational_area(building, points)` Tool
-considered for specialized industries. It should resolve the building's owned
-subarea, submit polygon edits through the native Area Tool pipeline, preserve the
-building-facing locked edge, and return old/new surface area and capacity.
+The shared lower-level seam is the same owner-linked area transaction needed by
+specialized industries. The landfill-facing interface is intentionally stronger and
+narrower: `expand_operational_area(building, extra_depth_m)` owns polygon selection,
+direction and locked-edge preservation instead of asking the model to manufacture
+corner coordinates.
 
 The read-only precursor `get_operational_area(building)` is now implemented and
 live-accepted. A forced empty `Landfill01` on disposable city `阿什比` exposed 28
@@ -331,6 +332,15 @@ area as editable. That polygon had four nodes, a 3,264 m² surface, zero stored
 garbage, and 51,000 capacity calculated through the game's `AreaUtils`; the other
 27 decorative/surface areas remained non-editable. No polygon was modified during
 this acceptance.
+
+The write path is now live-accepted on the same disposable landfill. A 16 m request
+kept the building-side edge at `z=-572`, moved the free edge from `z=-548` to
+`z=-532`, increased surface area from 3,264 to 5,440 m², and increased native
+capacity from 51,000 to 85,000. The area remained the only editable owner-linked
+storage area. After saving as `ToolLoop-OperationalArea` and cold-loading it, the
+same four nodes, 5,440 m² surface, 85,000 capacity, `editable=true`, and locked edge
+were still present. Entity ids changed across reload, so the model-facing interface
+correctly continues to identify the building rather than persisting ECS ids.
 
 ### Acceptance
 
@@ -348,7 +358,8 @@ this acceptance.
    building-owned operational-area diagnostic.~~ Accepted on `阿什比`.
 3. ~~Restricted native road-type replacement spike on a disposable map.~~ The
    standalone-edge case is accepted; save/reload and broader topology are pending.
-4. Native operational-area expansion spike using the empty `阿什比` landfill.
+4. ~~Native operational-area expansion spike using the empty `阿什比` landfill.~~
+   Accepted through cold save/reload; non-empty storage and active trucks remain.
 5. Specialized-industry placement built on the proven area seam.
 
 Keep each change independently hot-reloadable when it stays inside request handlers,

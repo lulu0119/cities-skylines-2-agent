@@ -110,6 +110,8 @@ namespace CS2MCP
                     return ListBuildings(request);
                 case "/city/buildings/operational-area":
                     return GetOperationalArea(request);
+                case "/build/operational-area/expand":
+                    return ExpandOperationalArea(request);
                 case "/city/roads":
                     return ListRoads(request);
                 case "/city/loan":

@@ -53,6 +53,7 @@ namespace CS2MCP
             Upgrade,
             ReplaceNet,
             Area,
+            OperationalArea,
             Zone,
         }
 
@@ -68,6 +69,11 @@ namespace CS2MCP
         private bool m_PendingHasMid;
         private CompositionFlags m_PendingUpgradeFlags;
         private float3[] m_PendingAreaNodes;
+        private Game.Areas.Node[] m_PendingOperationalAreaNodes;
+        private Entity m_PendingOwner;
+        private float m_PendingPreviousAreaSurface;
+        private int m_PendingPreviousStorageCapacity;
+        private float m_PendingExpansionMeters;
         private ZoneType m_PendingZone;
         private float2 m_PendingZoneCenter;
         private float m_PendingZoneRadius;
@@ -320,6 +326,40 @@ namespace CS2MCP
         }
 
         /// <summary>
+        /// Queues a complete replacement polygon for an existing building-owned
+        /// operational area. The handler owns the expansion-only geometry checks;
+        /// the game's area generation, validation and apply systems own the write.
+        /// </summary>
+        public bool TryQueueOperationalAreaExpansion(
+            Entity area,
+            Entity owner,
+            Entity prefabEntity,
+            PrefabBase prefab,
+            Game.Areas.Node[] polygonNodes,
+            float previousSurface,
+            int previousCapacity,
+            float expansionMeters,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.OperationalArea;
+            m_PendingTarget = area;
+            m_PendingOwner = owner;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_PendingOperationalAreaNodes = polygonNodes;
+            m_PendingPreviousAreaSurface = previousSurface;
+            m_PendingPreviousStorageCapacity = previousCapacity;
+            m_PendingExpansionMeters = expansionMeters;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>
         /// Queues replacement of one simple standalone network edge with a new
         /// prefab. The handler owns the restricted-topology safety checks.
         /// </summary>
@@ -444,6 +484,9 @@ namespace CS2MCP
                                 break;
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
+                                break;
+                            case OperationKind.OperationalArea:
+                                CreateOperationalAreaDefinition();
                                 break;
                             case OperationKind.Zone:
                                 ApplyZoneCells();
@@ -820,6 +863,18 @@ namespace CS2MCP
                         nodes = m_PendingAreaNodes != null ? m_PendingAreaNodes.Length : 0,
                         note = "area committed this frame; list districts via /districts",
                     });
+                case OperationKind.OperationalArea:
+                    return BridgeResponse.Json(new
+                    {
+                        expanded = true,
+                        area = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                        prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                        requestedExtraDepthM = m_PendingExpansionMeters,
+                        previousSurfaceAreaM2 = (float)Math.Round(m_PendingPreviousAreaSurface, 1),
+                        previousCapacity = m_PendingPreviousStorageCapacity,
+                        nodes = m_PendingOperationalAreaNodes != null ? m_PendingOperationalAreaNodes.Length : 0,
+                        note = "native operational-area relocation committed; call get_operational_area to verify the new surface, capacity and owner relationship",
+                    });
                 default:
                     object lotSize = null;
                     object footprintMeters = null;
@@ -1036,6 +1091,8 @@ namespace CS2MCP
             m_PendingRequest = null;
             m_PendingPrefab = null;
             m_PendingPrefabEntity = Entity.Null;
+            m_PendingOwner = Entity.Null;
+            m_PendingOperationalAreaNodes = null;
             m_ProbePositions.Clear();
             m_ProbeRotations.Clear();
             m_ProbeIndex = 0;
@@ -1190,6 +1247,31 @@ namespace CS2MCP
             foreach (float3 position in m_PendingAreaNodes)
             {
                 nodes.Add(new Game.Areas.Node(position, float.MinValue));
+            }
+        }
+
+        /// <summary>
+        /// Mirrors AreaToolSystem's existing-area edit definition: the original
+        /// area, its real owner, existing prefab, Relocate flag, and full Node
+        /// buffer travel through Generate/Validation/ApplyAreasSystem together.
+        /// </summary>
+        private void CreateOperationalAreaDefinition()
+        {
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            Entity definitionEntity = commandBuffer.CreateEntity();
+            commandBuffer.AddComponent(definitionEntity, new CreationDefinition
+            {
+                m_Original = m_PendingTarget,
+                m_Owner = m_PendingOwner,
+                m_Prefab = m_PendingPrefabEntity,
+                m_Flags = CreationFlags.Relocate,
+            });
+            commandBuffer.AddComponent(definitionEntity, default(Updated));
+            DynamicBuffer<Game.Areas.Node> nodes =
+                commandBuffer.AddBuffer<Game.Areas.Node>(definitionEntity);
+            foreach (Game.Areas.Node node in m_PendingOperationalAreaNodes)
+            {
+                nodes.Add(node);
             }
         }
 

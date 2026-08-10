@@ -519,6 +519,50 @@
       "response": "json"
     },
     {
+      "name": "expand_operational_area",
+      "description": "EXPERIMENTAL one-step landfill expansion: extend the free edge of one owner-linked four-corner storage area while preserving its building-side locked edge. Uses the game's native area relocation, validation and apply pipeline. Expansion only; extractor and irregular polygons are rejected. Call get_operational_area afterward to verify surface, capacity and ownership.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Landfill building entity index from list_buildings"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Landfill building entity version from list_buildings"
+          },
+          "extra_depth_m": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 64,
+            "description": "Metres to extend the free edge away from the building; positive expansion only"
+          }
+        },
+        "required": [
+          "index",
+          "version",
+          "extra_depth_m"
+        ]
+      },
+      "route": "/build/operational-area/expand",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
+        },
+        {
+          "key": "extra_depth_m",
+          "arg": "extra_depth_m"
+        }
+      ],
+      "response": "json"
+    },
+    {
       "name": "place_building",
       "description": "ONE-STEP placement: give prefab + x/z (and optional radius). With radius>0 the tool searches owned land for one non-overlapping, road-facing candidate, then asks the game's real tool pipeline to validate and place it; if the game rejects that candidate, move/build the road or retry with a nearby center/rotation. It intentionally does not multi-probe because rejected previews can wedge the game tool. With radius omitted it preflights and places exactly at x/z. Utility buildings are connected to the nearby road network with the appropriate pipe/cable. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
       "parameters": {

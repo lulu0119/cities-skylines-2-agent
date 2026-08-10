@@ -17,7 +17,7 @@ namespace CitiesSkylines2Agent.Agent
                 ["construction"] = new[]
                 {
                     "find_prefabs", "place_building", "build_road", "find_placement",
-                    "list_buildings", "get_operational_area", "list_zones", "zone_area", "zone_rectangle", "set_road_features", "replace_road_type",
+                    "list_buildings", "get_operational_area", "expand_operational_area", "list_zones", "zone_area", "zone_rectangle", "set_road_features", "replace_road_type",
                     "list_roads", "demolish", "terrain", "gridmap", "zoning",
                     "list_tiles", "buy_tiles", "debug_zone_blocks", "list_objects",
                 },
