@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using Colossal.Mathematics;
 using Game.Prefabs;
 using Game.Simulation;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Transform = Game.Objects.Transform;
 
@@ -387,9 +389,130 @@ namespace CS2MCP
                 position.y = TerrainUtils.SampleHeight(ref heightData, position);
             }
             quaternion rotation = quaternion.RotateY(math.radians(rotationDegrees));
+            bool requiresShoreline = EntityManager.HasComponent<PlaceableObjectData>(prefabEntity)
+                && (EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity).m_Flags
+                    & Game.Objects.PlacementFlags.Shoreline) != 0;
+            WaterSurfaceData<SurfaceWater> waterSurfaceData = default;
+            if (requiresShoreline)
+            {
+                WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+                waterSurfaceData = water.GetSurfaceData(out JobHandle waterDeps);
+                waterDeps.Complete();
+            }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueuePlacement(prefabEntity, prefab, position, rotation, request))
+            float searchRadius = request.TryGetFloat("radius", out float rawRadius)
+                ? math.clamp(rawRadius, 8f, 300f)
+                : 0f;
+            bool hasRotation = request.Query.ContainsKey("rotation");
+            float baseRotation = hasRotation ? rotationDegrees : 0f;
+            if (searchRadius > 0f)
+            {
+                // One-step find+place WITHOUT the multi-candidate tool probe
+                // (the game disables a tool after a rejected preview, which
+                // wedges the probe state machine). Instead we search with our
+                // own heuristics (owned tile, no overlap, near a road) and then
+                // commit the single best candidate through the normal placement
+                // pipeline, where the game does the final validation.
+                float2 center = new float2(x, z);
+                const int step = 8;
+                int halfSteps = math.max(1, (int)math.floor(searchRadius / step));
+                var positions = new List<float3>();
+                TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+                TerrainHeightData heightData = terrain.GetHeightData();
+                for (int dz = -halfSteps; dz <= halfSteps; dz++)
+                {
+                    for (int dx = -halfSteps; dx <= halfSteps; dx++)
+                    {
+                        float cx = x + dx * step;
+                        float cz = z + dz * step;
+                        if (math.abs(cx - x) > searchRadius || math.abs(cz - z) > searchRadius)
+                        {
+                            continue;
+                        }
+                        var candidate = new float3(cx, 0f, cz);
+                        candidate.y = TerrainUtils.SampleHeight(ref heightData, candidate);
+                        positions.Add(candidate);
+                    }
+                }
+                positions.Sort((a, b) =>
+                {
+                    float da = math.lengthsq(new float2(a.x, a.z) - center);
+                    float db = math.lengthsq(new float2(b.x, b.z) - center);
+                    return da.CompareTo(db);
+                });
+                bool found = false;
+                string lastReason = "no candidate positions in radius";
+                foreach (float3 p in positions)
+                {
+                    float candidateRotation = hasRotation
+                        ? baseRotation
+                        : AutoRotationTowardsRoad(p);
+                    quaternion candidateQuaternion = quaternion.RotateY(math.radians(candidateRotation));
+                    if (IsCandidateBuildable(
+                            prefabEntity,
+                            p,
+                            candidateQuaternion,
+                            requiresShoreline,
+                            ref waterSurfaceData,
+                            out string reason))
+                    {
+                        position = p;
+                        rotation = candidateQuaternion;
+                        found = true;
+                        break;
+                    }
+                    lastReason = reason;
+                }
+                if (!found)
+                {
+                    return BridgeResponse.Error(404,
+                        $"no valid placement found inside radius {searchRadius:F0}m around ({x:F0},{z:F0}): " +
+                        lastReason + ". Try another center, or build a road to the site first.");
+                }
+            }
+            else if (!hasRotation)
+            {
+                // Exact coordinates but auto-orient the building toward the
+                // nearest road (front faces +Z at rotation 0 in CS2).
+                rotation = quaternion.RotateY(math.radians(AutoRotationTowardsRoad(position)));
+            }
+            if (searchRadius <= 0f
+                && !IsForced(request)
+                && !IsCandidateBuildable(
+                    prefabEntity,
+                    position,
+                    rotation,
+                    requiresShoreline,
+                    ref waterSurfaceData,
+                    out string exactReason))
+            {
+                return BridgeResponse.Error(409,
+                    $"cannot place '{prefab.name}' at ({x:F0},{z:F0}): {exactReason}. " +
+                    "Use radius to search nearby, or build a road to the site first.");
+            }
+
+            // Resolve the connector only after radius search and rotation have
+            // chosen the final placement. Otherwise a successful shifted
+            // placement can receive a pipe/cable aimed from the search center.
+            ResolveAutoConnect(
+                prefabEntity,
+                position,
+                roadFrontageVerified: !IsForced(request),
+                out Entity connectPrefabEntity,
+                out PrefabBase connectPrefab,
+                out float3 connectEnd);
+
+            if (!tool.TryQueuePlacement(
+                prefabEntity,
+                prefab,
+                position,
+                rotation,
+                request,
+                connectPrefabEntity,
+                connectPrefab,
+                position,
+                connectEnd))
             {
                 return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
             }
@@ -416,8 +539,8 @@ namespace CS2MCP
                 ? math.clamp(rawRadius, 8f, 300f)
                 : 40f;
             int maxAttempts = request.TryGetInt("attempts", out int rawAttempts)
-                ? math.clamp(rawAttempts, 1, 120)
-                : 32;
+                ? math.clamp(rawAttempts, 1, 1)
+                : 1;
             request.TryGetFloat("rotation", out float rotationDegrees);
 
             if (!TryFindPrefabByName(BuildingPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab)
@@ -431,7 +554,7 @@ namespace CS2MCP
             }
 
             float2 center = new float2(x, z);
-            const int step = 4;
+            const int step = 8;
             int halfSteps = math.max(1, (int)math.floor(radius / step));
             var candidates = new List<float3>();
             for (int dz = -halfSteps; dz <= halfSteps; dz++)
@@ -543,6 +666,15 @@ namespace CS2MCP
                 return BridgeResponse.Error(400,
                     $"e2={e2:F0} out of range; e1/e2 are elevation in meters relative to terrain (-30..60), " +
                     "not entity indexes. Omit them for ground-level roads; use ~5-20 for short bridges.");
+            }
+            if (!request.Query.ContainsKey("e1") && !request.Query.ContainsKey("e2")
+                && IsBuriedNetPrefab(prefab.name))
+            {
+                // Pipes and ground cables are underground networks: default to
+                // -10m so they are actually buried instead of floating on the
+                // surface.
+                e1 = -10f;
+                e2 = -10f;
             }
             var elevations = new float2(e1, e2);
 
@@ -754,6 +886,13 @@ namespace CS2MCP
                 1);
         }
 
+        private static bool IsBuriedNetPrefab(string name)
+        {
+            return !string.IsNullOrEmpty(name)
+                && (name.IndexOf("Pipe", StringComparison.OrdinalIgnoreCase) >= 0
+                    || name.IndexOf("Ground Cable", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         private BridgeResponse Demolish(BridgeRequest request)
         {
             if (!TryGetCity(out _, out BridgeResponse error))
@@ -806,6 +945,385 @@ namespace CS2MCP
         private static bool IsForced(BridgeRequest request)
         {
             return request.TryGetBool("force", out bool force) && force;
+        }
+
+        /// <summary>
+        /// Decides whether a placed building needs an automatic utility
+        /// connector (sewage pipe / water pipe / low-voltage cable) to the
+        /// nearest road, and resolves the network prefab + target point.
+        /// </summary>
+        private void ResolveAutoConnect(
+            Entity prefabEntity,
+            float3 buildingPosition,
+            bool roadFrontageVerified,
+            out Entity netPrefabEntity,
+            out PrefabBase netPrefab,
+            out float3 connectEnd)
+        {
+            netPrefabEntity = Entity.Null;
+            netPrefab = null;
+            connectEnd = buildingPosition;
+
+            string netName = null;
+            if (EntityManager.HasComponent<Game.Prefabs.SewageOutletData>(prefabEntity))
+            {
+                netName = "Small Sewage Pipe";
+            }
+            else if (EntityManager.HasComponent<Game.Prefabs.WaterPumpingStationData>(prefabEntity)
+                || EntityManager.HasComponent<Game.Prefabs.WaterTowerData>(prefabEntity))
+            {
+                // Normal placement proves the building frontage reaches a
+                // road, whose built-in pipes already carry fresh water. The
+                // building center is not a water socket: a redundant
+                // center-to-road pipe stays disconnected and raises a warning.
+                // Keep the old fallback for force=true diagnostic placements
+                // that deliberately bypass frontage validation.
+                if (roadFrontageVerified)
+                {
+                    return;
+                }
+                netName = "Small Water Pipe";
+            }
+            else if (EntityManager.HasComponent<Game.Prefabs.WindPoweredData>(prefabEntity))
+            {
+                netName = "Low-voltage Ground Cable";
+            }
+            else if (EntityManager.HasComponent<Game.Prefabs.PowerPlantData>(prefabEntity)
+                || EntityManager.HasComponent<Game.Prefabs.SolarPoweredData>(prefabEntity))
+            {
+                // Power plants (coal, gas, solar farm, ...) output HIGH voltage;
+                // wind turbines are the low-voltage producers.
+                netName = "High-voltage Line";
+            }
+            else
+            {
+                return;
+            }
+
+            if (!TryFindPrefabByName(NetPrefabQuery, netName, out netPrefabEntity, out netPrefab))
+            {
+                netPrefabEntity = Entity.Null;
+                netPrefab = null;
+                return;
+            }
+            if (HasNetNearby(netPrefabEntity, buildingPosition, 14f))
+            {
+                // Already connected to this network type nearby; no stub needed.
+                netPrefabEntity = Entity.Null;
+                netPrefab = null;
+                return;
+            }
+            if (!TryFindNearestRoadPoint(buildingPosition, 150f, out connectEnd))
+            {
+                netPrefabEntity = Entity.Null;
+                netPrefab = null;
+                return;
+            }
+
+            // build_road rejects segments shorter than 8m; extend the stub
+            // toward the road if the building sits almost on it.
+            float2 delta = connectEnd.xz - buildingPosition.xz;
+            float length = math.length(delta);
+            if (length < 8f)
+            {
+                if (length < 0.5f)
+                {
+                    netPrefabEntity = Entity.Null;
+                    netPrefab = null;
+                    return;
+                }
+                connectEnd = buildingPosition + new float3(math.normalizesafe(delta) * 8f, 0f);
+            }
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            connectEnd.y = TerrainUtils.SampleHeight(ref heightData, connectEnd);
+        }
+
+        private bool HasNetNearby(Entity netPrefabEntity, float3 position, float radius)
+        {
+            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (!EntityManager.HasComponent<PrefabRef>(entity))
+                    {
+                        continue;
+                    }
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (prefabRef.m_Prefab != netPrefabEntity)
+                    {
+                        continue;
+                    }
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                    float2 mid = (curve.m_Bezier.a.xz + curve.m_Bezier.d.xz) * 0.5f;
+                    if (math.distance(mid, position.xz) <= radius)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private bool TryFindNearestRoadPoint(float3 from, float maxDistance, out float3 nearest)
+        {
+            return TryFindNearestRoadPoint(from, maxDistance, out nearest, out _);
+        }
+
+        private bool TryFindNearestRoadPoint(
+            float3 from,
+            float maxDistance,
+            out float3 nearest,
+            out float roadHalfWidth)
+        {
+            nearest = from;
+            roadHalfWidth = 0f;
+            float bestClearance = maxDistance;
+            bool found = false;
+            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (!EntityManager.HasComponent<PrefabRef>(entity))
+                    {
+                        continue;
+                    }
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (!EntityManager.HasComponent<Game.Prefabs.RoadData>(prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
+                    float halfWidth = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f
+                        : 0f;
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                    for (int i = 0; i <= 16; i++)
+                    {
+                        float3 p = BezierPoint(curve.m_Bezier, i / 16f);
+                        float clearance = math.distance(p.xz, from.xz) - halfWidth;
+                        if (clearance < bestClearance)
+                        {
+                            bestClearance = clearance;
+                            nearest = p;
+                            roadHalfWidth = halfWidth;
+                            found = true;
+                        }
+                    }
+                }
+            }
+            return found;
+        }
+
+        private static float3 BezierPoint(Bezier4x3 bezier, float t)
+        {
+            float3 ab = math.lerp(bezier.a, bezier.b, t);
+            float3 bc = math.lerp(bezier.b, bezier.c, t);
+            float3 cd = math.lerp(bezier.c, bezier.d, t);
+            float3 abc = math.lerp(ab, bc, t);
+            float3 bcd = math.lerp(bc, cd, t);
+            return math.lerp(abc, bcd, t);
+        }
+
+        /// <summary>
+        /// Buildings face +Z at rotation 0 in CS2, so point the front at the
+        /// nearest road point.
+        /// </summary>
+        private float AutoRotationTowardsRoad(float3 position)
+        {
+            if (TryFindNearestRoadPoint(position, 200f, out float3 roadPoint))
+            {
+                float2 delta = roadPoint.xz - position.xz;
+                if (math.lengthsq(delta) > 0.25f)
+                {
+                    return math.degrees(math.atan2(delta.x, delta.y));
+                }
+            }
+            return 0f;
+        }
+
+        private bool IsCandidateBuildable(
+            Entity prefabEntity,
+            float3 position,
+            quaternion rotation,
+            bool requiresShoreline,
+            ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
+            out string reason)
+        {
+            if (!IsOnOwnedTile(position))
+            {
+                reason = "outside owned map tiles (buy a tile first)";
+                return false;
+            }
+            if (OverlapsExistingBuilding(prefabEntity, position))
+            {
+                reason = "overlaps an existing building";
+                return false;
+            }
+            if (OverlapsExistingRoad(prefabEntity, position, rotation))
+            {
+                reason = "building footprint overlaps an existing road";
+                return false;
+            }
+            if (EntityManager.HasComponent<BuildingData>(prefabEntity))
+            {
+                BuildingData building = EntityManager.GetComponentData<BuildingData>(prefabEntity);
+                float3 front = position + math.forward(rotation) * (building.m_LotSize.y * 4f);
+                if (!TryFindNearestRoadPoint(
+                        front,
+                        Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE,
+                        out float3 roadPoint,
+                        out float roadHalfWidth))
+                {
+                    reason = $"building frontage is more than {Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE:F1}m from a road (build a road to the site first)";
+                    return false;
+                }
+                float centerlineDistance = math.distance(front.xz, roadPoint.xz);
+                float allowed = Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE + roadHalfWidth;
+                if (centerlineDistance < roadHalfWidth - 2f)
+                {
+                    reason = "building footprint overlaps the road (move its center away from the road)";
+                    return false;
+                }
+                if (centerlineDistance > allowed)
+                {
+                    reason = $"building frontage is more than {Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE:F1}m from a road (build a road to the site first)";
+                    return false;
+                }
+                if (requiresShoreline
+                    && WaterUtils.SampleDepth(ref waterSurfaceData, position) > 0.05f)
+                {
+                    reason = "shoreline building center is in water (keep the building on dry land and only its intake/outlet side in water)";
+                    return false;
+                }
+                if (requiresShoreline
+                    && !HasWaterBehindBuilding(building, position, rotation, ref waterSurfaceData))
+                {
+                    reason = "the intake/outlet side does not reach surface water (move the site to the shoreline; groundWater data does not apply)";
+                    return false;
+                }
+            }
+            reason = null;
+            return true;
+        }
+
+        private bool OverlapsExistingRoad(
+            Entity prefabEntity,
+            float3 position,
+            quaternion rotation)
+        {
+            if (!EntityManager.HasComponent<BuildingData>(prefabEntity))
+            {
+                return false;
+            }
+            int2 lot = EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize;
+            float halfWidth = lot.x * 4f;
+            float halfDepth = lot.y * 4f;
+            quaternion inverseRotation = math.inverse(rotation);
+            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (!EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
+                    float roadHalfWidth = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f
+                        : 0f;
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                    for (int i = 0; i <= 16; i++)
+                    {
+                        float3 roadPoint = BezierPoint(curve.m_Bezier, i / 16f);
+                        float3 local = math.mul(inverseRotation, roadPoint - position);
+                        if (math.abs(local.x) < halfWidth + roadHalfWidth - 1f
+                            && math.abs(local.z) < halfDepth + roadHalfWidth - 1f)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static bool HasWaterBehindBuilding(
+            BuildingData building,
+            float3 position,
+            quaternion rotation,
+            ref WaterSurfaceData<SurfaceWater> surfaceData)
+        {
+            float3 forward = math.forward(rotation);
+            float3 right = math.mul(rotation, new float3(1f, 0f, 0f));
+            float backDistance = building.m_LotSize.y * 4f + 4f;
+            float halfWidth = math.max(0f, building.m_LotSize.x * 3f);
+            float3 backCenter = position - forward * backDistance;
+            for (int i = -1; i <= 1; i++)
+            {
+                float3 sample = backCenter + right * (halfWidth * i);
+                if (WaterUtils.SampleDepth(ref surfaceData, sample) > 0.05f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private bool IsOnOwnedTile(float3 position)
+        {
+            const float kMapHalfSize = 7168f;
+            const float kMapTileSize = 623.304347826f;
+            int gridX = (int)Math.Floor((position.x + kMapHalfSize) / kMapTileSize);
+            int gridZ = (int)Math.Floor((position.z + kMapHalfSize) / kMapTileSize);
+            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    Game.Areas.Geometry geometry =
+                        EntityManager.GetComponentData<Game.Areas.Geometry>(entity);
+                    int x = (int)Math.Floor((geometry.m_CenterPosition.x + kMapHalfSize) / kMapTileSize);
+                    int z = (int)Math.Floor((geometry.m_CenterPosition.z + kMapHalfSize) / kMapTileSize);
+                    if (x == gridX && z == gridZ)
+                    {
+                        return !EntityManager.HasComponent<Game.Common.Native>(entity);
+                    }
+                }
+            }
+            return false;
+        }
+
+        private bool OverlapsExistingBuilding(Entity prefabEntity, float3 position)
+        {
+            float candidateRadius = BuildingRadius(prefabEntity);
+            if (candidateRadius <= 0f)
+            {
+                return false;
+            }
+            using (NativeArray<Entity> entities = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    Transform transform = EntityManager.GetComponentData<Transform>(entity);
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    float otherRadius = BuildingRadius(prefabRef.m_Prefab);
+                    if (otherRadius > 0f
+                        && math.distance(transform.m_Position.xz, position.xz) < candidateRadius + otherRadius)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private float BuildingRadius(Entity prefabEntity)
+        {
+            if (!EntityManager.HasComponent<BuildingData>(prefabEntity))
+            {
+                return 0f;
+            }
+            int2 lot = EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize;
+            return math.length(new float2(lot.x, lot.y)) * 4f;
         }
 
         private bool TryFindPrefabByName(EntityQuery query, string name, out Entity prefabEntity, out PrefabBase prefab)

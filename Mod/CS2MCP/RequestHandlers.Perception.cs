@@ -500,11 +500,29 @@ namespace CS2MCP
                 zones[pair.Key] = new { cells = pair.Value[0], occupied = pair.Value[1], empty = pair.Value[0] - pair.Value[1] };
             }
 
+            int pendingZoneDefinitions;
+            using (EntityQuery definitionQuery = EntityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<Game.Tools.CreationDefinition>(),
+                ComponentType.ReadOnly<Game.Tools.Zoning>(),
+                ComponentType.ReadOnly<Game.Common.Updated>()))
+            {
+                pendingZoneDefinitions = definitionQuery.CalculateEntityCount();
+            }
+            int tempZoneBlocks;
+            using (EntityQuery tempBlockQuery = EntityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<Game.Tools.Temp>(),
+                ComponentType.ReadOnly<Game.Zones.Block>()))
+            {
+                tempZoneBlocks = tempBlockQuery.CalculateEntityCount();
+            }
+
             return BridgeResponse.Json(new
             {
                 scope = hasCenter && radius < float.MaxValue ? $"radius {radius} around ({x}, {z})" : "whole city",
                 zonableCells = totalVisible,
                 zonedCells = totalZoned,
+                pendingZoneDefinitions,
+                tempZoneBlocks,
                 note = "empty zoned cells grow buildings while the simulation runs if demand exists",
                 byZone = zones,
             });

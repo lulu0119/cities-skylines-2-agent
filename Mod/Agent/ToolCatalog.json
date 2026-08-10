@@ -52,26 +52,67 @@
     },
     {
       "name": "wait_simulation",
-      "description": "Run the simulation for a short real-time wait: resumes if paused, runs at max speed, then restores the previous speed/pause state and returns the latest city state. Use at most 60 seconds; prefer short waits (10-30s) and re-check city_services.problems[] afterwards.",
+      "description": "Run the simulation forward by in-game time: default 1 in-game hour (about 20-30 real seconds at high speed). Resumes if paused, then restores the previous speed/pause state and returns the latest city state. Call it after zoning or placing buildings so construction, leveling and population growth can happen; then re-check city_services.problems[]/demand. Never poll game_state in a loop.",
       "parameters": {
         "type": "object",
         "properties": {
-          "seconds": {
+          "hours": {
             "type": "number",
             "minimum": 1,
-            "maximum": 60,
-            "description": "Real-world seconds to run the simulation (max 60)"
+            "maximum": 24,
+            "description": "In-game hours to advance (default 1)"
           }
         },
-        "required": [
-          "seconds"
-        ]
+        "required": []
       },
       "route": "/sim/wait",
       "query": [
         {
-          "key": "seconds",
-          "arg": "seconds"
+          "key": "hours",
+          "arg": "hours",
+          "default": "1"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "debug_zone_blocks",
+      "description": "Diagnostics (use only when asked): dump zone prefab metadata, per-block cell state and VacantLot buffers around x,z. Use ?x=&z=&radius=.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "description": "Center x in world meters"
+          },
+          "z": {
+            "type": "number",
+            "description": "Center z in world meters"
+          },
+          "radius": {
+            "type": "number",
+            "default": 200,
+            "description": "Search radius in meters"
+          }
+        },
+        "required": [
+          "x",
+          "z"
+        ]
+      },
+      "route": "/debug/zone-blocks",
+      "query": [
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
         }
       ],
       "response": "json"
@@ -115,7 +156,7 @@
     },
     {
       "name": "city_services",
-      "description": "Electricity (production/consumption/battery/trade), water & sewage (capacity/consumption/trade) and garbage accumulation of the loaded city. Compare production vs consumption to spot shortages.",
+      "description": "Electricity (production/consumption/battery/trade), water & sewage (capacity/consumption/trade), and daily garbage production of the loaded city. Garbage production is not a shortage; use notifications for actual GarbagePilingUp warnings. Compare electricity/water/sewage supply against consumption.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -378,7 +419,7 @@
     },
     {
       "name": "place_building",
-      "description": "Place a standalone prefab building at world coordinates - service buildings (power/water/sewage, schools, clinics, etc.), unique/landmark/signature buildings, and special production/extraction facilities. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area. If placement fails, call find_placement first, then retry with the returned coordinates.",
+      "description": "ONE-STEP placement: give prefab + x/z (and optional radius). With radius>0 the tool searches owned land for one non-overlapping, road-facing candidate, then asks the game's real tool pipeline to validate and place it; if the game rejects that candidate, move/build the road or retry with a nearby center/rotation. It intentionally does not multi-probe because rejected previews can wedge the game tool. With radius omitted it preflights and places exactly at x/z. Utility buildings are connected to the nearby road network with the appropriate pipe/cable. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -394,9 +435,15 @@
             "type": "number",
             "description": "World Z coordinate (meters)"
           },
+          "radius": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 300,
+            "description": "Heuristic search radius in meters (omit for exact placement). Only one selected candidate enters the game tool; a rejection requires another center/rotation or a road/layout fix."
+          },
           "rotation": {
             "type": "number",
-            "description": "Rotation around Y axis in degrees (default 0)"
+            "description": "Rotation around Y axis in degrees. Omit to auto-align toward the nearest road; an explicit value is preserved during radius search."
           },
           "force": {
             "type": "boolean",
@@ -424,6 +471,10 @@
           "arg": "z"
         },
         {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
           "key": "force",
           "arg": "force",
           "boolMode": "trueOnly"
@@ -437,7 +488,7 @@
     },
     {
       "name": "build_road",
-      "description": "Build a network segment between two world coordinates. SHORT segments (50-250m) on OWNED map tiles, connecting near EXISTING road nodes. Use list_roads first to find existing road positions. Omit e1/e2 for ground level. If the call fails: try shorter segments or move closer to existing roads. Do NOT repeat the same coordinates that just failed.",
+      "description": "Build a network segment between two world coordinates. SHORT segments (50-250m) on OWNED map tiles, connecting near EXISTING road nodes. Use list_roads first to find existing road positions. Pipes and Ground Cables are UNDERGROUND by default (auto -10m buried); omit e1/e2 for roads and High-voltage Lines (ground level). If the call fails: try shorter segments or move closer to existing roads. Do NOT repeat the same coordinates that just failed.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -542,7 +593,7 @@
     },
     {
       "name": "find_placement",
-      "description": "Search for a VALID placement position for a building/tree prefab near (x, z) WITHOUT committing anything. Probes the game's real placement validation (road access, overlap, water, city limits) over a grid around the center and returns the closest valid x/z/rotation when one exists. Use this after place_building fails (NoRoadAccess / OverlapExisting / InWater) instead of guessing coordinates. Then call place_building with the returned position.",
+      "description": "Preview ONE exact placement without committing. This tool deliberately probes only x/z once; radius and attempts do not create a multi-candidate search because rejected previews can wedge the game tool. Prefer place_building with radius for one-step placement. A preview's roadAccess field is advisory; exact place_building performs the final frontage preflight. Failures report game reasons such as NoRoadAccess, OverlapExisting, NoWater, InWater or ExceedsCityLimits.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -552,23 +603,23 @@
           },
           "x": {
             "type": "number",
-            "description": "Center X to search around (meters)"
+            "description": "Exact world X to preview (meters)"
           },
           "z": {
             "type": "number",
-            "description": "Center Z to search around (meters)"
+            "description": "Exact world Z to preview (meters)"
           },
           "radius": {
             "type": "number",
             "minimum": 8,
             "maximum": 300,
-            "description": "Search half-size in meters (default 40, max 300)"
+            "description": "Compatibility parameter only; preview still tests exactly x/z once"
           },
           "attempts": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 120,
-            "description": "Max candidate positions to probe, closest first (default 32)"
+            "maximum": 1,
+            "description": "Must be 1; multi-candidate preview is intentionally disabled"
           },
           "rotation": {
             "type": "number",
@@ -690,13 +741,13 @@
     },
     {
       "name": "zone_area",
-      "description": "Paint zoning on all zonable cells within a radius of a point. This is the PRIMARY way to add residential, commercial, and industrial areas. Do NOT use place_building for zoneable buildings. Buildings grow automatically from zones while the simulation runs. Default radius 80m. Check demand first to see what zone type is needed.",
+      "description": "Paint zoning on all zonable cells within a radius of a point. This is the PRIMARY way to add residential, commercial, and industrial areas. Do NOT use place_building for zoneable buildings. Generic residential/commercial names such as 'Residential Low' automatically resolve to the current map theme (for example 'NA Residential Low') so matching buildings can grow. Buildings grow automatically while the simulation runs. Default radius 80m. Check demand first.",
       "parameters": {
         "type": "object",
         "properties": {
           "zone": {
             "type": "string",
-            "description": "Exact zone name from list_zones, or 'None' to dezone"
+            "description": "Zone name from list_zones, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
           },
           "x": {
             "type": "number",
@@ -1414,15 +1465,69 @@
       "response": "json"
     },
     {
-      "name": "tiles_info",
-      "description": "Owned/total map tiles, tiles available to purchase and upkeep settings. (Purchasing via API arrives in v0.9.)",
+      "name": "list_tiles",
+      "description": "List map tiles with their grid position (23x23, 623m squares), center world coordinates and ownership. filter=all (default) | owned | unowned | available. available only returns unowned tiles when a purchase permit exists; the game still validates tile eligibility and funds. Also reports total/owned counts and upkeep settings. Use this BEFORE expanding: build roads and zone only on owned tiles; buy an adjacent tile with buy_tiles.",
       "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+          "filter": {
+            "type": "string",
+            "enum": [
+              "all",
+              "owned",
+              "unowned",
+              "available"
+            ],
+            "description": "Which tiles to return: all, owned, unowned, or currently available by permit count (default all)"
+          }
+        },
         "required": []
       },
       "route": "/city/tiles",
-      "query": [],
+      "query": [
+        {
+          "key": "filter",
+          "arg": "filter"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "buy_tiles",
+      "description": "Purchase one unowned map tile so you can build/zone on it. Give ?index=<entity index> from list_tiles (or ?gridX=&gridZ= grid coordinates). The game validates permits and funds, charges the tile price and unlocks it. Buy tiles ADJACENT to your current city before expanding roads.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Map tile entity index from list_tiles"
+          },
+          "gridX": {
+            "type": "integer",
+            "description": "Tile grid X (0-22) as reported by list_tiles"
+          },
+          "gridZ": {
+            "type": "integer",
+            "description": "Tile grid Z (0-22) as reported by list_tiles"
+          }
+        },
+        "required": []
+      },
+      "route": "/city/tiles/buy",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "gridX",
+          "arg": "gridX"
+        },
+        {
+          "key": "gridZ",
+          "arg": "gridZ"
+        }
+      ],
       "response": "json"
     },
     {

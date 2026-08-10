@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>CitiesSkylines2Agent.HotReload</AssemblyName>
+    <RootNamespace>CS2MCP</RootNamespace>
+    <Configurations>Debug;Release</Configurations>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.props" />
+
+  <ItemGroup>
+    <Compile Include="..\CS2MCP\RequestHandlers*.cs" Link="CS2MCP\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="CitiesSkylines2Agent">
+      <!-- Compile against the exact ILRepacked host identity that the running
+           game loaded. The unmerged bin DLL has a different assembly name. -->
+      <HintPath>$(LocalModsPath)\CitiesSkylines2Agent\CitiesSkylines2Agent.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Game"><Private>false</Private></Reference>
+    <Reference Include="Colossal.Core"><Private>false</Private></Reference>
+    <Reference Include="Colossal.Logging"><Private>false</Private></Reference>
+    <Reference Include="Colossal.IO.AssetDatabase"><Private>false</Private></Reference>
+    <Reference Include="Colossal.Collections"><Private>false</Private></Reference>
+    <Reference Include="Colossal.Mathematics"><Private>false</Private></Reference>
+    <Reference Include="Colossal.UI"><Private>false</Private></Reference>
+    <Reference Include="Colossal.Localization"><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><Private>false</Private></Reference>
+    <Reference Include="Unity.Collections"><Private>false</Private></Reference>
+    <Reference Include="Unity.Entities"><Private>false</Private></Reference>
+    <Reference Include="Unity.Mathematics"><Private>false</Private></Reference>
+    <Reference Include="Newtonsoft.Json"><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="DeployHotReloadPayload" AfterTargets="Build">
+    <PropertyGroup>
+      <HotReloadDir>$(UserDataPath)\CitiesSkylines2Agent\hot-reload</HotReloadDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <HotReloadSkills Include="..\Agent\Skills\**\SKILL.md" />
+    </ItemGroup>
+    <MakeDir Directories="$(HotReloadDir);$(HotReloadDir)\Skills" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(HotReloadDir)\RequestHandlers.dll" />
+    <Copy SourceFiles="..\Agent\ToolCatalog.json" DestinationFiles="$(HotReloadDir)\ToolCatalog.json" />
+    <Copy
+      SourceFiles="@(HotReloadSkills)"
+      DestinationFiles="@(HotReloadSkills->'$(HotReloadDir)\Skills\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Message Text="Hot-reload payload deployed to $(HotReloadDir)" Importance="high" />
+  </Target>
+
+</Project>

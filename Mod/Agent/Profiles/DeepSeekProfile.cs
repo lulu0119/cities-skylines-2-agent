@@ -20,7 +20,7 @@ namespace CitiesSkylines2Agent.Agent
                 return new ModelCapabilities
                 {
                     ContextWindowTokens = 1_000_000,
-                    MaxOutputTokens = 384_000,
+                    MaxOutputTokens = 16_000,
                     SupportsVision = false,
                     Source = "deepseek-v4",
                 };

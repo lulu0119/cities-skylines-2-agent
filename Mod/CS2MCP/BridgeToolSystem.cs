@@ -10,6 +10,7 @@ using Game.Notifications;
 using Game.Prefabs;
 using Game.Simulation;
 using Game.Tools;
+using Game.Zones;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
@@ -47,9 +48,11 @@ namespace CS2MCP
             Object,
             Net,
             Probe,
+            SearchPlace,
             Demolish,
             Upgrade,
             Area,
+            Zone,
         }
 
         private Stage m_Stage = Stage.Idle;
@@ -64,21 +67,51 @@ namespace CS2MCP
         private bool m_PendingHasMid;
         private CompositionFlags m_PendingUpgradeFlags;
         private float3[] m_PendingAreaNodes;
+        private ZoneType m_PendingZone;
+        private float2 m_PendingZoneCenter;
+        private float m_PendingZoneRadius;
         private float2 m_PendingElevations;
         private quaternion m_PendingRotation;
         private readonly List<float3> m_ProbePositions = new List<float3>();
+        private readonly List<float> m_ProbeRotations = new List<float>();
         private int m_ProbeIndex;
         private int m_ProbeTried;
+        private int m_ProbeClearFrames;
         private float m_ProbeRotationDegrees;
         private string m_ProbeLastError = "";
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
+        private bool m_AutoConnectQueued;
+        private Entity m_AutoConnectPrefabEntity;
+        private PrefabBase m_AutoConnectPrefab;
+        private float3 m_AutoConnectStart;
+        private float3 m_AutoConnectEnd;
+        private string m_PlacedBuildingName;
+        private float3 m_PlacedBuildingPosition;
 
         private CityConfigurationSystem m_CityConfigurationSystem;
 
         public override string toolID => "CS2MCP.Bridge";
 
         public bool IsBusy => m_Stage != Stage.Idle;
+
+        /// <summary>
+        /// Resets a bridge operation that has not finished within the watchdog
+        /// window. Must be called on the simulation thread.
+        /// </summary>
+        public void AbortStuckOperation()
+        {
+            if (m_Stage == Stage.Idle)
+            {
+                return;
+            }
+            CompletePending(BridgeResponse.Error(504,
+                "build operation aborted: it did not finish within the bridge watchdog window; " +
+                "stage=" + m_Stage + " probeIndex=" + m_ProbeIndex + "/" + m_ProbePositions.Count +
+                " tried=" + m_ProbeTried + " lastError=" + m_ProbeLastError));
+            applyMode = ApplyMode.None;
+            Deactivate();
+        }
 
         [Preserve]
         protected override void OnCreate()
@@ -99,7 +132,16 @@ namespace CS2MCP
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
-        public bool TryQueuePlacement(Entity prefabEntity, PrefabBase prefab, float3 position, quaternion rotation, BridgeRequest request)
+        public bool TryQueuePlacement(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            float3 position,
+            quaternion rotation,
+            BridgeRequest request,
+            Entity autoConnectPrefabEntity = default,
+            PrefabBase autoConnectPrefab = null,
+            float3 autoConnectStart = default,
+            float3 autoConnectEnd = default)
         {
             if (m_Stage != Stage.Idle)
             {
@@ -111,6 +153,7 @@ namespace CS2MCP
             m_PendingPosition = position;
             m_PendingRotation = rotation;
             m_PendingRequest = request;
+            SetAutoConnect(autoConnectPrefabEntity, autoConnectPrefab, autoConnectStart, autoConnectEnd);
             Activate();
             return true;
         }
@@ -137,6 +180,11 @@ namespace CS2MCP
             m_PendingPrefab = prefab;
             m_ProbePositions.Clear();
             m_ProbePositions.AddRange(positions);
+            m_ProbeRotations.Clear();
+            for (int i = 0; i < positions.Count; i++)
+            {
+                m_ProbeRotations.Add(rotationDegrees);
+            }
             m_ProbeIndex = 0;
             m_ProbeTried = 0;
             m_ProbeRotationDegrees = rotationDegrees;
@@ -144,6 +192,59 @@ namespace CS2MCP
             m_PendingRequest = request;
             Activate();
             return true;
+        }
+
+        /// <summary>
+        /// Must be called on the simulation thread. Finds the first valid,
+        /// road-facing position among the candidates (each with its own
+        /// rotation), then commits the placement in the same operation.
+        /// </summary>
+        public bool TryQueueSearchPlace(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            IReadOnlyList<float3> positions,
+            IReadOnlyList<float> rotations,
+            BridgeRequest request,
+            Entity autoConnectPrefabEntity = default,
+            PrefabBase autoConnectPrefab = null,
+            float3 autoConnectStart = default,
+            float3 autoConnectEnd = default)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            if (positions.Count == 0 || positions.Count != rotations.Count)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.SearchPlace;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            m_ProbePositions.Clear();
+            m_ProbePositions.AddRange(positions);
+            m_ProbeRotations.Clear();
+            m_ProbeRotations.AddRange(rotations);
+            m_ProbeIndex = 0;
+            m_ProbeTried = 0;
+            m_ProbeLastError = "";
+            m_PendingRequest = request;
+            SetAutoConnect(autoConnectPrefabEntity, autoConnectPrefab, autoConnectStart, autoConnectEnd);
+            Activate();
+            return true;
+        }
+
+        private void SetAutoConnect(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            float3 start,
+            float3 end)
+        {
+            m_AutoConnectQueued = prefabEntity != Entity.Null && prefab != null;
+            m_AutoConnectPrefabEntity = prefabEntity;
+            m_AutoConnectPrefab = prefab;
+            m_AutoConnectStart = start;
+            m_AutoConnectEnd = end;
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
@@ -214,6 +315,27 @@ namespace CS2MCP
             return true;
         }
 
+        /// <summary>
+        /// Queues zone-cell painting for ToolUpdate, where ToolOutputBarrier is
+        /// open and the game's zone cell-check lifecycle can observe Updated.
+        /// Must be called on the simulation thread.
+        /// </summary>
+        public bool TryQueueZone(ZoneType zone, string label, float2 center, float radius, BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.Zone;
+            m_PendingZone = zone;
+            m_PendingLabel = label;
+            m_PendingZoneCenter = center;
+            m_PendingZoneRadius = radius;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
         private void Activate()
         {
             m_Stage = Stage.CreateDefinitions;
@@ -239,7 +361,15 @@ namespace CS2MCP
                                 CreateRoadDefinitions();
                                 break;
                             case OperationKind.Probe:
+                            case OperationKind.SearchPlace:
                                 ApplyProbeCandidate();
+                                // The game may switch the active tool away after a
+                                // rejected preview; re-assert ownership so the probe
+                                // state machine keeps advancing between candidates.
+                                if (m_ToolSystem.activeTool != this)
+                                {
+                                    m_ToolSystem.activeTool = this;
+                                }
                                 CreatePlacementDefinitions();
                                 break;
                             case OperationKind.Demolish:
@@ -251,8 +381,14 @@ namespace CS2MCP
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
                                 break;
+                            case OperationKind.Zone:
+                                ApplyZoneCells();
+                                break;
                         }
-                        m_Stage = m_PendingKind == OperationKind.Probe
+                        m_Stage = m_PendingKind == OperationKind.Zone
+                            ? Stage.Finish
+                            : m_PendingKind == OperationKind.Probe
+                            || m_PendingKind == OperationKind.SearchPlace
                             ? Stage.ProbeValidate
                             : Stage.Apply;
                         break;
@@ -261,31 +397,96 @@ namespace CS2MCP
                         if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
-                            CompletePending(BuildSuccessResponse());
+                            if (m_AutoConnectQueued && m_PendingKind == OperationKind.Net)
+                            {
+                                CompletePending(BuildAutoConnectResponse());
+                                m_AutoConnectQueued = false;
+                            }
+                            else if (m_AutoConnectQueued)
+                            {
+                                // Building committed. Chain the utility connector
+                                // (pipe/cable to the nearest road) in the same
+                                // operation so the model does not have to place
+                                // it manually.
+                                m_PlacedBuildingName = m_PendingPrefab != null
+                                    ? m_PendingPrefab.name
+                                    : null;
+                                m_PlacedBuildingPosition = m_PendingPosition;
+                                m_Stage = Stage.CreateDefinitions;
+                                m_PendingKind = OperationKind.Net;
+                                m_PendingPrefabEntity = m_AutoConnectPrefabEntity;
+                                m_PendingPrefab = m_AutoConnectPrefab;
+                                m_PendingPosition = m_PlacedBuildingPosition;
+                                m_PendingEnd = m_AutoConnectEnd;
+                                m_PendingMid = default;
+                                m_PendingHasMid = false;
+                                // Pipes and ground cables belong underground;
+                                // high-voltage lines run above ground.
+                                string netName = m_AutoConnectPrefab != null
+                                    ? m_AutoConnectPrefab.name
+                                    : "";
+                                m_PendingElevations =
+                                    netName.IndexOf("Pipe", StringComparison.OrdinalIgnoreCase) >= 0
+                                    || netName.IndexOf("Ground Cable", StringComparison.OrdinalIgnoreCase) >= 0
+                                        ? new float2(-10f, -10f)
+                                        : default;
+                            }
+                            else
+                            {
+                                CompletePending(BuildSuccessResponse());
+                            }
                         }
                         else
                         {
                             applyMode = ApplyMode.Clear;
-                            CompletePending(BridgeResponse.Error(409, DescribeValidationBlock()));
+                            if (m_AutoConnectQueued && m_PendingKind == OperationKind.Net)
+                            {
+                                CompletePending(BuildAutoConnectFailedResponse());
+                                m_AutoConnectQueued = false;
+                            }
+                            else
+                            {
+                                CompletePending(BridgeResponse.Error(409, DescribeValidationBlock()));
+                            }
                         }
-                        m_Stage = Stage.Finish;
+                        if (m_Stage != Stage.CreateDefinitions)
+                        {
+                            m_Stage = Stage.Finish;
+                        }
                         break;
 
                     case Stage.ProbeValidate:
                         m_ProbeTried++;
-                        if (GetAllowApply())
+                        bool allowApply = GetAllowApply();
+                        string validationBlock = allowApply && RequiresRoadAccess(m_PendingPrefabEntity)
+                            ? DescribeValidationBlock()
+                            : null;
+                        bool roadBlocked = validationBlock != null &&
+                            validationBlock.IndexOf("NoRoadAccess", StringComparison.Ordinal) >= 0;
+                        if (allowApply && !roadBlocked)
                         {
-                            applyMode = ApplyMode.Clear;
-                            CompletePending(BuildProbeSuccess());
-                            m_Stage = Stage.Finish;
+                            if (m_PendingKind == OperationKind.SearchPlace)
+                            {
+                                // Valid and road-facing: commit this candidate in
+                                // the same operation (one-step find+place).
+                                applyMode = ApplyMode.Apply;
+                                m_Stage = Stage.Apply;
+                            }
+                            else
+                            {
+                                applyMode = ApplyMode.Clear;
+                                CompletePending(BuildProbeSuccess());
+                                m_Stage = Stage.Finish;
+                            }
                         }
                         else
                         {
-                            m_ProbeLastError = DescribeValidationBlock();
+                            m_ProbeLastError = validationBlock ?? DescribeValidationBlock();
                             applyMode = ApplyMode.Clear;
                             m_ProbeIndex++;
                             if (m_ProbeIndex < m_ProbePositions.Count)
                             {
+                                m_ProbeClearFrames = 4;
                                 m_Stage = Stage.ProbeClear;
                             }
                             else
@@ -297,10 +498,18 @@ namespace CS2MCP
                         break;
 
                     case Stage.ProbeClear:
-                        // Let the game clear the rejected preview before probing
-                        // the next candidate.
+                        // Give the game several frames to actually clear the
+                        // rejected preview before probing the next candidate;
+                        // switching immediately wedges the tool pipeline.
                         applyMode = ApplyMode.Clear;
-                        m_Stage = Stage.ProbeCreate;
+                        if (m_ProbeClearFrames > 0)
+                        {
+                            m_ProbeClearFrames--;
+                        }
+                        else
+                        {
+                            m_Stage = Stage.ProbeCreate;
+                        }
                         break;
 
                     case Stage.Finish:
@@ -316,7 +525,7 @@ namespace CS2MCP
             catch (Exception e)
             {
                 Mod.Log.Warn($"BridgeToolSystem error in stage {m_Stage}: {e}");
-                CompletePending(BridgeResponse.Error(500, $"placement failed: {e.GetType().Name}: {e.Message}"));
+                CompletePending(BridgeResponse.Error(500, $"tool operation failed: {e.GetType().Name}: {e.Message}"));
                 applyMode = ApplyMode.None;
                 Deactivate();
             }
@@ -330,7 +539,136 @@ namespace CS2MCP
                 return;
             }
             m_PendingPosition = m_ProbePositions[m_ProbeIndex];
-            m_PendingRotation = quaternion.RotateY(math.radians(m_ProbeRotationDegrees));
+            float degrees = m_ProbeIndex < m_ProbeRotations.Count
+                ? m_ProbeRotations[m_ProbeIndex]
+                : m_ProbeRotationDegrees;
+            m_PendingRotation = quaternion.RotateY(math.radians(degrees));
+        }
+
+        private void ApplyZoneCells()
+        {
+            const float cellSize = 8f;
+            int cellsChanged = 0;
+            int blocksTouched = 0;
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            using (EntityQuery query = EntityManager.CreateEntityQuery(new EntityQueryDesc
+            {
+                All = new[]
+                {
+                    ComponentType.ReadOnly<Block>(),
+                    ComponentType.ReadOnly<Cell>(),
+                },
+                None = new[]
+                {
+                    ComponentType.ReadOnly<Game.Tools.Temp>(),
+                    ComponentType.ReadOnly<Deleted>(),
+                },
+            }))
+            using (NativeArray<Entity> blocks = query.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity blockEntity in blocks)
+                {
+                    Block block = EntityManager.GetComponentData<Block>(blockEntity);
+                    float blockExtent = cellSize * (math.cmax(block.m_Size) + 1) * 0.71f;
+                    if (math.distance(block.m_Position.xz, m_PendingZoneCenter) > m_PendingZoneRadius + blockExtent)
+                    {
+                        continue;
+                    }
+
+                    DynamicBuffer<Cell> cells = EntityManager.GetBuffer<Cell>(blockEntity);
+                    int blockCells = 0;
+                    for (int cellZ = 0; cellZ < block.m_Size.y; cellZ++)
+                    {
+                        for (int cellX = 0; cellX < block.m_Size.x; cellX++)
+                        {
+                            int index = cellZ * block.m_Size.x + cellX;
+                            if (index >= cells.Length)
+                            {
+                                continue;
+                            }
+                            Cell cell = cells[index];
+                            if ((cell.m_State & CellFlags.Visible) == 0
+                                || (cell.m_State & (CellFlags.Blocked | CellFlags.Overridden)) != 0
+                                || cell.m_Zone.Equals(m_PendingZone))
+                            {
+                                continue;
+                            }
+                            float3 cellPosition = ZoneUtils.GetCellPosition(block, new int2(cellX, cellZ));
+                            if (math.distance(cellPosition.xz, m_PendingZoneCenter) > m_PendingZoneRadius)
+                            {
+                                continue;
+                            }
+                            cell.m_Zone = m_PendingZone;
+                            cells[index] = cell;
+                            blockCells++;
+                        }
+                    }
+
+                    if (blockCells == 0)
+                    {
+                        continue;
+                    }
+                    cellsChanged += blockCells;
+                    blocksTouched++;
+                    if (!EntityManager.HasComponent<Updated>(blockEntity))
+                    {
+                        commandBuffer.AddComponent<Updated>(blockEntity);
+                    }
+                }
+            }
+
+            CompletePending(BridgeResponse.Json(new
+            {
+                zone = m_PendingLabel,
+                center = new { x = m_PendingZoneCenter.x, z = m_PendingZoneCenter.y },
+                radius = m_PendingZoneRadius,
+                cellsChanged,
+                blocksTouched,
+                note = cellsChanged == 0
+                    ? "no zonable cells found in radius - zone cells only exist along roads and must be unoccupied"
+                    : "painted zone cells during ToolUpdate; run the simulation for VacantLots/buildings",
+            }));
+        }
+
+        private BridgeResponse BuildAutoConnectResponse()
+        {
+            return BridgeResponse.Json(new
+            {
+                placed = true,
+                prefab = m_PlacedBuildingName,
+                position = new
+                {
+                    x = m_PlacedBuildingPosition.x,
+                    y = m_PlacedBuildingPosition.y,
+                    z = m_PlacedBuildingPosition.z,
+                },
+                connected = true,
+                connection = new
+                {
+                    prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                    start = new { x = m_PlacedBuildingPosition.x, z = m_PlacedBuildingPosition.z },
+                    end = new { x = m_AutoConnectEnd.x, z = m_AutoConnectEnd.z },
+                },
+                note = "building placed; utility connector (pipe/cable) auto-built to the nearest road network",
+            });
+        }
+
+        private BridgeResponse BuildAutoConnectFailedResponse()
+        {
+            return BridgeResponse.Json(new
+            {
+                placed = true,
+                prefab = m_PlacedBuildingName,
+                position = new
+                {
+                    x = m_PlacedBuildingPosition.x,
+                    y = m_PlacedBuildingPosition.y,
+                    z = m_PlacedBuildingPosition.z,
+                },
+                connected = false,
+                connectionError = DescribeValidationBlock(),
+                note = "building placed, but the automatic utility connector was rejected by the game; connect it manually with build_road",
+            });
         }
 
         private BridgeResponse BuildSuccessResponse()
@@ -410,20 +748,34 @@ namespace CS2MCP
 
         private BridgeResponse BuildProbeSuccess()
         {
-            return BridgeResponse.Json(new
+            bool isBuilding = RequiresRoadAccess(m_PendingPrefabEntity);
+            var payload = new Dictionary<string, object>
             {
-                found = true,
-                prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
-                position = new
+                ["found"] = true,
+                ["prefab"] = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                ["position"] = new
                 {
                     x = m_PendingPosition.x,
                     y = m_PendingPosition.y,
                     z = m_PendingPosition.z,
                 },
-                rotation = m_ProbeRotationDegrees,
-                attemptsTried = m_ProbeTried,
-                note = "validated by the game's placement validation; call place_building with these exact coordinates",
-            });
+                ["rotation"] = m_ProbeRotationDegrees,
+                ["attemptsTried"] = m_ProbeTried,
+                ["note"] = isBuilding
+                    ? "validated by the game's placement validation WITH road access; call place_building with these exact coordinates"
+                    : "validated by the game's placement validation; call place_building with these exact coordinates",
+            };
+            if (isBuilding)
+            {
+                payload["roadAccess"] = true;
+            }
+            return BridgeResponse.Json(payload);
+        }
+
+        private bool RequiresRoadAccess(Entity prefabEntity)
+        {
+            return prefabEntity != Entity.Null &&
+                EntityManager.HasComponent<BuildingData>(prefabEntity);
         }
 
         private string DescribeProbeFailure()
@@ -581,9 +933,15 @@ namespace CS2MCP
             m_PendingPrefab = null;
             m_PendingPrefabEntity = Entity.Null;
             m_ProbePositions.Clear();
+            m_ProbeRotations.Clear();
             m_ProbeIndex = 0;
             m_ProbeTried = 0;
+            m_ProbeClearFrames = 0;
             m_ProbeLastError = "";
+            m_AutoConnectQueued = false;
+            m_AutoConnectPrefabEntity = Entity.Null;
+            m_AutoConnectPrefab = null;
+            m_PlacedBuildingName = null;
             if (m_ToolSystem.activeTool == this)
             {
                 m_ToolSystem.activeTool = m_PreviousTool != null ? m_PreviousTool : m_DefaultToolSystem;

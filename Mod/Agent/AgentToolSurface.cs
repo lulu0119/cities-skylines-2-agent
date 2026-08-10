@@ -19,7 +19,7 @@ namespace CitiesSkylines2Agent.Agent
                     "find_prefabs", "place_building", "build_road", "find_placement",
                     "list_buildings", "list_zones", "zone_area", "upgrade_road",
                     "list_roads", "demolish", "terrain", "gridmap", "zoning",
-                    "tiles_info", "list_objects",
+                    "list_tiles", "buy_tiles", "debug_zone_blocks", "list_objects",
                 },
                 ["finance"] = new[]
                 {
@@ -42,7 +42,7 @@ namespace CitiesSkylines2Agent.Agent
             {
                 "ping", "game_state", "city_overview", "demand",
                 "budget", "city_services", "labor", "statistics", "notifications",
-                "inspect", "save_game",
+                "inspect", "save_game", "wait_simulation",
             };
 
         private static readonly HashSet<string> s_MetaTools =

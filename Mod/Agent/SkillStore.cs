@@ -48,11 +48,23 @@ namespace CitiesSkylines2Agent.Agent
         {
             EnsureDefaults();
             var skills = new List<AgentSkill>();
-            if (!Directory.Exists(SkillsDirectory))
+            var indexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            LoadSkillsFrom(SkillsDirectory, includeContent, skills, indexes);
+            LoadSkillsFrom(ModPaths.HotReloadSkillsDirectory, includeContent, skills, indexes);
+            return skills;
+        }
+
+        private static void LoadSkillsFrom(
+            string root,
+            bool includeContent,
+            List<AgentSkill> skills,
+            Dictionary<string, int> indexes)
+        {
+            if (!Directory.Exists(root))
             {
-                return skills;
+                return;
             }
-            foreach (string directory in Directory.GetDirectories(SkillsDirectory))
+            foreach (string directory in Directory.GetDirectories(root))
             {
                 string skillFile = Path.Combine(directory, "SKILL.md");
                 if (!File.Exists(skillFile))
@@ -61,14 +73,22 @@ namespace CitiesSkylines2Agent.Agent
                 }
                 try
                 {
-                    skills.Add(ParseSkill(directory, skillFile, includeContent));
+                    AgentSkill skill = ParseSkill(directory, skillFile, includeContent);
+                    if (indexes.TryGetValue(skill.Name, out int index))
+                    {
+                        skills[index] = skill;
+                    }
+                    else
+                    {
+                        indexes[skill.Name] = skills.Count;
+                        skills.Add(skill);
+                    }
                 }
                 catch (Exception e)
                 {
                     CS2MCP.Mod.Log.Warn($"skill load failed for {directory}: {e.Message}");
                 }
             }
-            return skills;
         }
 
         /// <summary>Renders skill names and descriptions without full instructions.</summary>

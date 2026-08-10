@@ -94,6 +94,10 @@
 	<ItemGroup>
 		<EmbeddedResource Include="Agent\ToolCatalog.json" />
 		<EmbeddedResource Include="Agent\Skills\**\SKILL.md" />
+		<!-- The nested hot-reload payload has its own SDK project and obj tree;
+		     do not let this project's default Compile glob ingest its generated
+		     assembly-attribute sources. -->
+		<Compile Remove="HotReload\**\*.cs" />
 	</ItemGroup>
 
 	<ItemGroup>

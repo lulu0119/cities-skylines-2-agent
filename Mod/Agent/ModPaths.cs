@@ -45,6 +45,21 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string ContextBlocksFile => Path.Combine(StateDirectory, "context-blocks.json");
 
+        /// <summary>
+        /// Development payloads live outside Mods so rebuilding them does not
+        /// trigger the game's asset watcher or a Gameface media reload.
+        /// </summary>
+        public static string HotReloadDirectory => Path.Combine(RuntimeDataDirectory, "hot-reload");
+
+        public static string HotReloadHandlersFile =>
+            Path.Combine(HotReloadDirectory, "RequestHandlers.dll");
+
+        public static string HotReloadToolCatalogFile =>
+            Path.Combine(HotReloadDirectory, "ToolCatalog.json");
+
+        public static string HotReloadSkillsDirectory =>
+            Path.Combine(HotReloadDirectory, "Skills");
+
         public static void EnsureDirectories()
         {
             Directory.CreateDirectory(ModDataDirectory);
@@ -52,6 +67,7 @@ namespace CitiesSkylines2Agent.Agent
             Directory.CreateDirectory(LogsDirectory);
             Directory.CreateDirectory(ScreenshotsDirectory);
             Directory.CreateDirectory(StateDirectory);
+            Directory.CreateDirectory(HotReloadDirectory);
         }
     }
 }

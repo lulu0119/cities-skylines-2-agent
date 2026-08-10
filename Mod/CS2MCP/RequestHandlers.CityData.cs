@@ -48,10 +48,6 @@ namespace CS2MCP
             else if (electricity.production + electricityTrade.import < electricity.consumption)
                 problems.Add(new { id = "electricity", severity = "warning",
                     message = $"electricity consumption {electricity.consumption:N0} slightly exceeds reliable supply — consider adding production capacity" });
-            if (garbage.garbageAccumulation > 0.01f)
-                problems.Add(new { id = "garbage", severity = "warning",
-                    message = $"garbage accumulating (rate: {garbage.garbageAccumulation:F1}) — add landfill, incinerator, or recycling center" });
-
             return BridgeResponse.Json(new
             {
                 electricity = new
@@ -76,10 +72,15 @@ namespace CS2MCP
                 },
                 garbage = new
                 {
-                    accumulationRate = garbage.garbageAccumulation,
+                    // Vanilla binds this exact value as garbageInfo.productionRate.
+                    // It is garbage generated per day, not an unserved backlog or
+                    // capacity deficit, so a positive value is never a problem by
+                    // itself. Actual collection failures surface as in-world
+                    // GarbagePilingUp notifications.
+                    productionRate = garbage.garbageAccumulation,
                 },
                 problems,
-                note = "healthcare/education coverage: query /city/statistics (e.g. type=EducationCount) until dedicated endpoints land. problems[] is a derived summary of critical service gaps — address those before expanding.",
+                note = "garbage.productionRate is daily generation, not a deficit; use notifications for GarbagePilingUp. Healthcare/education coverage: query /city/statistics (e.g. type=EducationCount) until dedicated endpoints land. problems[] is a derived summary of critical service gaps — address those before expanding.",
             });
         }
 

@@ -64,9 +64,9 @@ Working style:
 2. Fix problems that block city growth FIRST: sewage, water, electricity, garbage, road access. Do not zone or expand while a red problem is unresolved.
 3. Choose infrastructure based on this map and the current city state (use terrain / gridmap / find_prefabs). There is no fixed recipe: pick the power source, water intake and sewage outlet that fit this city.
 4. Use zone_area for regular residential / commercial / industrial / office growth. Use place_building only for standalone buildings (service buildings, unique/landmark/signature buildings, special production or extraction facilities).
-5. After find_placement succeeds, call place_building with the returned coordinates in the SAME turn. Never end a turn with only a found position.
+5. Use place_building with prefab + x/z + radius: it finds a legal road-facing position inside the radius (auto-orienting the building to the road) and places it in the same call. Utility buildings auto-connect to the nearest road network. find_placement is only a preview; never end a turn with only a found position.
 6. build_road: short segments (50-250m) on owned tiles near existing nodes; omit e1/e2 for ground level. If a call fails, change the position or try a nearby one instead of repeating the same call.
-7. The simulation clock belongs to the player. You can wait briefly with wait_simulation (max 60 real seconds) to let buildings construct or services react; never poll game_state in a loop.
+7. The simulation clock belongs to the player. Use wait_simulation to advance in-game time: one call advances exactly 1 in-game hour by default (high speed, roughly 20-30 real seconds), then restores the previous speed/pause state. Buildings take game hours to construct, level up and attract residents, so after zoning/placing call wait_simulation once or twice; never poll game_state in a loop.
 8. Before destructive actions (demolish), list the targets and explain why.
 9. When you need a player decision (major spending, demolishing something unexpected), ask explicitly and do not act until confirmed.
 10. End every turn with a concise summary (what was done, results, next steps).
@@ -132,6 +132,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         private string m_TurnId;
         private long m_EstimatedTokens;
         private int m_TurnGenerationCount;
+        private int m_SuppressAutoContinue;
         private bool m_TimeoutOccurred;
         private bool m_Disposed;
 
@@ -161,6 +162,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         /// <summary>Queue a user message; injected after the current tool round.</summary>
         public void Send(string text)
         {
+            Interlocked.Exchange(ref m_SuppressAutoContinue, 0);
             // #region agent log
             Debug548a1a.Log(
                 "H-DUP-A",
@@ -176,6 +178,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         public void Interrupt()
         {
+            Interlocked.Exchange(ref m_SuppressAutoContinue, 1);
             m_TurnCts?.Cancel();
             Status = AgentStatus.Interrupted;
             Emit(new AgentUiEvent { Kind = "status", Status = AgentStatus.Interrupted, Text = "已中断当前回合" });
@@ -325,7 +328,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnCts = new CancellationTokenSource();
                 m_TurnGenerationCount = 0;
                 m_TimeoutOccurred = false;
-                m_ToolSurface.Reset();
                 m_ToolExecutor.Reset();
                 Stopwatch turnTimer = Stopwatch.StartNew();
 
@@ -421,7 +423,8 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
                 // Auto-continue: queue the continuation message so the loop picks it
                 // up without user input. The simulation clock stays with the player.
-                if (Setting.StaticContinuous && !m_TimeoutOccurred &&
+                bool suppressAutoContinue = Interlocked.Exchange(ref m_SuppressAutoContinue, 0) != 0;
+                if (!suppressAutoContinue && Setting.StaticContinuous && !m_TimeoutOccurred &&
                     m_Pending.Reader.Count == 0 &&
                     !m_LoopCts.IsCancellationRequested)
                 {

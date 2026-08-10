@@ -15,7 +15,7 @@ namespace CS2MCP
     /// Executes bridge requests. Every method here runs on the simulation main
     /// thread (called from BridgeSystem.OnUpdate), so direct ECS access is safe.
     /// </summary>
-    public sealed partial class RequestHandlers
+    public sealed partial class RequestHandlers : IRequestHandlerAdapter
     {
         private readonly BridgeSystem m_System;
 
@@ -93,6 +93,8 @@ namespace CS2MCP
                     return GetZoneTypes();
                 case "/build/zone":
                     return ZoneArea(request);
+                case "/debug/zone-blocks":
+                    return DebugZoneBlocks(request);
                 case "/build/demolish":
                     return Demolish(request);
                 case "/city/buildings":
@@ -128,7 +130,9 @@ namespace CS2MCP
                 case "/game/save":
                     return SaveGame(request);
                 case "/city/tiles":
-                    return GetTilesInfo();
+                    return GetTilesInfo(request);
+                case "/city/tiles/buy":
+                    return BuyTiles(request);
                 case "/districts":
                     return GetDistricts();
                 case "/build/district":
@@ -156,6 +160,7 @@ namespace CS2MCP
                 ok = true,
                 mod = Mod.Name,
                 version = Mod.Version,
+                handlerRevision = GetType().Assembly.ManifestModule.ModuleVersionId.ToString("N"),
                 gameMode = manager != null ? manager.gameMode.ToString() : "Unknown",
                 isLoading = manager != null && manager.isGameLoading,
             });

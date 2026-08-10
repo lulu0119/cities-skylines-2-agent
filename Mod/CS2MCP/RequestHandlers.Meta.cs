@@ -4,6 +4,7 @@ using Game.Areas;
 using Game.Prefabs;
 using Game.SceneFlow;
 using Game.Simulation;
+using Game.Tools;
 using Game.UI.InGame;
 using Game.UI.Menu;
 using Unity.Collections;
@@ -19,7 +20,9 @@ namespace CS2MCP
     /// </summary>
     public sealed partial class RequestHandlers
     {
-        private const float kFramesPerSecond = 262144f / 24f / 3600f;
+        // SimulationSystem.frameIndex ticks 262144 times per 24 in-game hours,
+        // so one in-game hour is exactly 262144 / 24 frames.
+        private const float kFramesPerGameHour = 262144f / 24f;
 
         private EntityQuery m_DistrictPrefabQuery;
         private bool m_DistrictPrefabQueryCreated;
@@ -114,29 +117,32 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(409, "a timed simulation wait is already active; wait for it to finish first");
             }
-            if (!request.TryGetFloat("seconds", out float seconds))
+            if (!request.TryGetFloat("hours", out float hours))
             {
-                return BridgeResponse.Error(400, "provide ?seconds=<real seconds 1-60>");
+                hours = 1f;
             }
-            seconds = math.clamp(seconds, 1f, 60f);
+            hours = math.clamp(hours, 1f, 24f);
 
             SimulationSystem sim = World.GetOrCreateSystemManaged<SimulationSystem>();
             float restoreSpeed = sim.selectedSpeed;
+            // One wait advances exactly the requested number of in-game hours.
+            // The run speed only controls how long that takes in real time;
+            // it does not change how much game time passes.
             const float speed = 8f;
             uint targetFrame = sim.frameIndex +
-                (uint)Math.Ceiling(seconds * kFramesPerSecond * speed);
-            m_System.StartTimedRun(targetFrame, restoreSpeed);
+                (uint)Math.Ceiling(hours * kFramesPerGameHour);
             sim.selectedSpeed = speed;
+            m_System.StartTimedRun(targetFrame, restoreSpeed, speed);
 
             return BridgeResponse.Json(new
             {
                 running = true,
-                seconds,
+                hours,
                 speed,
                 restoreSpeed,
                 startFrame = sim.frameIndex,
                 targetFrame,
-                note = "simulation runs at max speed for the requested real-time seconds, then the previous speed/pause state is restored",
+                note = "simulation runs until exactly the requested in-game hours have passed (default 1 game hour), then the previous speed/pause state is restored",
             });
         }
 
@@ -170,33 +176,174 @@ namespace CS2MCP
             });
         }
 
-        private BridgeResponse GetTilesInfo()
+        private BridgeResponse GetTilesInfo(BridgeRequest request)
         {
             if (!TryGetCity(out _, out BridgeResponse error))
             {
                 return error;
             }
+            request.Query.TryGetValue("filter", out string filterRaw);
+            string filter = string.IsNullOrWhiteSpace(filterRaw)
+                ? "all"
+                : filterRaw.Trim().ToLowerInvariant();
+            if (filter != "all" && filter != "owned" && filter != "unowned" && filter != "available")
+            {
+                return BridgeResponse.Error(400, "filter must be 'all', 'owned', 'unowned' or 'available'");
+            }
             MapTilePurchaseSystem tiles = World.GetOrCreateSystemManaged<MapTilePurchaseSystem>();
+            int availableTileSlots = tiles.GetAvailableTiles();
             int total = MapTileQuery.CalculateEntityCount();
             int owned = 0;
+            const float kMapHalfSize = 7168f;
+            const float kMapTileSize = 623.304347826f;
+            var tileList = new List<object>();
             using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity entity in entities)
                 {
-                    if (!EntityManager.HasComponent<Game.Common.Native>(entity))
+                    bool isOwned = !EntityManager.HasComponent<Game.Common.Native>(entity);
+                    if (isOwned)
                     {
                         owned++;
                     }
+                    bool canAttemptPurchase = !isOwned && availableTileSlots > 0;
+                    if ((filter == "owned" && !isOwned) ||
+                        (filter == "unowned" && isOwned) ||
+                        (filter == "available" && !canAttemptPurchase))
+                    {
+                        continue;
+                    }
+                    Geometry geometry = EntityManager.GetComponentData<Geometry>(entity);
+                    float x = geometry.m_CenterPosition.x;
+                    float z = geometry.m_CenterPosition.z;
+                    int gridX = (int)Math.Floor((x + kMapHalfSize) / kMapTileSize);
+                    int gridZ = (int)Math.Floor((z + kMapHalfSize) / kMapTileSize);
+                    tileList.Add(new
+                    {
+                        entity = new { index = entity.Index, version = entity.Version },
+                        grid = new { x = gridX, z = gridZ },
+                        center = new { x = (float)Math.Round(x, 1), z = (float)Math.Round(z, 1) },
+                        owned = isOwned,
+                        available = canAttemptPurchase,
+                    });
                 }
             }
             return BridgeResponse.Json(new
             {
+                filter,
                 totalTiles = total,
                 ownedTiles = owned,
-                availableToPurchase = tiles.GetAvailableTiles(),
+                availableToPurchase = availableTileSlots,
                 upkeepEnabled = tiles.GetMapTileUpkeepEnabled(),
                 upkeepCostMultiplier = tiles.GetMapTileUpkeepCostMultiplier(owned),
-                note = "tile purchasing via API is planned (v0.9); buy tiles in the game UI for now",
+                note = "tiles are 623m squares on a 23x23 grid; filter=owned|unowned|available|all; available means a purchase permit exists, while the game still validates tile eligibility and funds",
+                tiles = tileList,
+            });
+        }
+
+        private BridgeResponse BuyTiles(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+
+            Entity tile = Entity.Null;
+            if (request.TryGetInt("index", out int index))
+            {
+                using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+                {
+                    foreach (Entity entity in entities)
+                    {
+                        if (entity.Index == index)
+                        {
+                            tile = entity;
+                            break;
+                        }
+                    }
+                }
+                if (tile == Entity.Null)
+                {
+                    return BridgeResponse.Error(404, $"map tile entity {index} not found; list via /city/tiles");
+                }
+            }
+            else if (request.TryGetInt("gridX", out int gridX) && request.TryGetInt("gridZ", out int gridZ))
+            {
+                const float kMapHalfSize = 7168f;
+                const float kMapTileSize = 623.304347826f;
+                using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+                {
+                    foreach (Entity entity in entities)
+                    {
+                        Geometry geometry = EntityManager.GetComponentData<Geometry>(entity);
+                        int x = (int)Math.Floor((geometry.m_CenterPosition.x + kMapHalfSize) / kMapTileSize);
+                        int z = (int)Math.Floor((geometry.m_CenterPosition.z + kMapHalfSize) / kMapTileSize);
+                        if (x == gridX && z == gridZ)
+                        {
+                            tile = entity;
+                            break;
+                        }
+                    }
+                }
+                if (tile == Entity.Null)
+                {
+                    return BridgeResponse.Error(404, $"map tile at grid ({gridX},{gridZ}) not found");
+                }
+            }
+            else
+            {
+                return BridgeResponse.Error(400, "provide ?index=<tile entity index> (from /city/tiles) or ?gridX=&gridZ=");
+            }
+
+            if (!EntityManager.HasComponent<Game.Common.Native>(tile))
+            {
+                return BridgeResponse.Error(409, "this map tile is already owned");
+            }
+
+            MapTilePurchaseSystem purchase = World.GetOrCreateSystemManaged<MapTilePurchaseSystem>();
+
+            // Feed the game's purchase pipeline the same way the map-tiles UI
+            // does: a selection entity holding the tile, then PurchaseSelection
+            // validates permits/funds, charges the price and unlocks the tile.
+            Entity selectionEntity = Entity.Null;
+            bool wasSelecting = purchase.selecting;
+            TilePurchaseErrorFlags status;
+            int cost;
+            try
+            {
+                selectionEntity = EntityManager.CreateEntity(
+                    ComponentType.ReadWrite<SelectionInfo>(),
+                    ComponentType.ReadWrite<SelectionElement>());
+                DynamicBuffer<SelectionElement> selection =
+                    EntityManager.GetBuffer<SelectionElement>(selectionEntity);
+                selection.Add(new SelectionElement { m_Entity = tile });
+
+                purchase.selecting = true;
+                purchase.PurchaseSelection();
+                status = purchase.status;
+                cost = purchase.cost;
+            }
+            finally
+            {
+                purchase.selecting = wasSelecting;
+                if (selectionEntity != Entity.Null && EntityManager.Exists(selectionEntity))
+                {
+                    EntityManager.DestroyEntity(selectionEntity);
+                }
+            }
+
+            if (status != TilePurchaseErrorFlags.None)
+            {
+                return BridgeResponse.Error(409,
+                    $"purchase blocked by the game: {status}; estimated cost {cost} (check money/permits)");
+            }
+
+            return BridgeResponse.Json(new
+            {
+                purchased = true,
+                cost,
+                tile = new { index = tile.Index, version = tile.Version },
+                note = "map tile unlocked; build roads/zone on it now",
             });
         }
 

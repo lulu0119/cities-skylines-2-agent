@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using Game.City;
 using Game.Prefabs;
+using Game.Simulation;
 using Game.Zones;
 using Unity.Collections;
 using Unity.Entities;
@@ -94,7 +96,7 @@ namespace CS2MCP
 
             return BridgeResponse.Json(new
             {
-                note = "use 'name' with /build/zone; zone 'None' clears zoning (dezone)",
+                note = "use 'name' with /build/zone; zone 'None' clears zoning (dezone). Generic names automatically resolve to the current map theme when a themed variant exists",
                 stalenessWarning = LockStalenessWarning,
                 zones,
             });
@@ -128,7 +130,8 @@ namespace CS2MCP
             }
             else
             {
-                if (!TryFindPrefabByName(ZonePrefabQuery, zoneName, out Entity zonePrefabEntity, out PrefabBase zonePrefab))
+                string lookupName = ResolveZoneNameForTheme(zoneName);
+                if (!TryFindPrefabByName(ZonePrefabQuery, lookupName, out Entity zonePrefabEntity, out PrefabBase zonePrefab))
                 {
                     return BridgeResponse.Error(404, $"unknown zone '{zoneName}'; list via /zones");
                 }
@@ -141,12 +144,96 @@ namespace CS2MCP
             }
 
             float2 center = new float2(x, z);
-            int cellsChanged = 0;
-            int blocksTouched = 0;
-
-            using (NativeArray<Entity> blocks = ZoneBlockQuery.ToEntityArray(Allocator.Temp))
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueueZone(targetZone, resolvedName, center, radius, request))
             {
-                foreach (Entity blockEntity in blocks)
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            }
+            // Completed asynchronously by BridgeToolSystem during ToolUpdate.
+            return null;
+        }
+
+        /// <summary>
+        /// The game exposes both generic zone prefabs and theme-specific
+        /// growable zones. Generic residential/commercial cells can remain
+        /// vacant forever because no growable building matches them. Keep the
+        /// caller-facing vocabulary generic and select the current map's
+        /// variant when it exists (for example Residential Low becomes NA
+        /// Residential Low).
+        /// </summary>
+        private string ResolveZoneNameForTheme(string requestedName)
+        {
+            CityConfigurationSystem city =
+                World.GetOrCreateSystemManaged<CityConfigurationSystem>();
+            if (city.defaultTheme == Entity.Null)
+            {
+                return requestedName;
+            }
+
+            ThemePrefab theme = World.GetOrCreateSystemManaged<PrefabSystem>()
+                .GetPrefab<ThemePrefab>(city.defaultTheme);
+            if (theme == null || string.IsNullOrWhiteSpace(theme.assetPrefix))
+            {
+                return requestedName;
+            }
+
+            string themedName = theme.assetPrefix.Trim() + " " + requestedName;
+            return TryFindPrefabByName(
+                ZonePrefabQuery,
+                themedName,
+                out _,
+                out _)
+                ? themedName
+                : requestedName;
+        }
+
+        /// <summary>
+        /// Diagnostics: dump zone prefab metadata, per-block cell state and
+        /// VacantLot buffers around a point. Used to root-cause why zoned
+        /// residential cells never grow while industrial cells do.
+        /// </summary>
+        private BridgeResponse DebugZoneBlocks(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
+            {
+                return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
+            }
+            float radius = request.TryGetFloat("radius", out float rawRadius)
+                ? math.clamp(rawRadius, 16f, 1000f)
+                : 200f;
+            float2 center = new float2(x, z);
+
+            var zonePrefabs = new List<object>();
+            using (NativeArray<Entity> entities = ZonePrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (!EntityManager.HasComponent<ZoneData>(entity))
+                    {
+                        continue;
+                    }
+                    ZoneData zoneData = EntityManager.GetComponentData<ZoneData>(entity);
+                    PrefabBase prefab = World.GetOrCreateSystemManaged<PrefabSystem>()
+                        .GetPrefab<PrefabBase>(entity);
+                    zonePrefabs.Add(new
+                    {
+                        name = prefab?.name,
+                        zoneType = zoneData.m_ZoneType.ToString(),
+                        areaType = zoneData.m_AreaType.ToString(),
+                        hasZoneProperties = EntityManager.HasComponent<ZonePropertiesData>(entity),
+                        hasProcessEstimates = EntityManager.HasBuffer<ProcessEstimate>(entity),
+                    });
+                }
+            }
+
+            var blocks = new List<object>();
+            using (NativeArray<Entity> blockEntities = ZoneBlockQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity blockEntity in blockEntities)
                 {
                     Block block = EntityManager.GetComponentData<Block>(blockEntity);
                     float blockExtent = kCellSize * (math.cmax(block.m_Size) + 1) * 0.71f;
@@ -155,60 +242,130 @@ namespace CS2MCP
                         continue;
                     }
 
-                    DynamicBuffer<Cell> cells = EntityManager.GetBuffer<Cell>(blockEntity);
-                    bool blockChanged = false;
-                    for (int cellZ = 0; cellZ < block.m_Size.y; cellZ++)
+                    DynamicBuffer<Cell> cells = EntityManager.GetBuffer<Cell>(blockEntity, isReadOnly: true);
+                    var cellCounts = new Dictionary<string, int>();
+                    var flagCounts = new Dictionary<string, int>();
+                    var sampleCells = new List<object>();
+                    int zonedCells = 0;
+                    for (int i = 0; i < cells.Length; i++)
                     {
-                        for (int cellX = 0; cellX < block.m_Size.x; cellX++)
+                        Cell cell = cells[i];
+                        if (!cell.m_Zone.Equals(ZoneType.None))
                         {
-                            int index = cellZ * block.m_Size.x + cellX;
-                            if (index >= cells.Length)
-                            {
-                                continue;
-                            }
-                            Cell cell = cells[index];
-                            if ((cell.m_State & CellFlags.Visible) == 0
-                                || (cell.m_State & (CellFlags.Blocked | CellFlags.Overridden)) != 0)
-                            {
-                                continue;
-                            }
-                            if (cell.m_Zone.Equals(targetZone))
-                            {
-                                continue;
-                            }
+                            zonedCells++;
+                        }
+                        string zoneKey = cell.m_Zone.ToString();
+                        cellCounts[zoneKey] = cellCounts.TryGetValue(zoneKey, out int zoneCount)
+                            ? zoneCount + 1
+                            : 1;
+                        string flagKey = cell.m_State.ToString();
+                        flagCounts[flagKey] = flagCounts.TryGetValue(flagKey, out int flagCount)
+                            ? flagCount + 1
+                            : 1;
+                        if (!cell.m_Zone.Equals(ZoneType.None) && sampleCells.Count < 12)
+                        {
+                            int cellX = i % block.m_Size.x;
+                            int cellZ = i / block.m_Size.x;
                             float3 cellPosition = ZoneUtils.GetCellPosition(block, new int2(cellX, cellZ));
-                            if (math.distance(cellPosition.xz, center) > radius)
+                            sampleCells.Add(new
                             {
-                                continue;
-                            }
-                            cell.m_Zone = targetZone;
-                            cells[index] = cell;
-                            cellsChanged++;
-                            blockChanged = true;
+                                x = cellPosition.x,
+                                z = cellPosition.z,
+                                zone = cell.m_Zone.ToString(),
+                                state = cell.m_State.ToString(),
+                                height = cell.m_Height,
+                            });
                         }
                     }
 
-                    if (blockChanged)
+                    var lots = new List<object>();
+                    if (EntityManager.HasBuffer<VacantLot>(blockEntity))
                     {
-                        blocksTouched++;
-                        if (!EntityManager.HasComponent<Game.Common.Updated>(blockEntity))
+                        DynamicBuffer<VacantLot> lotBuffer =
+                            EntityManager.GetBuffer<VacantLot>(blockEntity, isReadOnly: true);
+                        foreach (VacantLot lot in lotBuffer)
                         {
-                            EntityManager.AddComponent<Game.Common.Updated>(blockEntity);
+                            lots.Add(new
+                            {
+                                type = lot.m_Type.ToString(),
+                                minX = lot.m_Area.x,
+                                minZ = lot.m_Area.y,
+                                maxX = lot.m_Area.z,
+                                maxZ = lot.m_Area.w,
+                                width = lot.m_Area.z - lot.m_Area.x,
+                                depth = lot.m_Area.w - lot.m_Area.y,
+                                height = lot.m_Height,
+                                flags = lot.m_Flags.ToString(),
+                            });
                         }
                     }
+
+                    blocks.Add(new
+                    {
+                        entity = new { index = blockEntity.Index, version = blockEntity.Version },
+                        position = new { x = block.m_Position.x, z = block.m_Position.z },
+                        size = new { x = block.m_Size.x, z = block.m_Size.y },
+                        cells = cells.Length,
+                        zonedCells,
+                        cellCounts,
+                        flagCounts,
+                        vacantLotCount = lots.Count,
+                        lots,
+                        sampleCells,
+                        validArea = EntityManager.HasComponent<ValidArea>(blockEntity)
+                            ? EntityManager.GetComponentData<ValidArea>(blockEntity).m_Area.ToString()
+                            : null,
+                    });
+                }
+            }
+
+            ResidentialDemandSystem residential = World.GetOrCreateSystemManaged<ResidentialDemandSystem>();
+            CommercialDemandSystem commercial = World.GetOrCreateSystemManaged<CommercialDemandSystem>();
+            IndustrialDemandSystem industrial = World.GetOrCreateSystemManaged<IndustrialDemandSystem>();
+
+            var outsideConnections = new List<object>();
+            using (EntityQuery outsideQuery = EntityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<Game.Objects.OutsideConnection>()))
+            using (NativeArray<Entity> outsideEntities = outsideQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in outsideEntities)
+                {
+                    outsideConnections.Add(new
+                    {
+                        entity = new { index = entity.Index, version = entity.Version },
+                        position = EntityManager.HasComponent<Game.Objects.Transform>(entity)
+                            ? EntityManager.GetComponentData<Game.Objects.Transform>(entity).m_Position.ToString()
+                            : null,
+                        prefab = EntityManager.HasComponent<Game.Prefabs.PrefabRef>(entity)
+                            ? EntityManager.GetComponentData<Game.Prefabs.PrefabRef>(entity).m_Prefab.ToString()
+                            : null,
+                    });
                 }
             }
 
             return BridgeResponse.Json(new
             {
-                zone = resolvedName,
-                center = new { x, z },
-                radius,
-                cellsChanged,
-                blocksTouched,
-                note = cellsChanged == 0
-                    ? "no zonable cells found in radius - zone cells only exist along roads (build a road first) and must be unoccupied"
-                    : "zoned; buildings will grow while the simulation runs if demand exists",
+                scope = new { x, z, radius },
+                zonePrefabs,
+                blocks,
+                outsideConnections,
+                demand = new
+                {
+                    residential = new
+                    {
+                        householdDemand = residential.householdDemand,
+                        buildingDemand = new
+                        {
+                            low = residential.buildingDemand.x,
+                            medium = residential.buildingDemand.y,
+                            high = residential.buildingDemand.z,
+                        },
+                    },
+                    commercial = commercial.buildingDemand,
+                    industrial = industrial.industrialBuildingDemand,
+                    office = industrial.officeBuildingDemand,
+                    storage = industrial.storageBuildingDemand,
+                },
             });
         }
     }
