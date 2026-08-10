@@ -86,7 +86,7 @@ if (!wsUrl) {
 }
 
 // Gameface QuerySelector rejects :not(); keep selectors simple.
-const expression = `(() => {
+const expression = process.env.CDP_EXPRESSION || `(() => {
   const textHits = []
   const walk = (node, depth) => {
     if (!node || depth > 30) return
