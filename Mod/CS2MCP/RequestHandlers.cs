@@ -91,8 +91,11 @@ namespace CS2MCP
                     return FindPlacement(request);
                 case "/build/road":
                     return BuildRoad(request);
-                case "/build/upgrade":
-                    return HandleUpgradeRoad(request);
+                case "/build/road/features":
+                case "/build/upgrade": // Deprecated upgrade_road compatibility route.
+                    return SetRoadFeatures(request);
+                case "/build/road/replace":
+                    return ReplaceRoadType(request);
                 case "/zones":
                     return GetZoneTypes();
                 case "/build/zone":
@@ -105,6 +108,8 @@ namespace CS2MCP
                     return Demolish(request);
                 case "/city/buildings":
                     return ListBuildings(request);
+                case "/city/buildings/operational-area":
+                    return GetOperationalArea(request);
                 case "/city/roads":
                     return ListRoads(request);
                 case "/city/loan":

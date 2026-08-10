@@ -1,9 +1,10 @@
 # 10k acceptance follow-up: gameplay capability backlog (2026-08-10)
 
-**Status:** Rectangle zoning and progression tools are implemented. Rectangle
-zoning and progression reads are accepted on a fresh normal-mode map; a positive
-node purchase plus save/reload still needs a city with a Development Point.
-Operational areas and specialized industry remain backlog items.
+**Status:** Rectangle zoning, progression reads, typed prefab roles, road-feature
+editing, restricted road-type replacement, and operational-area inspection are
+implemented and live-accepted. A positive development-node purchase plus
+save/reload, operational-area writes, and specialized industry remain backlog
+items.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -15,7 +16,7 @@ does not try to fix every symptom in the prompt.
 | --- | --- | --- | --- |
 | Closed | Circular-only zoning | Low frontage coverage and accidental overlap with occupied blocks | `zone_rectangle` mutates cells during `ToolUpdate` |
 | Implemented | No milestone/development-tree tools | Agent earns progression but keeps choosing basic services | Compact progression frontier + native node purchase; positive purchase/reload acceptance pending |
-| P1 | No building-owned area editing | Specialized industry hubs and landfill storage areas stay at their tiny defaults | Shared operational-area Tool over the native Area Tool pipeline |
+| P1 | No building-owned area editing | Specialized industry hubs and landfill storage areas stay at their tiny defaults | Read-only owner/capacity inspection accepted; native area-write spike next |
 | P1 | No specialized-industry workflow | Raw materials are imported and freight/economy opportunities are missed | Resource perception + hub placement + extraction polygon |
 | Policy | No road hierarchy | Local streets and a few junctions absorb most through/freight traffic | Gameplay skill updated in this change |
 | Closed | Trees treated as obstacles | Wasted demolish/placement turns | Existing skill already states that growables clear vegetation |
@@ -144,7 +145,8 @@ authoritative historical comparison is the latest earlier session whose recorded
 catalog SHA and handler MVID match the then-deployed source; the fresh-map session
 above is the authority for this change.
 
-The current catalog has 49 tools. A normal turn exposes 12 core tools plus five
+The `e53c750` catalog reviewed against the historical corpus had 49 tools; the
+catalog after this change has 52. A normal turn exposes 12 core tools plus five
 agent/meta tools; optional groups expose construction, finance, progression,
 district and visual capabilities only when requested. Group gating reduces model
 schema load, but it does not by itself make the Tool module deep.
@@ -170,16 +172,23 @@ to assemble a starter-site plan from `terrain`, `gridmap`, roads and prefab sear
 waterfront growables from 530 matches before narrower queries found the two useful
 pumps.
 
-The next deepening opportunity is therefore not another loop rewrite. It is a
-starter-site/infrastructure planning Tool, or at minimum role/category filters on
-prefab discovery, that owns the knowledge needed to turn an outside connection and
-map resources into a small set of legal road/utility candidates. A second
-opportunity is generating group membership and routing metadata from one catalog
-source so tool knowledge stops leaking across modules.
+The first discovery phase is now implemented: `find_prefabs(role=...)` classifies
+infrastructure and services from typed prefab ECS components instead of names. The
+next deepening opportunity is a read-only starter-site/infrastructure candidate Tool
+that owns the knowledge needed to turn an outside connection and map resources into
+a small set of native-validated road/utility candidates. A second opportunity is
+generating group membership and routing metadata from one catalog source so tool
+knowledge stops leaking across modules.
+
+Fresh-map acceptance on disposable city `阿什比` confirmed that `role=water`,
+`role=sewage`, `role=power`, and `role=garbage` return the corresponding typed
+service prefabs without the earlier waterfront-growable contamination. This is a
+discovery improvement, not yet the stronger candidate planner described above.
 
 ### Tools with no observed historical calls
 
-Against the current names, these tools had no calls in the 47-file corpus:
+Against the 49 names present at the `e53c750` audit baseline, these tools had no
+calls in the 47-file corpus:
 
 `create_district`, `district_policies`, `get_fees`, `get_loan`, `list_districts`,
 `policies`, `set_district_policy`, `set_fee`, `set_loan`, `set_policy`, and
@@ -187,13 +196,29 @@ Against the current names, these tools had no calls in the 47-file corpus:
 
 This is not evidence that all eleven should be deleted. District tools were never
 exposed because the districts group was enabled zero times; finance was enabled
-only three times, versus construction 49 times. `upgrade_road` is different: it is
-in the frequently enabled construction group, but its implementation only applies
-decorations and cannot widen/change a road type, so its name promises more than the
-Tool can do. Rename/narrow it or implement real type replacement before relying on
-usage statistics. `agent_add_context_block` and `agent_remove_context_block` also
+only three times, versus construction 49 times. `upgrade_road` was different: it
+was in the frequently enabled construction group, but its implementation only
+applied composition features and could not widen/change a road type. The canonical
+model-facing name is now `set_road_features`; the old name remains only as a
+deprecated compatibility alias. True road-prefab replacement is a separate
+disposable-map spike. `agent_add_context_block` and `agent_remove_context_block` also
 had no observed calls; map-pin ownership currently sits with the player/UI, so
 model-side mutation is not part of the common mayor workflow.
+
+### Road semantics and live acceptance
+
+The composition operation is now exposed canonically as `set_road_features`; the
+old `upgrade_road` name remains a catalog-only deprecated alias and is absent from
+the model-facing construction group. A separate experimental `replace_road_type`
+uses the native replacement definition path and deliberately accepts only a simple,
+ownerless, non-fixed standalone edge.
+
+On disposable city `阿什比`, an isolated 80 m `Small Road` at
+`(-740, -700) -> (-660, -700)` was replaced with `Small Road Asymmetric`. A refreshed
+road read reported the new prefab with the same endpoints and length. Applying
+`grass,lighting` through `set_road_features` then succeeded without changing the
+prefab, width, or lane layout. This proves the restricted standalone case only;
+intersection/chain behavior and save/reload persistence remain unaccepted.
 
 ## 4. Road hierarchy policy
 
@@ -299,6 +324,14 @@ considered for specialized industries. It should resolve the building's owned
 subarea, submit polygon edits through the native Area Tool pipeline, preserve the
 building-facing locked edge, and return old/new surface area and capacity.
 
+The read-only precursor `get_operational_area(building)` is now implemented and
+live-accepted. A forced empty `Landfill01` on disposable city `阿什比` exposed 28
+owned subareas while classifying only its owner-linked `Landfill Site Lot` storage
+area as editable. That polygon had four nodes, a 3,264 m² surface, zero stored
+garbage, and 51,000 capacity calculated through the game's `AreaUtils`; the other
+27 decorative/surface areas remained non-editable. No polygon was modified during
+this acceptance.
+
 ### Acceptance
 
 - Expanding the polygon increases reported landfill capacity in the UI and ECS.
@@ -309,11 +342,13 @@ building-facing locked edge, and return old/new surface area and capacity.
 
 ## Suggested implementation order
 
-1. Add role/category filtering or a deeper starter-site candidate Tool so early-city
-   setup does not require dozens of perception/search calls.
-2. Resolve the `upgrade_road` name/capability mismatch.
-3. Read-only natural-resource and building-owned-area diagnostics.
-4. Native operational-area edit spike using landfill on a disposable new map.
+1. Add a read-only starter-site candidate Tool so early-city setup does not require
+   dozens of perception/search calls.
+2. ~~Live-accept `find_prefabs(role=...)`, `set_road_features`, and the read-only
+   building-owned operational-area diagnostic.~~ Accepted on `阿什比`.
+3. ~~Restricted native road-type replacement spike on a disposable map.~~ The
+   standalone-edge case is accepted; save/reload and broader topology are pending.
+4. Native operational-area expansion spike using the empty `阿什比` landfill.
 5. Specialized-industry placement built on the proven area seam.
 
 Keep each change independently hot-reloadable when it stays inside request handlers,

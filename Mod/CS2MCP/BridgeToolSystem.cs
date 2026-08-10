@@ -51,6 +51,7 @@ namespace CS2MCP
             SearchPlace,
             Demolish,
             Upgrade,
+            ReplaceNet,
             Area,
             Zone,
         }
@@ -319,6 +320,34 @@ namespace CS2MCP
         }
 
         /// <summary>
+        /// Queues replacement of one simple standalone network edge with a new
+        /// prefab. The handler owns the restricted-topology safety checks.
+        /// </summary>
+        public bool TryQueueRoadReplacement(
+            Entity target,
+            string previousPrefab,
+            Entity prefabEntity,
+            PrefabBase prefab,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.ReplaceNet;
+            m_PendingTarget = target;
+            m_PendingLabel = previousPrefab;
+            m_PendingPrefabEntity = prefabEntity;
+            m_PendingPrefab = prefab;
+            Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(target);
+            m_PendingPosition = curve.m_Bezier.a;
+            m_PendingEnd = curve.m_Bezier.d;
+            m_PendingRequest = request;
+            Activate();
+            return true;
+        }
+
+        /// <summary>
         /// Queues zone-cell painting for ToolUpdate, where ToolOutputBarrier is
         /// open and the game's zone cell-check lifecycle can observe Updated.
         /// Must be called on the simulation thread.
@@ -409,6 +438,9 @@ namespace CS2MCP
                                 break;
                             case OperationKind.Upgrade:
                                 CreateModifyDefinitions(CreationFlags.Upgrade, m_PendingUpgradeFlags);
+                                break;
+                            case OperationKind.ReplaceNet:
+                                CreateRoadReplacementDefinition();
                                 break;
                             case OperationKind.Area:
                                 CreateAreaDefinitions();
@@ -747,10 +779,21 @@ namespace CS2MCP
                 case OperationKind.Upgrade:
                     return BridgeResponse.Json(new
                     {
-                        upgraded = true,
+                        roadFeaturesSet = true,
+                        canonicalTool = "set_road_features",
                         prefab = m_PendingLabel,
                         entity = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
-                        note = "upgrade applied via the tool pipeline; the segment is recreated with the new composition",
+                        note = "road features applied via the native upgrade pipeline; this does not change the road prefab, width or lane layout",
+                    });
+                case OperationKind.ReplaceNet:
+                    return BridgeResponse.Json(new
+                    {
+                        replaced = true,
+                        previousPrefab = m_PendingLabel,
+                        prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
+                        start = new { x = m_PendingPosition.x, z = m_PendingPosition.z },
+                        end = new { x = m_PendingEnd.x, z = m_PendingEnd.z },
+                        note = "native Replace transaction committed; the original edge entity may be replaced, so refresh list_roads and verify lanes, zoning and traffic",
                     });
                 case OperationKind.Net:
                     float? widthM = null;
@@ -1085,6 +1128,46 @@ namespace CS2MCP
             }
 
             commandBuffer.AddComponent(e, definition);
+        }
+
+        /// <summary>
+        /// Mirrors NetToolSystem.CreateReplacement for one ownerless edge. The
+        /// native Generate/Validation/Apply systems replace the original and
+        /// rebuild dependent geometry instead of mutating PrefabRef in place.
+        /// </summary>
+        private void CreateRoadReplacementDefinition()
+        {
+            Entity target = m_PendingTarget;
+            Game.Net.Edge edge = EntityManager.GetComponentData<Game.Net.Edge>(target);
+            Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(target);
+
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            Entity definitionEntity = commandBuffer.CreateEntity();
+            commandBuffer.AddComponent(definitionEntity, new CreationDefinition
+            {
+                m_Original = target,
+                m_Prefab = m_PendingPrefabEntity,
+                m_Flags = CreationFlags.Align | CreationFlags.SubElevation,
+            });
+            commandBuffer.AddComponent(definitionEntity, default(Updated));
+
+            NetCourse course = default;
+            course.m_Curve = curve.m_Bezier;
+            course.m_Length = curve.m_Length;
+            course.m_FixedIndex = -1;
+            course.m_StartPosition.m_Entity = edge.m_Start;
+            course.m_StartPosition.m_Position = curve.m_Bezier.a;
+            course.m_StartPosition.m_Rotation = NetUtils.GetNodeRotation(MathUtils.StartTangent(curve.m_Bezier));
+            course.m_StartPosition.m_CourseDelta = 0f;
+            course.m_StartPosition.m_ParentMesh = -1;
+            course.m_StartPosition.m_Flags = CoursePosFlags.IsFirst;
+            course.m_EndPosition.m_Entity = edge.m_End;
+            course.m_EndPosition.m_Position = curve.m_Bezier.d;
+            course.m_EndPosition.m_Rotation = NetUtils.GetNodeRotation(MathUtils.EndTangent(curve.m_Bezier));
+            course.m_EndPosition.m_CourseDelta = 1f;
+            course.m_EndPosition.m_ParentMesh = -1;
+            course.m_EndPosition.m_Flags = CoursePosFlags.IsLast;
+            commandBuffer.AddComponent(definitionEntity, course);
         }
 
         /// <summary>

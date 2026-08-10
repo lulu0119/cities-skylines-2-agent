@@ -437,6 +437,24 @@
             "type": "string",
             "description": "Case-insensitive name substring filter"
           },
+          "role": {
+            "type": "string",
+            "enum": [
+              "power",
+              "water",
+              "sewage",
+              "garbage",
+              "healthcare",
+              "fire",
+              "police",
+              "education",
+              "transport",
+              "post",
+              "telecom",
+              "specialized-industry"
+            ],
+            "description": "Optional capability filter backed by prefab ECS data. Prefer this over guessing names for infrastructure and city services."
+          },
           "limit": {
             "type": "integer",
             "minimum": 1,
@@ -457,8 +475,45 @@
           "arg": "query"
         },
         {
+          "key": "role",
+          "arg": "role"
+        },
+        {
           "key": "limit",
           "arg": "limit"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "get_operational_area",
+      "description": "Inspect building-owned operational polygons such as landfill storage or specialized-industry extraction areas. Returns polygon nodes, surface area, current storage/extraction state and native capacity/resource requirements. Use a building entity from list_buildings. This is read-only.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Building entity index from list_buildings"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Building entity version from list_buildings"
+          }
+        },
+        "required": [
+          "index",
+          "version"
+        ]
+      },
+      "route": "/city/buildings/operational-area",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
         }
       ],
       "response": "json"
@@ -928,8 +983,8 @@
       "response": "json"
     },
     {
-      "name": "upgrade_road",
-      "description": "Apply upgrades to an existing road segment (from list_roads): grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. Combine multiple with commas. The segment is recreated with the new composition via the game's tool pipeline.",
+      "name": "set_road_features",
+      "description": "Set composition features on an existing road segment from list_roads: grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. This uses the game's native road-feature upgrade pipeline but does NOT change road prefab, width or lane layout.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -961,6 +1016,61 @@
           "upgrades"
         ]
       },
+      "route": "/build/road/features",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
+        },
+        {
+          "key": "upgrades",
+          "arg": "upgrades"
+        },
+        {
+          "key": "side",
+          "arg": "side"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "upgrade_road",
+      "description": "Deprecated compatibility alias for set_road_features. It only changes composition features and never changes road prefab, width or lane layout.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Road segment entity index"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Road segment entity version"
+          },
+          "upgrades": {
+            "type": "string",
+            "description": "Comma-separated feature names, e.g. 'grass,lighting'"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "both",
+              "left",
+              "right"
+            ],
+            "description": "Which side for side features (default both)"
+          }
+        },
+        "required": [
+          "index",
+          "version",
+          "upgrades"
+        ]
+      },
       "route": "/build/upgrade",
       "query": [
         {
@@ -978,6 +1088,57 @@
         {
           "key": "side",
           "arg": "side"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "replace_road_type",
+      "description": "EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_roads after success.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Road segment entity index from list_roads"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Road segment entity version from list_roads"
+          },
+          "prefab": {
+            "type": "string",
+            "description": "Exact replacement road prefab from find_prefabs(category=road)"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Allow a milestone-locked road only for disposable-map testing"
+          }
+        },
+        "required": [
+          "index",
+          "version",
+          "prefab"
+        ]
+      },
+      "route": "/build/road/replace",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
+        },
+        {
+          "key": "prefab",
+          "arg": "prefab"
+        },
+        {
+          "key": "force",
+          "arg": "force",
+          "boolMode": "trueOnly"
         }
       ],
       "response": "json"

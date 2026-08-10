@@ -18,6 +18,7 @@ Dated notes under `guide/` / `research/` / `ops/`. Frozen M1 smoke checklist liv
 | [2026-08-06-research-in-game-ai-mods.md](./research/2026-08-06-research-in-game-ai-mods.md) | Other games’ in-game LLM mod patterns |
 | [2026-08-06-agent-runtime-compression-observability.md](./research/2026-08-06-agent-runtime-compression-observability.md) | Long-run compression, tool-call observability, interleaved input (Apeira/Agents SDK/LangChain/SK refs) |
 | [2026-08-10-cs2-mod-hot-reload.md](./research/2026-08-10-cs2-mod-hot-reload.md) | CS2 data/UI/C# hot-reload feasibility; stable host + replaceable policy architecture |
+| [2026-08-11-tool-deepening-next-seams.md](./research/2026-08-11-tool-deepening-next-seams.md) | ECS prefab roles, road features vs replacement, and owner-linked operational-area seams |
 
 ## Ops
 
