@@ -486,6 +486,69 @@
       "response": "json"
     },
     {
+      "name": "find_infrastructure_candidate",
+      "description": "Find one deterministic, native-validated site for an unlocked infrastructure/service role without committing construction. The tool chooses a typed prefab, samples both sides of existing roads, auto-orients frontage, and hides owned-tile, footprint, collision and shoreline checks. Omit x/z to search around owned tiles. Use the returned prefab/position/rotation with place_building to commit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "power",
+              "water",
+              "sewage",
+              "garbage",
+              "healthcare",
+              "fire",
+              "police",
+              "education",
+              "transport",
+              "post",
+              "telecom"
+            ],
+            "description": "Typed gameplay role; the tool chooses among unlocked prefabs for this role"
+          },
+          "x": {
+            "type": "number",
+            "description": "Optional search-center world X; provide together with z"
+          },
+          "z": {
+            "type": "number",
+            "description": "Optional search-center world Z; provide together with x"
+          },
+          "radius": {
+            "type": "number",
+            "minimum": 64,
+            "maximum": 2500,
+            "description": "Search radius in metres (default 900)"
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "route": "/build/infrastructure/candidate",
+      "query": [
+        {
+          "key": "role",
+          "arg": "role"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        }
+      ],
+      "response": "json"
+    },
+    {
       "name": "get_operational_area",
       "description": "Inspect building-owned operational polygons such as landfill storage or specialized-industry extraction areas. Returns polygon nodes, surface area, current storage/extraction state and native capacity/resource requirements. Use a building entity from list_buildings. This is read-only.",
       "parameters": {
@@ -520,7 +583,7 @@
     },
     {
       "name": "expand_operational_area",
-      "description": "Expand one owner-linked landfill storage or specialized-industry extractor area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits through the game's native validation/apply pipeline. Extractors rank clear candidates by polygon/cell resource intersection and report remaining-resource coverage; forest uses a separate tree scorer and is not yet writable. Call get_operational_area afterward to verify simulation state.",
+      "description": "Expand one owner-linked landfill storage or specialized-industry extractor area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits through the game's native validation/apply pipeline. Extractors rank clear candidates by polygon/resource intersection; fertile land, ore, oil and fish use the natural-resource map while forest scans productive tree entities. Call get_operational_area afterward to verify simulation state.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1224,7 +1287,7 @@
     },
     {
       "name": "list_roads",
-      "description": "List road segments in the city. Use with no filters to find the highway connection (look for 'Highway' prefabs) and existing road positions. Ideal for finding where to extend your road network. Spatial filter with x/z/radius. Hard max 128 results.",
+      "description": "List road segments with endpoints, width and native four-period traffic aggregates. Use sort=traffic_volume to find heavily used roads or sort=congestion to rank slowdown weighted by volume; activeBottlenecks comes from road sublanes. Spatial filter with x/z/radius. Hard max 128 results.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1249,6 +1312,15 @@
             "minimum": 1,
             "maximum": 128,
             "description": "Max results (default 128, hard cap 128)"
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "distance",
+              "traffic_volume",
+              "congestion"
+            ],
+            "description": "Optional ranking; distance requires x/z, traffic rankings return highest first"
           }
         },
         "required": []
@@ -1274,6 +1346,10 @@
         {
           "key": "limit",
           "arg": "limit"
+        },
+        {
+          "key": "sort",
+          "arg": "sort"
         }
       ],
       "response": "json"

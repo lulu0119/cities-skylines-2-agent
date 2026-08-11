@@ -1,12 +1,15 @@
 using System;
 using System.Collections.Generic;
+using Colossal.Collections;
 using Colossal.Mathematics;
 using Game.Areas;
 using Game.Common;
+using Game.Objects;
 using Game.Prefabs;
 using Game.Simulation;
 using Unity.Collections;
 using Unity.Entities;
+using Unity.Jobs;
 using Unity.Mathematics;
 using Transform = Game.Objects.Transform;
 
@@ -238,6 +241,8 @@ namespace CS2MCP
                     extractorData.HasValue ? extractorData.Value.m_MapFeature.ToString() : null,
                     selectedResourceScore.RemainingAmount,
                     selectedResourceScore.Coverage,
+                    selectedResourceScore.SampleCount,
+                    selectedResourceScore.MaxConcentration,
                     request))
             {
                 return BridgeResponse.Error(409,
@@ -476,6 +481,95 @@ namespace CS2MCP
         {
             public float RemainingAmount;
             public float Coverage;
+            public int SampleCount;
+            public float MaxConcentration;
+        }
+
+        private struct ForestResourceIterator
+            : INativeQuadTreeIterator<Entity, QuadTreeBoundsXZ>
+        {
+            public Bounds2 Bounds;
+            public NativeArray<float2> Polygon;
+            public ComponentLookup<Tree> Trees;
+            public ComponentLookup<Plant> Plants;
+            public ComponentLookup<Transform> Transforms;
+            public ComponentLookup<Damaged> Damaged;
+            public ComponentLookup<PrefabRef> PrefabRefs;
+            public ComponentLookup<TreeData> TreePrefabs;
+            public ComponentLookup<Decoration> Decorations;
+            public float RemainingAmount;
+            public float MaxConcentration;
+            public int TreeCount;
+
+            public bool Intersect(QuadTreeBoundsXZ bounds)
+            {
+                const BoundsMask required = BoundsMask.IsTree | BoundsMask.NotOverridden;
+                return (bounds.m_Mask & required) == required
+                    && MathUtils.Intersect(bounds.m_Bounds.xz, Bounds);
+            }
+
+            public void Iterate(QuadTreeBoundsXZ bounds, Entity entity)
+            {
+                const BoundsMask required = BoundsMask.IsTree | BoundsMask.NotOverridden;
+                if ((bounds.m_Mask & required) != required
+                    || !MathUtils.Intersect(bounds.m_Bounds.xz, Bounds)
+                    || (Decorations.HasComponent(entity) && Decorations.IsComponentEnabled(entity))
+                    || !Trees.HasComponent(entity)
+                    || !Plants.HasComponent(entity)
+                    || !Transforms.HasComponent(entity)
+                    || !PrefabRefs.HasComponent(entity))
+                {
+                    return;
+                }
+
+                float2 position = Transforms[entity].m_Position.xz;
+                if (!ContainsPoint(position))
+                {
+                    return;
+                }
+
+                Entity prefab = PrefabRefs[entity].m_Prefab;
+                if (!TreePrefabs.TryGetComponent(prefab, out TreeData treeData)
+                    || treeData.m_WoodAmount < Game.Objects.ObjectUtils.MIN_TREE_WOOD_RESOURCE)
+                {
+                    return;
+                }
+
+                Damaged.TryGetComponent(entity, out Damaged damaged);
+                float amount = Game.Objects.ObjectUtils.CalculateWoodAmount(
+                    Trees[entity],
+                    Plants[entity],
+                    damaged,
+                    treeData);
+                if (amount <= 0f)
+                {
+                    return;
+                }
+
+                RemainingAmount += amount;
+                MaxConcentration = math.max(MaxConcentration, amount / treeData.m_WoodAmount);
+                TreeCount++;
+            }
+
+            private bool ContainsPoint(float2 point)
+            {
+                bool inside = false;
+                int previous = Polygon.Length - 1;
+                for (int current = 0; current < Polygon.Length; current++)
+                {
+                    float2 a = Polygon[current];
+                    float2 b = Polygon[previous];
+                    bool crosses = (a.y > point.y) != (b.y > point.y)
+                        && point.x < (b.x - a.x) * (point.y - a.y)
+                            / (b.y - a.y) + a.x;
+                    if (crosses)
+                    {
+                        inside = !inside;
+                    }
+                    previous = current;
+                }
+                return inside;
+            }
         }
 
         private bool TryScoreOperationalAreaResource(
@@ -489,8 +583,11 @@ namespace CS2MCP
             MapFeature feature = extractorData.m_MapFeature;
             if (feature == MapFeature.Forest)
             {
-                error = "forest extractors require the tree-entity scorer, which is not enabled yet";
-                return false;
+                return TryScoreForestOperationalArea(
+                    nodes,
+                    extractorData.m_RequireNaturalResource,
+                    out score,
+                    out error);
             }
             if (feature != MapFeature.FertileLand
                 && feature != MapFeature.Ore
@@ -562,6 +659,63 @@ namespace CS2MCP
             if (extractorData.m_RequireNaturalResource && score.RemainingAmount <= 0.01f)
             {
                 error = $"planned {feature} extractor fan has no remaining resource coverage";
+                return false;
+            }
+            return true;
+        }
+
+        private bool TryScoreForestOperationalArea(
+            Node[] nodes,
+            bool requireNaturalResource,
+            out OperationalResourceScore score,
+            out string error)
+        {
+            score = default;
+            error = null;
+            var polygon = new NativeArray<float2>(nodes.Length, Allocator.Temp);
+            try
+            {
+                float2 minimum = new float2(float.MaxValue);
+                float2 maximum = new float2(float.MinValue);
+                for (int i = 0; i < nodes.Length; i++)
+                {
+                    float2 position = nodes[i].m_Position.xz;
+                    polygon[i] = position;
+                    minimum = math.min(minimum, position);
+                    maximum = math.max(maximum, position);
+                }
+
+                Game.Objects.SearchSystem search =
+                    World.GetOrCreateSystemManaged<Game.Objects.SearchSystem>();
+                NativeQuadTree<Entity, QuadTreeBoundsXZ> searchTree =
+                    search.GetStaticSearchTree(readOnly: true, out JobHandle dependencies);
+                dependencies.Complete();
+                var iterator = new ForestResourceIterator
+                {
+                    Bounds = new Bounds2 { min = minimum, max = maximum },
+                    Polygon = polygon,
+                    Trees = m_System.GetComponentLookup<Tree>(true),
+                    Plants = m_System.GetComponentLookup<Plant>(true),
+                    Transforms = m_System.GetComponentLookup<Transform>(true),
+                    Damaged = m_System.GetComponentLookup<Damaged>(true),
+                    PrefabRefs = m_System.GetComponentLookup<PrefabRef>(true),
+                    TreePrefabs = m_System.GetComponentLookup<TreeData>(true),
+                    Decorations = m_System.GetComponentLookup<Decoration>(true),
+                };
+                searchTree.Iterate(ref iterator);
+                score.RemainingAmount = iterator.RemainingAmount;
+                score.MaxConcentration = math.saturate(iterator.MaxConcentration);
+                score.Coverage = score.MaxConcentration;
+                score.SampleCount = iterator.TreeCount;
+            }
+            finally
+            {
+                polygon.Dispose();
+            }
+
+            if (requireNaturalResource && score.RemainingAmount <= 0.01f)
+            {
+                error = "planned Forest extractor fan contains no productive tree resources";
                 return false;
             }
             return true;

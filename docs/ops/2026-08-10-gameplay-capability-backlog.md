@@ -4,10 +4,11 @@
 editing, restricted road-type replacement, and operational-area inspection are
 implemented and live-accepted. Building discovery now also accepts typed service
 roles and operational-area capabilities. Landfill expansion plans a multi-node fan
-from a requested total surface instead of exposing a direction or depth. A positive
-development-node purchase, non-empty landfill behavior, forest extraction scoring,
-specialized-industry live acceptance, and cold reload of the new fan shape remain
-backlog items.
+from a requested total surface instead of exposing a direction or depth. Forest
+resource scoring, a native-preview infrastructure candidate planner, and road
+traffic ranking are implemented and build-verified. A positive development-node
+purchase, non-empty landfill behavior, specialized-industry production, the new
+read paths, and cold reload of the fan shape still need real-game acceptance.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -19,10 +20,11 @@ does not try to fix every symptom in the prompt.
 | --- | --- | --- | --- |
 | Closed | Circular-only zoning | Low frontage coverage and accidental overlap with occupied blocks | `zone_rectangle` mutates cells during `ToolUpdate` |
 | Implemented | No milestone/development-tree tools | Agent earns progression but keeps choosing basic services | Compact progression frontier + native node purchase; positive purchase/reload acceptance pending |
-| Implemented | Landfill storage area stuck at its default | Capacity cannot grow with the site's available land | `expand_operational_area(building, extra_depth_m)` accepted through save/reload |
+| Implemented | Landfill storage area stuck at its default | Capacity cannot grow with the site's available land | `expand_operational_area(building, target_area_m2)` accepted through save/reload |
 | P1 | No specialized-industry workflow | Raw materials are imported and freight/economy opportunities are missed | Resource perception + hub placement + extraction polygon |
 | Policy | No road hierarchy | Local streets and a few junctions absorb most through/freight traffic | Gameplay skill updated in this change |
 | Closed | Trees treated as obstacles | Wasted demolish/placement turns | Existing skill already states that growables clear vegetation |
+| Built | Starter-site planning requires many shallow calls | Slow early-game setup and repeated coordinate guessing | `find_infrastructure_candidate(role, center?, radius?)`; live acceptance pending |
 
 ## 1. Rectangular zoning
 
@@ -175,18 +177,23 @@ to assemble a starter-site plan from `terrain`, `gridmap`, roads and prefab sear
 waterfront growables from 530 matches before narrower queries found the two useful
 pumps.
 
-The first discovery phase is now implemented: `find_prefabs(role=...)` classifies
+The first discovery phase is implemented: `find_prefabs(role=...)` classifies
 infrastructure and services from typed prefab ECS components instead of names. The
-next deepening opportunity is a read-only starter-site/infrastructure candidate Tool
-that owns the knowledge needed to turn an outside connection and map resources into
-a small set of native-validated road/utility candidates. A second opportunity is
+next phase is now built as `find_infrastructure_candidate(role, x?, z?, radius?)`.
+It resolves unlocked typed prefabs, samples both sides of existing road curves,
+owns terrain/owned-tile/footprint/frontage/shoreline checks, ranks deterministically
+by construction cost and distance, and sends exactly one best candidate through
+native preview. It deliberately returns one candidate: historical live behavior
+showed that a rejected preview disables the active native Tool and wedges an in-call
+multi-probe. Live acceptance remains pending. The next structural opportunity is
 generating group membership and routing metadata from one catalog source so tool
 knowledge stops leaking across modules.
 
 Fresh-map acceptance on disposable city `阿什比` confirmed that `role=water`,
 `role=sewage`, `role=power`, and `role=garbage` return the corresponding typed
-service prefabs without the earlier waterfront-growable contamination. This is a
-discovery improvement, not yet the stronger candidate planner described above.
+service prefabs without the earlier waterfront-growable contamination. This live
+acceptance predates the candidate planner, which is build-verified but not yet
+live-accepted.
 
 ### Tools with no observed historical calls
 
@@ -248,9 +255,11 @@ residential local streets. This is a default planning discipline, not a rigid tr
 each district still needs alternate paths so all traffic is not forced through one
 collector junction.
 
-A future perception improvement could expose road traffic volume and Traffic Routes.
-Until then, the Agent can apply hierarchy while expanding and use bottleneck
-notifications/locations as coarse evidence for targeted alternate connections.
+`list_roads` now exposes the same four-period aggregate `Road` data used by the
+native Traffic Infoview: relative flow speed, native volume index, slowdown weighted
+by volume, and active `Bottleneck` sublanes. `sort=traffic_volume` and
+`sort=congestion` return actionable segments without adding another Tool. This read
+path builds but still needs comparison with the real infoview.
 
 ## 5. Trees and growable buildings
 
@@ -310,10 +319,12 @@ extractor Lot as well as landfill storage. It evaluates every clear fan candidat
 against the live 256×256 natural-resource map by polygon/cell intersection, ranks
 same-resource candidates by estimated remaining amount and coverage, and returns
 that evidence with the native apply result. Fertile land, ore, oil and fish use this
-path. Forest is deliberately rejected until the separate tree-entity scorer is
-implemented; tree wood is not comparable to cell-map resource amounts. The write
-path builds and deploys, but a real specialized-industry hub/resource/production
-loop has not yet been run.
+path. Forest uses the native static object search tree, excludes enabled decoration,
+tests real tree positions against the candidate polygon, and reuses
+`ObjectUtils.CalculateWoodAmount`; its result reports productive tree count and
+maximum concentration instead of pretending tree resources have cell-map coverage.
+The write path builds and deploys, but a real specialized-industry
+hub/resource/production loop has not yet been run.
 
 ## 7. Landfill storage area size
 
@@ -379,8 +390,9 @@ not isolate the fan geometry.
 
 ## Suggested implementation order
 
-1. Add a read-only starter-site candidate Tool so early-city setup does not require
-   dozens of perception/search calls.
+1. ~~Add a read-only starter-site candidate Tool so early-city setup does not require
+   dozens of perception/search calls.~~ Built as `find_infrastructure_candidate`;
+   native-preview acceptance remains.
 2. ~~Live-accept `find_prefabs(role=...)`, `set_road_features`, and the read-only
    building-owned operational-area diagnostic.~~ Accepted on `阿什比`.
 3. ~~Restricted native road-type replacement spike on a disposable map.~~ The
@@ -388,6 +400,13 @@ not isolate the fan geometry.
 4. ~~Native operational-area expansion spike using the empty `阿什比` landfill.~~
    Accepted through cold save/reload; non-empty storage and active trucks remain.
 5. Specialized-industry placement built on the proven area seam.
+
+Current live-verification blocker: the 2026-08-11 remote-display session first lost
+display output and was hard-powered off by the player, then later bugchecked with
+`0x133 DPC_WATCHDOG_VIOLATION` after Cities II was moved from Microsoft Basic Render
+Driver to the RTX 3060 while the GameViewer virtual display remained active. The
+per-app GPU preference was removed. Do not claim new real-game acceptance until the
+display-driver path is stable; offline build success is recorded separately above.
 
 Keep each change independently hot-reloadable when it stays inside request handlers,
 catalog or skills. Changes to `BridgeToolSystem`, ECS scheduling or the area-operation

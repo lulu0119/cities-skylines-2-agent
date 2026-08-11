@@ -102,6 +102,20 @@ The action-plan-advisor project likewise keeps deterministic candidate ordering 
 - **Locality:** component-version changes and ranking changes remain in one implementation.
 - **Depth:** high if it returns actionable candidates; low if it merely renames `query` or exposes component flags to the model.
 
+### Implementation status
+
+`find_infrastructure_candidate(role, x?, z?, radius?)` now implements the Phase 2
+seam with one result rather than the originally sketched `limit=3`. The singular
+result is an implementation constraint discovered in earlier live work: after a
+rejected native preview, the game disables the active Tool and an in-call retry can
+wedge the transaction. The implementation therefore generates road-side candidates
+cheaply, sorts them by unlocked prefab cost/distance/name/coordinates, runs the
+existing owned-tile/footprint/frontage/shoreline preflight in that order until one
+survives, and sends only that finalist through native preview. This preserves the
+important property—one actionable legal candidate—without exposing retries or
+returning unvalidated coordinate clouds. It builds successfully; live acceptance is
+pending.
+
 ## 2. Road features versus road-type replacement
 
 ### What the current Tool actually does
@@ -277,6 +291,14 @@ For cell-map resources, `CalculateNaturalResources(..., ref Extractor, MapFeatur
 4. computes a per-triangle concentration over **resource-bearing intersection area only**, then keeps the maximum triangle value as `m_MaxConcentration`.
 
 Consequently `m_MaxConcentration` alone is a poor placement score: a small rich patch can look excellent even if most of the polygon is empty. Rank same-`MapFeature` candidates primarily by native-equivalent remaining resource amount, resource amount per surface area, and explicit resource-bearing coverage; return concentration as supporting evidence. `Forest` is a separate scorer because it sums real tree wood and derives concentration per tree (lines 444-499). Its scores are not numerically comparable with fertility/ore/oil/fish scores.
+
+The separate Forest strategy is now implemented. It queries the native static object
+search tree for the candidate bounds, filters `IsTree | NotOverridden`, excludes
+enabled `Decoration`, tests each transform against the polygon, and calls
+`ObjectUtils.CalculateWoodAmount(Tree, Plant, Damaged, TreeData)`. The model-facing
+result reports productive tree count and maximum concentration; it does not expose a
+fabricated cell coverage value. This path builds successfully and awaits a live
+forestry-area acceptance loop.
 
 `m_RequireNaturalResource` is a production rule, not a geometry-validation rule. `ExtractorCompanySystem.ProcessArea` uses it to scale/cap production from effective concentration and remaining resource (lines 413-439), while `GetBestConcentration` surface-area-weights the areas' effective concentrations (lines 660-703). Native placement can therefore accept a zero-resource extractor polygon that later produces poorly or not at all. A minimum resource/coverage threshold is product policy and must be visible in the planner result; it is not a native rejection to report as such. `m_ObjectSpawnFactor`/`m_MaxObjectArea` control spawned-object surface area and `m_WorkAmountFactor` scales work; none is a feasibility score.
 

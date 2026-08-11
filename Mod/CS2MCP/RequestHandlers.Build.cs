@@ -180,9 +180,24 @@ namespace CS2MCP
             bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
             float2 center = new float2(x, z);
+            request.Query.TryGetValue("sort", out string sort);
+            sort = sort?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrEmpty(sort)
+                && sort != "distance"
+                && sort != "traffic_volume"
+                && sort != "congestion")
+            {
+                return BridgeResponse.Error(400,
+                    "sort must be distance, traffic_volume or congestion");
+            }
+            if (sort == "distance" && !hasCenter)
+            {
+                return BridgeResponse.Error(400,
+                    "sort=distance requires both x and z");
+            }
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var found = new List<(float distance, object item)>();
+            var found = new List<(float rank, float distance, object item)>();
             int total = 0;
             using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
             {
@@ -195,6 +210,10 @@ namespace CS2MCP
                         continue;
                     }
                     PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (!EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
                     PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabRef.m_Prefab);
                     string name = prefab != null ? prefab.name : "<unknown>";
                     List<string> roles = GetPrefabRoles(prefabRef.m_Prefab);
@@ -221,6 +240,44 @@ namespace CS2MCP
                     }
                     total++;
                     float distance = hasCenter ? math.distance(midpoint, center) : 0f;
+                    object traffic = null;
+                    float volumeIndex = 0f;
+                    float congestionIndex = 0f;
+                    if (EntityManager.HasComponent<Game.Net.Road>(entity))
+                    {
+                        Game.Net.Road road = EntityManager.GetComponentData<Game.Net.Road>(entity);
+                        float flowPercent = math.csum(Game.Net.NetUtils.GetTrafficFlowSpeed(road)) * 25f;
+                        volumeIndex = math.csum(
+                            (road.m_TrafficFlowDistance0 + road.m_TrafficFlowDistance1)
+                            * 2.6666667f) * 0.25f;
+                        congestionIndex = volumeIndex * math.saturate(1f - flowPercent * 0.01f);
+                        int activeBottlenecks = 0;
+                        if (EntityManager.HasBuffer<Game.Net.SubLane>(entity))
+                        {
+                            DynamicBuffer<Game.Net.SubLane> lanes =
+                                EntityManager.GetBuffer<Game.Net.SubLane>(entity, isReadOnly: true);
+                            foreach (Game.Net.SubLane lane in lanes)
+                            {
+                                if (EntityManager.HasComponent<Game.Net.Bottleneck>(lane.m_SubLane)
+                                    && EntityManager.GetComponentData<Game.Net.Bottleneck>(lane.m_SubLane).m_Timer >= 20)
+                                {
+                                    activeBottlenecks++;
+                                }
+                            }
+                        }
+                        traffic = new
+                        {
+                            flowPercent = (float)Math.Round(flowPercent, 1),
+                            volumeIndex = (float)Math.Round(volumeIndex, 1),
+                            congestionIndex = (float)Math.Round(congestionIndex, 1),
+                            activeBottlenecks,
+                        };
+                    }
+                    float rank = sort == "traffic_volume"
+                        ? -volumeIndex
+                        : sort == "congestion"
+                            ? -congestionIndex
+                            : distance;
                     var item = new
                     {
                         entity = new { index = entity.Index, version = entity.Version },
@@ -239,36 +296,37 @@ namespace CS2MCP
                         length = curve.m_Length,
                         widthM = NetworkWidthM(EntityManager, prefabRef.m_Prefab),
                         distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
+                        traffic,
                     };
                     if (found.Count < limit)
                     {
-                        found.Add((distance, item));
+                        found.Add((rank, distance, item));
                     }
-                    else if (hasCenter)
+                    else if (hasCenter || !string.IsNullOrEmpty(sort))
                     {
                         int worst = 0;
                         for (int j = 1; j < found.Count; j++)
                         {
-                            if (found[j].distance > found[worst].distance)
+                            if (found[j].rank > found[worst].rank)
                             {
                                 worst = j;
                             }
                         }
-                        if (distance < found[worst].distance)
+                        if (rank < found[worst].rank)
                         {
-                            found[worst] = (distance, item);
+                            found[worst] = (rank, distance, item);
                         }
                     }
                 }
             }
 
-            if (hasCenter && found.Count > 1)
+            if ((hasCenter || !string.IsNullOrEmpty(sort)) && found.Count > 1)
             {
                 for (int i = 0; i < found.Count - 1; i++)
                 {
                     for (int j = i + 1; j < found.Count; j++)
                     {
-                        if (found[j].distance < found[i].distance)
+                        if (found[j].rank < found[i].rank)
                         {
                             (found[i], found[j]) = (found[j], found[i]);
                         }
@@ -276,7 +334,7 @@ namespace CS2MCP
                 }
             }
             var results = new List<object>(found.Count);
-            foreach ((_, object item) in found)
+            foreach ((_, _, object item) in found)
             {
                 results.Add(item);
             }
@@ -287,11 +345,12 @@ namespace CS2MCP
                 totalMatches = total,
                 returned = results.Count,
                 limit,
+                sort,
                 truncated,
                 warning = truncated
                     ? $"too many results: {total} road segments match, only {results.Count} returned; shrink radius / add query filter, or paginate."
                     : null,
-                note = "one entry per road segment (edge/curve); hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
+                note = "one entry per road segment; traffic uses the game's four-period aggregate: flowPercent=relative speed, volumeIndex=native relative volume, congestionIndex=slowdown weighted by volume; hard max 128",
                 roads = results,
             });
         }
@@ -706,6 +765,261 @@ namespace CS2MCP
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;
+        }
+
+        private sealed class InfrastructureCandidate
+        {
+            public Entity PrefabEntity;
+            public PrefabBase Prefab;
+            public float3 Position;
+            public float RotationDegrees;
+            public uint ConstructionCost;
+            public float DistanceFromCenter;
+            public float RoadClearance;
+            public bool RequiresShoreline;
+        }
+
+        /// <summary>
+        /// Resolves one typed, unlocked service prefab and one road-facing site.
+        /// The caller supplies gameplay intent; prefab taxonomy, road sampling,
+        /// ownership, collision, shoreline and ranking remain inside this module.
+        /// One final candidate is sent through the native preview pipeline so a
+        /// rejected preview cannot wedge a multi-candidate tool transaction.
+        /// </summary>
+        private BridgeResponse FindInfrastructureCandidate(BridgeRequest request)
+        {
+            if (!TryGetCity(out _, out BridgeResponse error))
+            {
+                return error;
+            }
+            if (!request.Query.TryGetValue("role", out string role)
+                || string.IsNullOrWhiteSpace(role))
+            {
+                return BridgeResponse.Error(400,
+                    "provide ?role=power|water|sewage|garbage|healthcare|fire|police|education|transport|post|telecom");
+            }
+            role = role.Trim().ToLowerInvariant();
+            if (!kInfrastructureCandidateRoles.Contains(role))
+            {
+                return BridgeResponse.Error(400,
+                    $"role '{role}' is not supported by infrastructure candidate planning; valid: {string.Join(", ", kInfrastructureCandidateRoles)}");
+            }
+
+            bool hasX = request.TryGetFloat("x", out float x);
+            bool hasZ = request.TryGetFloat("z", out float z);
+            if (hasX != hasZ)
+            {
+                return BridgeResponse.Error(400, "provide both x and z, or omit both to search around owned tiles");
+            }
+            float2 center = hasX
+                ? new float2(x, z)
+                : GetOwnedTileCenter();
+            float radius = request.TryGetFloat("radius", out float rawRadius)
+                ? math.clamp(rawRadius, 64f, 2500f)
+                : 900f;
+
+            var prefabs = new List<(Entity entity, PrefabBase prefab, uint cost, bool shoreline)>();
+            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            using (NativeArray<Entity> entities = BuildingPrefabQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (IsLocked(entity) || !GetPrefabRoles(entity).Contains(role))
+                    {
+                        continue;
+                    }
+                    PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(entity);
+                    if (prefab == null || !EntityManager.HasComponent<PlaceableObjectData>(entity))
+                    {
+                        continue;
+                    }
+                    PlaceableObjectData placeable = EntityManager.GetComponentData<PlaceableObjectData>(entity);
+                    prefabs.Add((
+                        entity,
+                        prefab,
+                        placeable.m_ConstructionCost,
+                        (placeable.m_Flags & Game.Objects.PlacementFlags.Shoreline) != 0));
+                }
+            }
+            if (prefabs.Count == 0)
+            {
+                return BridgeResponse.Error(404,
+                    $"no unlocked placeable building prefab has typed role '{role}'");
+            }
+            prefabs.Sort((a, b) =>
+            {
+                int byCost = a.cost.CompareTo(b.cost);
+                return byCost != 0
+                    ? byCost
+                    : string.Compare(a.prefab.name, b.prefab.name, StringComparison.Ordinal);
+            });
+
+            bool needsWater = prefabs.Exists(item => item.shoreline);
+            WaterSurfaceData<SurfaceWater> waterSurfaceData = default;
+            if (needsWater)
+            {
+                WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+                waterSurfaceData = water.GetSurfaceData(out JobHandle waterDependencies);
+                waterDependencies.Complete();
+            }
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            var candidates = new List<InfrastructureCandidate>();
+            using (NativeArray<Entity> roads = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity road in roads)
+                {
+                    PrefabRef roadPrefab = EntityManager.GetComponentData<PrefabRef>(road);
+                    if (!EntityManager.HasComponent<RoadData>(roadPrefab.m_Prefab))
+                    {
+                        continue;
+                    }
+                    float roadHalfWidth = EntityManager.HasComponent<NetGeometryData>(roadPrefab.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(roadPrefab.m_Prefab).m_DefaultWidth * 0.5f
+                        : 4f;
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(road);
+                    int samples = math.clamp((int)math.ceil(curve.m_Length / 32f), 1, 32);
+                    for (int sampleIndex = 0; sampleIndex < samples; sampleIndex++)
+                    {
+                        float t = (sampleIndex + 0.5f) / samples;
+                        float3 roadPoint = BezierPoint(curve.m_Bezier, t);
+                        float3 before = BezierPoint(curve.m_Bezier, math.max(0f, t - 0.02f));
+                        float3 after = BezierPoint(curve.m_Bezier, math.min(1f, t + 0.02f));
+                        float2 tangent = math.normalizesafe(after.xz - before.xz);
+                        if (math.lengthsq(tangent) < 0.5f)
+                        {
+                            continue;
+                        }
+                        float2 normal = new float2(-tangent.y, tangent.x);
+                        foreach ((Entity prefabEntity, PrefabBase prefab, uint cost, bool shoreline) in prefabs)
+                        {
+                            BuildingData building = EntityManager.GetComponentData<BuildingData>(prefabEntity);
+                            float roadClearance = roadHalfWidth + building.m_LotSize.y * 4f + 2f;
+                            for (int side = -1; side <= 1; side += 2)
+                            {
+                                float2 outward = normal * side;
+                                float2 position2 = roadPoint.xz + outward * roadClearance;
+                                float distance = math.distance(position2, center);
+                                if (distance > radius)
+                                {
+                                    continue;
+                                }
+                                var position = new float3(position2.x, 0f, position2.y);
+                                position.y = TerrainUtils.SampleHeight(ref heightData, position);
+                                float2 forward = -outward;
+                                float rotationDegrees = math.degrees(math.atan2(forward.x, forward.y));
+                                candidates.Add(new InfrastructureCandidate
+                                {
+                                    PrefabEntity = prefabEntity,
+                                    Prefab = prefab,
+                                    Position = position,
+                                    RotationDegrees = rotationDegrees,
+                                    ConstructionCost = cost,
+                                    DistanceFromCenter = distance,
+                                    RoadClearance = roadClearance,
+                                    RequiresShoreline = shoreline,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if (candidates.Count == 0)
+            {
+                return BridgeResponse.Error(404,
+                    $"no road-adjacent '{role}' candidate could be generated within {radius:F0}m of ({center.x:F0},{center.y:F0})");
+            }
+            candidates.Sort((a, b) =>
+            {
+                int byCost = a.ConstructionCost.CompareTo(b.ConstructionCost);
+                if (byCost != 0)
+                {
+                    return byCost;
+                }
+                int byDistance = a.DistanceFromCenter.CompareTo(b.DistanceFromCenter);
+                if (byDistance != 0)
+                {
+                    return byDistance;
+                }
+                int byName = string.Compare(a.Prefab.name, b.Prefab.name, StringComparison.Ordinal);
+                if (byName != 0)
+                {
+                    return byName;
+                }
+                int byX = a.Position.x.CompareTo(b.Position.x);
+                return byX != 0 ? byX : a.Position.z.CompareTo(b.Position.z);
+            });
+            InfrastructureCandidate selected = null;
+            int preflightRejected = 0;
+            foreach (InfrastructureCandidate candidate in candidates)
+            {
+                quaternion rotation = quaternion.RotateY(math.radians(candidate.RotationDegrees));
+                if (IsCandidateBuildable(
+                        candidate.PrefabEntity,
+                        candidate.Position,
+                        rotation,
+                        candidate.RequiresShoreline,
+                        ref waterSurfaceData,
+                        out _))
+                {
+                    selected = candidate;
+                    break;
+                }
+                preflightRejected++;
+            }
+            if (selected == null)
+            {
+                return BridgeResponse.Error(404,
+                    $"no clear road-facing '{role}' candidate was found within {radius:F0}m of ({center.x:F0},{center.y:F0}); " +
+                    $"all {preflightRejected} generated sites failed owned-tile, overlap, frontage or shoreline preflight");
+            }
+            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
+            if (!tool.TryQueueInfrastructureCandidate(
+                    selected.PrefabEntity,
+                    selected.Prefab,
+                    new BridgeToolSystem.InfrastructureCandidatePlan
+                    {
+                        Position = selected.Position,
+                        RotationDegrees = selected.RotationDegrees,
+                        Role = role,
+                        GeneratedCandidates = candidates.Count,
+                        PreflightRejected = preflightRejected,
+                        ConstructionCost = selected.ConstructionCost,
+                        DistanceFromCenter = selected.DistanceFromCenter,
+                        RoadClearance = selected.RoadClearance,
+                        RequiresShoreline = selected.RequiresShoreline,
+                    },
+                    request))
+            {
+                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+            }
+            return null;
+        }
+
+        private static readonly HashSet<string> kInfrastructureCandidateRoles =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "power", "water", "sewage", "garbage", "healthcare", "fire",
+                "police", "education", "transport", "post", "telecom",
+            };
+
+        private float2 GetOwnedTileCenter()
+        {
+            float2 sum = float2.zero;
+            int count = 0;
+            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (EntityManager.HasComponent<Game.Common.Native>(entity))
+                    {
+                        continue;
+                    }
+                    sum += EntityManager.GetComponentData<Game.Areas.Geometry>(entity).m_CenterPosition.xz;
+                    count++;
+                }
+            }
+            return count > 0 ? sum / count : float2.zero;
         }
 
         private BridgeResponse BuildRoad(BridgeRequest request)

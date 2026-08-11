@@ -78,6 +78,8 @@ namespace CS2MCP
         private string m_PendingOperationalResource;
         private float m_PendingOperationalResourceAmount;
         private float m_PendingOperationalResourceCoverage;
+        private int m_PendingOperationalResourceSampleCount;
+        private float m_PendingOperationalResourceMaxConcentration;
         private ZoneType m_PendingZone;
         private float2 m_PendingZoneCenter;
         private float m_PendingZoneRadius;
@@ -93,6 +95,13 @@ namespace CS2MCP
         private int m_ProbeClearFrames;
         private float m_ProbeRotationDegrees;
         private string m_ProbeLastError = "";
+        private string m_ProbeIntentRole;
+        private int m_ProbePreflightCandidates;
+        private int m_ProbePreflightRejected;
+        private uint m_ProbeConstructionCost;
+        private float m_ProbeDistanceFromCenter;
+        private float m_ProbeRoadClearance;
+        private bool m_ProbeRequiresShoreline;
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
         private bool m_AutoConnectQueued;
@@ -205,6 +214,53 @@ namespace CS2MCP
             m_ProbeLastError = "";
             m_PendingRequest = request;
             Activate();
+            return true;
+        }
+
+        /// <summary>
+        /// Queues the single best infrastructure candidate for native preview.
+        /// Candidate generation and ranking happen before this seam; keeping the
+        /// native transaction singular avoids the rejected-preview tool wedge.
+        /// </summary>
+        public sealed class InfrastructureCandidatePlan
+        {
+            public float3 Position;
+            public float RotationDegrees;
+            public string Role;
+            public int GeneratedCandidates;
+            public int PreflightRejected;
+            public uint ConstructionCost;
+            public float DistanceFromCenter;
+            public float RoadClearance;
+            public bool RequiresShoreline;
+        }
+
+        public bool TryQueueInfrastructureCandidate(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            InfrastructureCandidatePlan plan,
+            BridgeRequest request)
+        {
+            if (plan == null)
+            {
+                return false;
+            }
+            if (!TryQueueProbe(
+                    prefabEntity,
+                    prefab,
+                    new[] { plan.Position },
+                    plan.RotationDegrees,
+                    request))
+            {
+                return false;
+            }
+            m_ProbeIntentRole = plan.Role;
+            m_ProbePreflightCandidates = plan.GeneratedCandidates;
+            m_ProbePreflightRejected = plan.PreflightRejected;
+            m_ProbeConstructionCost = plan.ConstructionCost;
+            m_ProbeDistanceFromCenter = plan.DistanceFromCenter;
+            m_ProbeRoadClearance = plan.RoadClearance;
+            m_ProbeRequiresShoreline = plan.RequiresShoreline;
             return true;
         }
 
@@ -347,6 +403,8 @@ namespace CS2MCP
             string resource,
             float resourceAmount,
             float resourceCoverage,
+            int resourceSampleCount,
+            float resourceMaxConcentration,
             BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
@@ -366,6 +424,8 @@ namespace CS2MCP
             m_PendingOperationalResource = resource;
             m_PendingOperationalResourceAmount = resourceAmount;
             m_PendingOperationalResourceCoverage = resourceCoverage;
+            m_PendingOperationalResourceSampleCount = resourceSampleCount;
+            m_PendingOperationalResourceMaxConcentration = resourceMaxConcentration;
             m_PendingRequest = request;
             Activate();
             return true;
@@ -892,7 +952,15 @@ namespace CS2MCP
                             {
                                 type = m_PendingOperationalResource,
                                 estimatedRemainingAmount = (float)Math.Round(m_PendingOperationalResourceAmount, 1),
-                                coverage = (float)Math.Round(m_PendingOperationalResourceCoverage, 3),
+                                coverage = m_PendingOperationalResource == Game.Areas.MapFeature.Forest.ToString()
+                                    ? (float?)null
+                                    : (float)Math.Round(m_PendingOperationalResourceCoverage, 3),
+                                treeCount = m_PendingOperationalResource == Game.Areas.MapFeature.Forest.ToString()
+                                    ? (int?)m_PendingOperationalResourceSampleCount
+                                    : null,
+                                maxConcentration = m_PendingOperationalResource == Game.Areas.MapFeature.Forest.ToString()
+                                    ? (float?)Math.Round(m_PendingOperationalResourceMaxConcentration, 3)
+                                    : null,
                             },
                         nodes = m_PendingOperationalAreaNodes != null ? m_PendingOperationalAreaNodes.Length : 0,
                         note = $"native {m_PendingOperationalAreaKind} operational-area relocation committed; call get_operational_area to verify simulation resource/capacity and ownership",
@@ -949,6 +1017,25 @@ namespace CS2MCP
             if (isBuilding)
             {
                 payload["roadAccess"] = true;
+            }
+            if (!string.IsNullOrEmpty(m_ProbeIntentRole))
+            {
+                payload["role"] = m_ProbeIntentRole;
+                payload["constructionCost"] = m_ProbeConstructionCost;
+                payload["generatedCandidates"] = m_ProbePreflightCandidates;
+                payload["preflightRejected"] = m_ProbePreflightRejected;
+                payload["evidence"] = new
+                {
+                    typedUnlockedPrefab = true,
+                    ownedTile = true,
+                    footprintClear = true,
+                    roadFacing = true,
+                    shoreline = m_ProbeRequiresShoreline ? "required-and-present" : "not-required",
+                    distanceFromSearchCenterM = (float)Math.Round(m_ProbeDistanceFromCenter, 1),
+                    roadClearanceM = (float)Math.Round(m_ProbeRoadClearance, 1),
+                    nativeValidation = true,
+                };
+                payload["note"] = "one deterministic, native-validated candidate; call place_building with the returned prefab/position/rotation to commit";
             }
             return BridgeResponse.Json(payload);
         }
@@ -1123,6 +1210,13 @@ namespace CS2MCP
             m_ProbeTried = 0;
             m_ProbeClearFrames = 0;
             m_ProbeLastError = "";
+            m_ProbeIntentRole = null;
+            m_ProbePreflightCandidates = 0;
+            m_ProbePreflightRejected = 0;
+            m_ProbeConstructionCost = 0;
+            m_ProbeDistanceFromCenter = 0f;
+            m_ProbeRoadClearance = 0f;
+            m_ProbeRequiresShoreline = false;
             m_AutoConnectQueued = false;
             m_AutoConnectPrefabEntity = Entity.Null;
             m_AutoConnectPrefab = null;

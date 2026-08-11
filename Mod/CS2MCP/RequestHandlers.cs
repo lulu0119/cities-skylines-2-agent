@@ -89,6 +89,8 @@ namespace CS2MCP
                     return PlaceBuilding(request);
                 case "/build/find-place":
                     return FindPlacement(request);
+                case "/build/infrastructure/candidate":
+                    return FindInfrastructureCandidate(request);
                 case "/build/road":
                     return BuildRoad(request);
                 case "/build/road/features":
