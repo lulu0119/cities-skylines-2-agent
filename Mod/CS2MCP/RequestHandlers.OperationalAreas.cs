@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Colossal.Mathematics;
 using Game.Areas;
 using Game.Common;
 using Game.Prefabs;
@@ -101,12 +102,14 @@ namespace CS2MCP
                 return BridgeResponse.Error(404,
                     $"entity {index}:{version} is not an existing building");
             }
-            if (!TryResolveExpandableStorageArea(
+            if (!TryResolveExpandableOperationalArea(
                     building,
                     out Entity area,
                     out Entity owner,
                     out Entity prefabEntity,
                     out DynamicBuffer<Node> currentNodes,
+                    out bool isStorage,
+                    out ExtractorAreaData? extractorData,
                     out BridgeResponse areaError))
             {
                 return areaError;
@@ -152,6 +155,7 @@ namespace CS2MCP
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
             Node[] expandedNodeArray = null;
+            OperationalResourceScore selectedResourceScore = default;
             int candidatesTested = 0;
             string lastRejection = null;
             float[] skews = { 0f, -15f, 15f, -30f, 30f };
@@ -182,6 +186,27 @@ namespace CS2MCP
                     lastRejection = obstacleReason;
                     continue;
                 }
+                if (extractorData.HasValue)
+                {
+                    if (!TryScoreOperationalAreaResource(
+                            candidateNodes,
+                            extractorData.Value,
+                            out OperationalResourceScore resourceScore,
+                            out string resourceError))
+                    {
+                        lastRejection = resourceError;
+                        continue;
+                    }
+                    if (expandedNodeArray == null
+                        || resourceScore.RemainingAmount > selectedResourceScore.RemainingAmount
+                        || (math.abs(resourceScore.RemainingAmount - selectedResourceScore.RemainingAmount) < 0.1f
+                            && resourceScore.Coverage > selectedResourceScore.Coverage))
+                    {
+                        expandedNodeArray = candidateNodes;
+                        selectedResourceScore = resourceScore;
+                    }
+                    continue;
+                }
                 expandedNodeArray = candidateNodes;
                 break;
             }
@@ -192,9 +217,11 @@ namespace CS2MCP
             }
 
             Geometry geometry = EntityManager.GetComponentData<Geometry>(area);
-            StorageAreaData storageData =
-                EntityManager.GetComponentData<StorageAreaData>(prefabEntity);
-            int previousCapacity = AreaUtils.CalculateStorageCapacity(geometry, storageData);
+            int previousCapacity = isStorage
+                ? AreaUtils.CalculateStorageCapacity(
+                    geometry,
+                    EntityManager.GetComponentData<StorageAreaData>(prefabEntity))
+                : -1;
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabEntity);
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
@@ -207,6 +234,10 @@ namespace CS2MCP
                     geometry.m_SurfaceArea,
                     previousCapacity,
                     targetArea,
+                    isStorage ? "storage" : "extractor",
+                    extractorData.HasValue ? extractorData.Value.m_MapFeature.ToString() : null,
+                    selectedResourceScore.RemainingAmount,
+                    selectedResourceScore.Coverage,
                     request))
             {
                 return BridgeResponse.Error(409,
@@ -215,18 +246,22 @@ namespace CS2MCP
             return null;
         }
 
-        private bool TryResolveExpandableStorageArea(
+        private bool TryResolveExpandableOperationalArea(
             Entity building,
             out Entity area,
             out Entity owner,
             out Entity prefabEntity,
             out DynamicBuffer<Node> nodes,
+            out bool isStorage,
+            out ExtractorAreaData? extractorData,
             out BridgeResponse error)
         {
             area = Entity.Null;
             owner = Entity.Null;
             prefabEntity = Entity.Null;
             nodes = default;
+            isStorage = false;
+            extractorData = null;
             error = null;
             if (!EntityManager.HasBuffer<Game.Areas.SubArea>(building))
             {
@@ -243,7 +278,6 @@ namespace CS2MCP
                 if (candidate == Entity.Null
                     || !EntityManager.Exists(candidate)
                     || EntityManager.HasComponent<Deleted>(candidate)
-                    || !EntityManager.HasComponent<Storage>(candidate)
                     || !EntityManager.HasComponent<Lot>(candidate)
                     || !EntityManager.HasComponent<Geometry>(candidate)
                     || !EntityManager.HasComponent<PrefabRef>(candidate)
@@ -258,11 +292,15 @@ namespace CS2MCP
                     EntityManager.GetComponentData<PrefabRef>(candidate).m_Prefab;
                 DynamicBuffer<Node> candidateNodes =
                     EntityManager.GetBuffer<Node>(candidate, isReadOnly: true);
+                bool candidateStorage = EntityManager.HasComponent<Storage>(candidate)
+                    && EntityManager.HasComponent<StorageAreaData>(candidatePrefab)
+                    && (EntityManager.GetComponentData<StorageAreaData>(candidatePrefab).m_Resources
+                        & Game.Economy.Resource.Garbage) != 0;
+                bool candidateExtractor = EntityManager.HasComponent<Extractor>(candidate)
+                    && EntityManager.HasComponent<ExtractorAreaData>(candidatePrefab);
                 if (candidateNodes.Length < 4
                     || candidateNodes.Length > 16
-                    || !EntityManager.HasComponent<StorageAreaData>(candidatePrefab)
-                    || (EntityManager.GetComponentData<StorageAreaData>(candidatePrefab).m_Resources
-                        & Game.Economy.Resource.Garbage) == 0)
+                    || (!candidateStorage && !candidateExtractor))
                 {
                     continue;
                 }
@@ -276,12 +314,16 @@ namespace CS2MCP
                 owner = EntityManager.GetComponentData<Owner>(candidate).m_Owner;
                 prefabEntity = candidatePrefab;
                 nodes = candidateNodes;
+                isStorage = candidateStorage;
+                extractorData = candidateExtractor
+                    ? EntityManager.GetComponentData<ExtractorAreaData>(candidatePrefab)
+                    : (ExtractorAreaData?)null;
             }
 
             if (area == Entity.Null)
             {
                 error = BridgeResponse.Error(409,
-                    "no supported owner-linked landfill storage area is available; extractor and arbitrary polygons are not edited by this tool");
+                    "no supported owner-linked landfill storage or extractor area is available");
                 return false;
             }
             return true;
@@ -428,6 +470,120 @@ namespace CS2MCP
                 }
             }
             return true;
+        }
+
+        private struct OperationalResourceScore
+        {
+            public float RemainingAmount;
+            public float Coverage;
+        }
+
+        private bool TryScoreOperationalAreaResource(
+            Node[] nodes,
+            ExtractorAreaData extractorData,
+            out OperationalResourceScore score,
+            out string error)
+        {
+            score = default;
+            error = null;
+            MapFeature feature = extractorData.m_MapFeature;
+            if (feature == MapFeature.Forest)
+            {
+                error = "forest extractors require the tree-entity scorer, which is not enabled yet";
+                return false;
+            }
+            if (feature != MapFeature.FertileLand
+                && feature != MapFeature.Ore
+                && feature != MapFeature.Oil
+                && feature != MapFeature.Fish)
+            {
+                return !extractorData.m_RequireNaturalResource;
+            }
+
+            NaturalResourceSystem resources =
+                World.GetOrCreateSystemManaged<NaturalResourceSystem>();
+            NativeArray<NaturalResourceCell> map = resources.GetMap(
+                readOnly: true,
+                out Unity.Jobs.JobHandle dependencies);
+            dependencies.Complete();
+            int textureSize = (int)math.round(math.sqrt(map.Length));
+            if (textureSize <= 0 || textureSize * textureSize != map.Length)
+            {
+                error = "natural-resource map has an unexpected size";
+                return false;
+            }
+
+            float cellSize = (float)CellMapSystem<NaturalResourceCell>.kMapSize / textureSize;
+            float halfTexture = textureSize * 0.5f;
+            float cellArea = cellSize * cellSize;
+            float resourceBearingArea = 0f;
+            float polygonArea = CalculatePolygonArea(nodes);
+            float2 origin = nodes[0].m_Position.xz;
+            for (int triangleIndex = 1; triangleIndex < nodes.Length - 1; triangleIndex++)
+            {
+                var triangle = new Triangle2(
+                    origin,
+                    nodes[triangleIndex].m_Position.xz,
+                    nodes[triangleIndex + 1].m_Position.xz);
+                float2 minimum = math.min(triangle.a, math.min(triangle.b, triangle.c));
+                float2 maximum = math.max(triangle.a, math.max(triangle.b, triangle.c));
+                int minX = math.clamp((int)math.floor(minimum.x / cellSize + halfTexture), 0, textureSize - 1);
+                int maxX = math.clamp((int)math.floor(maximum.x / cellSize + halfTexture), 0, textureSize - 1);
+                int minY = math.clamp((int)math.floor(minimum.y / cellSize + halfTexture), 0, textureSize - 1);
+                int maxY = math.clamp((int)math.floor(maximum.y / cellSize + halfTexture), 0, textureSize - 1);
+                for (int y = minY; y <= maxY; y++)
+                {
+                    for (int x = minX; x <= maxX; x++)
+                    {
+                        NaturalResourceAmount amount = GetOperationalResourceAmount(
+                            map[x + y * textureSize],
+                            feature);
+                        float remaining = math.max(0f, amount.m_Base - amount.m_Used);
+                        if (remaining <= 0f)
+                        {
+                            continue;
+                        }
+                        var cellBounds = new Bounds2
+                        {
+                            min = new float2((x - halfTexture) * cellSize, (y - halfTexture) * cellSize),
+                            max = new float2((x + 1f - halfTexture) * cellSize, (y + 1f - halfTexture) * cellSize),
+                        };
+                        if (MathUtils.Intersect(cellBounds, triangle, out float intersectionArea))
+                        {
+                            score.RemainingAmount += remaining * intersectionArea / cellArea;
+                            resourceBearingArea += intersectionArea;
+                        }
+                    }
+                }
+            }
+            score.Coverage = polygonArea > 0.01f
+                ? math.saturate(resourceBearingArea / polygonArea)
+                : 0f;
+            if (extractorData.m_RequireNaturalResource && score.RemainingAmount <= 0.01f)
+            {
+                error = $"planned {feature} extractor fan has no remaining resource coverage";
+                return false;
+            }
+            return true;
+        }
+
+        private static NaturalResourceAmount GetOperationalResourceAmount(
+            NaturalResourceCell cell,
+            MapFeature feature)
+        {
+            switch (feature)
+            {
+                case MapFeature.FertileLand:
+                    return cell.m_Fertility;
+                case MapFeature.Ore:
+                    return cell.m_Ore;
+                case MapFeature.Oil:
+                    return cell.m_Oil;
+                case MapFeature.Fish:
+                    return cell.m_Fish;
+                default:
+                    return default;
+            }
         }
 
         private static List<float2> BuildOperationalAreaFanHull(

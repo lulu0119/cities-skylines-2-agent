@@ -5,8 +5,9 @@ editing, restricted road-type replacement, and operational-area inspection are
 implemented and live-accepted. Building discovery now also accepts typed service
 roles and operational-area capabilities. Landfill expansion plans a multi-node fan
 from a requested total surface instead of exposing a direction or depth. A positive
-development-node purchase, non-empty landfill behavior, specialized-industry
-resource scoring, and cold reload of the new fan shape remain backlog items.
+development-node purchase, non-empty landfill behavior, forest extraction scoring,
+specialized-industry live acceptance, and cold reload of the new fan shape remain
+backlog items.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -301,6 +302,18 @@ the polygon/owner bookkeeping inside the Tool.
 - Real extraction vehicles and production appear; placing only the decorative hub
   is not success.
 - Production/exports and additional truck traffic become visible to the Agent.
+
+### Resource-aware expansion implemented; live acceptance pending
+
+`expand_operational_area(building, target_area_m2)` now accepts an owner-linked
+extractor Lot as well as landfill storage. It evaluates every clear fan candidate
+against the live 256×256 natural-resource map by polygon/cell intersection, ranks
+same-resource candidates by estimated remaining amount and coverage, and returns
+that evidence with the native apply result. Fertile land, ore, oil and fish use this
+path. Forest is deliberately rejected until the separate tree-entity scorer is
+implemented; tree wood is not comparable to cell-map resource amounts. The write
+path builds and deploys, but a real specialized-industry hub/resource/production
+loop has not yet been run.
 
 ## 7. Landfill storage area size
 

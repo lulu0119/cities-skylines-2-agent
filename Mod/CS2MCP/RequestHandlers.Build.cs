@@ -211,7 +211,8 @@ namespace CS2MCP
                         entity,
                         out bool hasStorageArea,
                         out bool hasExtractorArea,
-                        out bool expandableStorageArea);
+                        out bool expandableStorageArea,
+                        out bool expandableExtractorArea);
                     if ((operationalAreaFilter == "any" && !hasStorageArea && !hasExtractorArea)
                         || (operationalAreaFilter == "storage" && !hasStorageArea)
                         || (operationalAreaFilter == "extractor" && !hasExtractorArea))
@@ -231,6 +232,7 @@ namespace CS2MCP
                             storageArea = hasStorageArea,
                             extractorArea = hasExtractorArea,
                             expandableStorageArea,
+                            expandableExtractorArea,
                         },
                         start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
                         end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
@@ -1089,11 +1091,13 @@ namespace CS2MCP
             Entity building,
             out bool hasStorageArea,
             out bool hasExtractorArea,
-            out bool expandableStorageArea)
+            out bool expandableStorageArea,
+            out bool expandableExtractorArea)
         {
             hasStorageArea = false;
             hasExtractorArea = false;
             expandableStorageArea = false;
+            expandableExtractorArea = false;
             if (!EntityManager.HasBuffer<Game.Areas.SubArea>(building))
             {
                 return;
@@ -1124,6 +1128,16 @@ namespace CS2MCP
                         && EntityManager.HasComponent<StorageAreaData>(areaPrefab)
                         && (EntityManager.GetComponentData<StorageAreaData>(areaPrefab).m_Resources
                             & Game.Economy.Resource.Garbage) != 0;
+                }
+                if (extractor
+                    && EntityManager.HasBuffer<Game.Areas.Node>(area)
+                    && EntityManager.HasComponent<PrefabRef>(area))
+                {
+                    Entity areaPrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                    int nodeCount = EntityManager.GetBuffer<Game.Areas.Node>(area, isReadOnly: true).Length;
+                    expandableExtractorArea |= nodeCount >= 4
+                        && nodeCount <= 16
+                        && EntityManager.HasComponent<ExtractorAreaData>(areaPrefab);
                 }
             }
         }

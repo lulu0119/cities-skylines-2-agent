@@ -74,6 +74,10 @@ namespace CS2MCP
         private float m_PendingPreviousAreaSurface;
         private int m_PendingPreviousStorageCapacity;
         private float m_PendingTargetArea;
+        private string m_PendingOperationalAreaKind;
+        private string m_PendingOperationalResource;
+        private float m_PendingOperationalResourceAmount;
+        private float m_PendingOperationalResourceCoverage;
         private ZoneType m_PendingZone;
         private float2 m_PendingZoneCenter;
         private float m_PendingZoneRadius;
@@ -339,6 +343,10 @@ namespace CS2MCP
             float previousSurface,
             int previousCapacity,
             float targetArea,
+            string areaKind,
+            string resource,
+            float resourceAmount,
+            float resourceCoverage,
             BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
@@ -354,6 +362,10 @@ namespace CS2MCP
             m_PendingPreviousAreaSurface = previousSurface;
             m_PendingPreviousStorageCapacity = previousCapacity;
             m_PendingTargetArea = targetArea;
+            m_PendingOperationalAreaKind = areaKind;
+            m_PendingOperationalResource = resource;
+            m_PendingOperationalResourceAmount = resourceAmount;
+            m_PendingOperationalResourceCoverage = resourceCoverage;
             m_PendingRequest = request;
             Activate();
             return true;
@@ -871,9 +883,19 @@ namespace CS2MCP
                         prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
                         targetAreaM2 = (float)Math.Round(m_PendingTargetArea, 1),
                         previousSurfaceAreaM2 = (float)Math.Round(m_PendingPreviousAreaSurface, 1),
-                        previousCapacity = m_PendingPreviousStorageCapacity,
+                        previousCapacity = m_PendingPreviousStorageCapacity >= 0
+                            ? (int?)m_PendingPreviousStorageCapacity
+                            : null,
+                        resource = m_PendingOperationalResource == null
+                            ? null
+                            : new
+                            {
+                                type = m_PendingOperationalResource,
+                                estimatedRemainingAmount = (float)Math.Round(m_PendingOperationalResourceAmount, 1),
+                                coverage = (float)Math.Round(m_PendingOperationalResourceCoverage, 3),
+                            },
                         nodes = m_PendingOperationalAreaNodes != null ? m_PendingOperationalAreaNodes.Length : 0,
-                        note = "native operational-area relocation committed; call get_operational_area to verify the new surface, capacity and owner relationship",
+                        note = $"native {m_PendingOperationalAreaKind} operational-area relocation committed; call get_operational_area to verify simulation resource/capacity and ownership",
                     });
                 default:
                     object lotSize = null;
@@ -1093,6 +1115,8 @@ namespace CS2MCP
             m_PendingPrefabEntity = Entity.Null;
             m_PendingOwner = Entity.Null;
             m_PendingOperationalAreaNodes = null;
+            m_PendingOperationalAreaKind = null;
+            m_PendingOperationalResource = null;
             m_ProbePositions.Clear();
             m_ProbeRotations.Clear();
             m_ProbeIndex = 0;

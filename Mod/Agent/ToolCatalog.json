@@ -520,17 +520,17 @@
     },
     {
       "name": "expand_operational_area",
-      "description": "Expand one owner-linked landfill storage area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits the best clear candidate through the game's native validation/apply pipeline. Expansion only; extractors are handled by their resource-aware planner. Call get_operational_area afterward to verify the result.",
+      "description": "Expand one owner-linked landfill storage or specialized-industry extractor area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits through the game's native validation/apply pipeline. Extractors rank clear candidates by polygon/cell resource intersection and report remaining-resource coverage; forest uses a separate tree scorer and is not yet writable. Call get_operational_area afterward to verify simulation state.",
       "parameters": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Landfill building entity index from list_buildings"
+            "description": "Building entity index from list_buildings; use an expandable storage or extractor capability"
           },
           "version": {
             "type": "integer",
-            "description": "Landfill building entity version from list_buildings"
+            "description": "Building entity version from list_buildings"
           },
           "target_area_m2": {
             "type": "number",
