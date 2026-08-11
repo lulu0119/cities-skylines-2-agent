@@ -2,9 +2,11 @@
 
 **Status:** Rectangle zoning, progression reads, typed prefab roles, road-feature
 editing, restricted road-type replacement, and operational-area inspection are
-implemented and live-accepted. Restricted landfill expansion also survives a cold
-save/reload. A positive development-node purchase, non-empty landfill behavior,
-and specialized-industry extraction areas remain backlog items.
+implemented and live-accepted. Building discovery now also accepts typed service
+roles and operational-area capabilities. Landfill expansion plans a multi-node fan
+from a requested total surface instead of exposing a direction or depth. A positive
+development-node purchase, non-empty landfill behavior, specialized-industry
+resource scoring, and cold reload of the new fan shape remain backlog items.
 
 This is the next gameplay backlog after the new-map run reached population 10,228.
 It separates missing game capabilities from mayor-policy knowledge so a later session
@@ -321,9 +323,9 @@ the game to recalculate geometry/capacity. It must not fake capacity by editing
 
 The shared lower-level seam is the same owner-linked area transaction needed by
 specialized industries. The landfill-facing interface is intentionally stronger and
-narrower: `expand_operational_area(building, extra_depth_m)` owns polygon selection,
-direction and locked-edge preservation instead of asking the model to manufacture
-corner coordinates.
+narrower: `expand_operational_area(building, target_area_m2)` owns polygon selection,
+direction, node insertion and locked-edge preservation instead of asking the model
+to manufacture corner coordinates.
 
 The read-only precursor `get_operational_area(building)` is now implemented and
 live-accepted. A forced empty `Landfill01` on disposable city `阿什比` exposed 28
@@ -333,7 +335,7 @@ garbage, and 51,000 capacity calculated through the game's `AreaUtils`; the othe
 27 decorative/surface areas remained non-editable. No polygon was modified during
 this acceptance.
 
-The write path is now live-accepted on the same disposable landfill. A 16 m request
+The first write path was live-accepted on the same disposable landfill. A 16 m request
 kept the building-side edge at `z=-572`, moved the free edge from `z=-548` to
 `z=-532`, increased surface area from 3,264 to 5,440 m², and increased native
 capacity from 51,000 to 85,000. The area remained the only editable owner-linked
@@ -341,6 +343,18 @@ storage area. After saving as `ToolLoop-OperationalArea` and cold-loading it, th
 same four nodes, 5,440 m² surface, 85,000 capacity, `editable=true`, and locked edge
 were still present. Entity ids changed across reload, so the model-facing interface
 correctly continues to identify the building rather than persisting ECS ids.
+
+The interface has since been deepened so the model supplies only the desired total
+surface. The handler preserves the building-side edge, generates centered and
+skewed sector candidates, adds perimeter nodes, terrain-projects them, prefilters
+unowned land/building/road crossings, enforces the native effective 4 m adjacent-node
+spacing, and submits the selected full ring to native validation. Repeated live
+expansion from 7,713.7 m² produced an exact 9,000.0 m², 11-node area with 140,626
+capacity while preserving the locked edge. The disposable save is
+`ToolLoop-FanArea`. Cold reload acceptance is not yet claimed: under the current
+virtual-display session both that save and the previously accepted four-node save
+enter the same long, all-core load after deserialization, so the differential does
+not isolate the fan geometry.
 
 ### Acceptance
 

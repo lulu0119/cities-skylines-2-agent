@@ -153,6 +153,28 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("query", out string search);
+            request.Query.TryGetValue("role", out string requestedRole);
+            if (!string.IsNullOrWhiteSpace(requestedRole))
+            {
+                requestedRole = requestedRole.Trim().ToLowerInvariant();
+                if (!kPrefabRoles.Contains(requestedRole))
+                {
+                    return BridgeResponse.Error(400,
+                        $"unknown role '{requestedRole}'; use {string.Join(", ", kPrefabRoles)}");
+                }
+            }
+            request.Query.TryGetValue("operational_area", out string operationalAreaFilter);
+            if (!string.IsNullOrWhiteSpace(operationalAreaFilter))
+            {
+                operationalAreaFilter = operationalAreaFilter.Trim().ToLowerInvariant();
+                if (operationalAreaFilter != "any"
+                    && operationalAreaFilter != "storage"
+                    && operationalAreaFilter != "extractor")
+                {
+                    return BridgeResponse.Error(400,
+                        "operational_area must be any, storage or extractor");
+                }
+            }
             const int hardMax = 128;
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
             bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
@@ -175,8 +197,24 @@ namespace CS2MCP
                     PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
                     PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabRef.m_Prefab);
                     string name = prefab != null ? prefab.name : "<unknown>";
+                    List<string> roles = GetPrefabRoles(prefabRef.m_Prefab);
                     if (!string.IsNullOrEmpty(search)
                         && name.IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+                    if (!string.IsNullOrEmpty(requestedRole) && !roles.Contains(requestedRole))
+                    {
+                        continue;
+                    }
+                    GetBuildingOperationalCapabilities(
+                        entity,
+                        out bool hasStorageArea,
+                        out bool hasExtractorArea,
+                        out bool expandableStorageArea);
+                    if ((operationalAreaFilter == "any" && !hasStorageArea && !hasExtractorArea)
+                        || (operationalAreaFilter == "storage" && !hasStorageArea)
+                        || (operationalAreaFilter == "extractor" && !hasExtractorArea))
                     {
                         continue;
                     }
@@ -186,6 +224,14 @@ namespace CS2MCP
                     {
                         entity = new { index = entity.Index, version = entity.Version },
                         prefab = name,
+                        roles,
+                        capabilities = new
+                        {
+                            operationalArea = hasStorageArea || hasExtractorArea,
+                            storageArea = hasStorageArea,
+                            extractorArea = hasExtractorArea,
+                            expandableStorageArea,
+                        },
                         start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
                         end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
                         length = curve.m_Length,
@@ -1037,6 +1083,49 @@ namespace CS2MCP
                 note = "hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
                 buildings = results,
             });
+        }
+
+        private void GetBuildingOperationalCapabilities(
+            Entity building,
+            out bool hasStorageArea,
+            out bool hasExtractorArea,
+            out bool expandableStorageArea)
+        {
+            hasStorageArea = false;
+            hasExtractorArea = false;
+            expandableStorageArea = false;
+            if (!EntityManager.HasBuffer<Game.Areas.SubArea>(building))
+            {
+                return;
+            }
+            DynamicBuffer<Game.Areas.SubArea> subAreas =
+                EntityManager.GetBuffer<Game.Areas.SubArea>(building, isReadOnly: true);
+            foreach (Game.Areas.SubArea subArea in subAreas)
+            {
+                Entity area = subArea.m_Area;
+                if (area == Entity.Null
+                    || !EntityManager.Exists(area)
+                    || !IsAreaOwnedBy(area, building))
+                {
+                    continue;
+                }
+                bool storage = EntityManager.HasComponent<Game.Areas.Storage>(area);
+                bool extractor = EntityManager.HasComponent<Game.Areas.Extractor>(area);
+                hasStorageArea |= storage;
+                hasExtractorArea |= extractor;
+                if (storage
+                    && EntityManager.HasBuffer<Game.Areas.Node>(area)
+                    && EntityManager.HasComponent<PrefabRef>(area))
+                {
+                    Entity areaPrefab = EntityManager.GetComponentData<PrefabRef>(area).m_Prefab;
+                    int nodeCount = EntityManager.GetBuffer<Game.Areas.Node>(area, isReadOnly: true).Length;
+                    expandableStorageArea |= nodeCount >= 4
+                        && nodeCount <= 16
+                        && EntityManager.HasComponent<StorageAreaData>(areaPrefab)
+                        && (EntityManager.GetComponentData<StorageAreaData>(areaPrefab).m_Resources
+                            & Game.Economy.Resource.Garbage) != 0;
+                }
+            }
         }
 
         private static float? NetworkWidthM(EntityManager entityManager, Entity prefabEntity)

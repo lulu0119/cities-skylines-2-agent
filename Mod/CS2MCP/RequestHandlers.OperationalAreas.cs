@@ -4,8 +4,10 @@ using Game.Areas;
 using Game.Common;
 using Game.Prefabs;
 using Game.Simulation;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
+using Transform = Game.Objects.Transform;
 
 namespace CS2MCP
 {
@@ -84,12 +86,12 @@ namespace CS2MCP
                 return BridgeResponse.Error(400,
                     "provide ?index=&version= of a landfill building from /city/buildings");
             }
-            if (!request.TryGetFloat("extra_depth_m", out float extraDepth)
-                || extraDepth < 8f
-                || extraDepth > 64f)
+            if (!request.TryGetFloat("target_area_m2", out float targetArea)
+                || targetArea < 64f
+                || targetArea > 250000f)
             {
                 return BridgeResponse.Error(400,
-                    "extra_depth_m must be between 8 and 64 metres");
+                    "target_area_m2 must be between 64 and 250000 square metres");
             }
 
             var building = new Entity { Index = index, Version = version };
@@ -110,14 +112,8 @@ namespace CS2MCP
                 return areaError;
             }
 
-            var expandedNodes = new Node[currentNodes.Length];
-            for (int i = 0; i < currentNodes.Length; i++)
-            {
-                expandedNodes[i] = currentNodes[i];
-            }
-
-            float2 lockedStart = expandedNodes[0].m_Position.xz;
-            float2 lockedEnd = expandedNodes[1].m_Position.xz;
+            float2 lockedStart = currentNodes[0].m_Position.xz;
+            float2 lockedEnd = currentNodes[1].m_Position.xz;
             float2 lockedEdge = lockedEnd - lockedStart;
             float lockedLength = math.length(lockedEdge);
             if (lockedLength < 8f)
@@ -126,39 +122,73 @@ namespace CS2MCP
                     "the building-side locked edge is too short to expand safely");
             }
 
-            float2 normal = new float2(-lockedEdge.y, lockedEdge.x) / lockedLength;
+            float2 tangent = lockedEdge / lockedLength;
+            float2 normal = new float2(-tangent.y, tangent.x);
             float2 lockedMid = (lockedStart + lockedEnd) * 0.5f;
-            float2 freeMid = (expandedNodes[2].m_Position.xz
-                + expandedNodes[3].m_Position.xz) * 0.5f;
-            float signedDepth = math.dot(freeMid - lockedMid, normal);
+            float2 areaCenter = float2.zero;
+            for (int i = 2; i < currentNodes.Length; i++)
+            {
+                areaCenter += currentNodes[i].m_Position.xz;
+            }
+            areaCenter /= currentNodes.Length - 2;
+            float signedDepth = math.dot(areaCenter - lockedMid, normal);
             if (math.abs(signedDepth) < 8f)
             {
                 return BridgeResponse.Error(409,
-                    "the operational area is not a supported four-corner extrusion");
+                    "the operational area does not have a usable free side away from the building");
             }
             if (signedDepth < 0f)
             {
                 normal = -normal;
             }
 
-            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
-            TerrainHeightData heightData = terrain.GetHeightData();
-            for (int i = 2; i < 4; i++)
-            {
-                Node node = expandedNodes[i];
-                float2 moved = node.m_Position.xz + normal * extraDepth;
-                float3 position = new float3(moved.x, node.m_Position.y, moved.y);
-                position.y = TerrainUtils.SampleHeight(ref heightData, position);
-                node.m_Position = position;
-                expandedNodes[i] = node;
-            }
-
             float previousPolygonArea = CalculatePolygonArea(currentNodes);
-            float expandedPolygonArea = CalculatePolygonArea(expandedNodes);
-            if (expandedPolygonArea <= previousPolygonArea + 1f)
+            if (targetArea <= previousPolygonArea + 1f)
             {
                 return BridgeResponse.Error(409,
-                    "requested geometry did not increase the operational area");
+                    $"target_area_m2 must exceed the current {previousPolygonArea:F1} m2 area; shrinking is not supported");
+            }
+
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            Node[] expandedNodeArray = null;
+            int candidatesTested = 0;
+            string lastRejection = null;
+            float[] skews = { 0f, -15f, 15f, -30f, 30f };
+            foreach (float skewDegrees in skews)
+            {
+                candidatesTested++;
+                if (!TryPlanOperationalAreaFan(
+                        currentNodes,
+                        lockedStart,
+                        lockedEnd,
+                        tangent,
+                        normal,
+                        targetArea,
+                        skewDegrees,
+                        ref heightData,
+                        out Node[] candidateNodes,
+                        out _,
+                        out string planError))
+                {
+                    lastRejection = planError;
+                    continue;
+                }
+                if (!IsOperationalAreaCandidateClear(
+                        building,
+                        candidateNodes,
+                        out string obstacleReason))
+                {
+                    lastRejection = obstacleReason;
+                    continue;
+                }
+                expandedNodeArray = candidateNodes;
+                break;
+            }
+            if (expandedNodeArray == null)
+            {
+                return BridgeResponse.Error(409,
+                    $"no clear expansion fan could reach {targetArea:F1} m2 after {candidatesTested} candidates: {lastRejection ?? "no valid geometry"}");
             }
 
             Geometry geometry = EntityManager.GetComponentData<Geometry>(area);
@@ -173,10 +203,10 @@ namespace CS2MCP
                     owner,
                     prefabEntity,
                     prefab,
-                    expandedNodes,
+                    expandedNodeArray,
                     geometry.m_SurfaceArea,
                     previousCapacity,
-                    extraDepth,
+                    targetArea,
                     request))
             {
                 return BridgeResponse.Error(409,
@@ -228,7 +258,8 @@ namespace CS2MCP
                     EntityManager.GetComponentData<PrefabRef>(candidate).m_Prefab;
                 DynamicBuffer<Node> candidateNodes =
                     EntityManager.GetBuffer<Node>(candidate, isReadOnly: true);
-                if (candidateNodes.Length != 4
+                if (candidateNodes.Length < 4
+                    || candidateNodes.Length > 16
                     || !EntityManager.HasComponent<StorageAreaData>(candidatePrefab)
                     || (EntityManager.GetComponentData<StorageAreaData>(candidatePrefab).m_Resources
                         & Game.Economy.Resource.Garbage) == 0)
@@ -250,7 +281,7 @@ namespace CS2MCP
             if (area == Entity.Null)
             {
                 error = BridgeResponse.Error(409,
-                    "no owner-linked four-corner landfill storage area is available; v0 does not edit extractor or irregular polygons");
+                    "no supported owner-linked landfill storage area is available; extractor and arbitrary polygons are not edited by this tool");
                 return false;
             }
             return true;
@@ -278,6 +309,327 @@ namespace CS2MCP
                 area += current.x * next.y - next.x * current.y;
             }
             return math.abs(area) * 0.5f;
+        }
+
+        private static float CalculatePolygonArea(List<float2> nodes)
+        {
+            float area = 0f;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                float2 current = nodes[i];
+                float2 next = nodes[(i + 1) % nodes.Count];
+                area += current.x * next.y - next.x * current.y;
+            }
+            return math.abs(area) * 0.5f;
+        }
+
+        private bool TryPlanOperationalAreaFan(
+            DynamicBuffer<Node> nodes,
+            float2 lockedStart,
+            float2 lockedEnd,
+            float2 tangent,
+            float2 normal,
+            float targetArea,
+            float skewDegrees,
+            ref TerrainHeightData heightData,
+            out Node[] result,
+            out float resultArea,
+            out string error)
+        {
+            result = null;
+            resultArea = 0f;
+            error = null;
+            const int arcSegments = 6;
+            float halfAngle = math.radians(55f);
+            float skew = math.radians(skewDegrees);
+            float2 center = (lockedStart + lockedEnd) * 0.5f;
+            var existing = new List<float2>(nodes.Length);
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                existing.Add(nodes[i].m_Position.xz);
+            }
+
+            List<float2> bestHull = null;
+            float lowRadius = 0f;
+            float highRadius = math.max(8f, math.distance(lockedStart, lockedEnd) * 0.5f);
+            while (highRadius <= 512f)
+            {
+                bestHull = BuildOperationalAreaFanHull(
+                    existing, center, tangent, normal, highRadius, skew, halfAngle, arcSegments);
+                if (bestHull != null && CalculatePolygonArea(bestHull) >= targetArea)
+                {
+                    break;
+                }
+                highRadius *= 1.5f;
+            }
+            if (bestHull == null || CalculatePolygonArea(bestHull) < targetArea)
+            {
+                error = "target area requires a fan radius beyond the 512 m planning limit";
+                return false;
+            }
+            for (int iteration = 0; iteration < 18; iteration++)
+            {
+                float radius = (lowRadius + highRadius) * 0.5f;
+                List<float2> hull = BuildOperationalAreaFanHull(
+                    existing, center, tangent, normal, radius, skew, halfAngle, arcSegments);
+                if (hull != null && CalculatePolygonArea(hull) >= targetArea)
+                {
+                    highRadius = radius;
+                    bestHull = hull;
+                }
+                else
+                {
+                    lowRadius = radius;
+                }
+            }
+
+            if (!TryOrientOperationalAreaHull(bestHull, lockedStart, lockedEnd, out List<float2> oriented))
+            {
+                error = "planned fan did not preserve the locked building edge";
+                return false;
+            }
+            if (oriented.Count > 16)
+            {
+                error = $"planned fan needs {oriented.Count} nodes, above the 16-node safety limit";
+                return false;
+            }
+            result = new Node[oriented.Count];
+            for (int i = 0; i < oriented.Count; i++)
+            {
+                Node template = FindNearestOperationalAreaNode(nodes, oriented[i]);
+                result[i] = CreateOperationalAreaNode(template, oriented[i], ref heightData);
+            }
+            resultArea = CalculatePolygonArea(result);
+            if (!HasMinimumOperationalAreaSpacing(result, 4f))
+            {
+                error = "planned fan places adjacent nodes closer than the native 4 m limit";
+                result = null;
+                return false;
+            }
+            if (resultArea < targetArea - 1f)
+            {
+                error = "planned fan fell below the requested area after terrain projection";
+                result = null;
+                return false;
+            }
+            return true;
+        }
+
+        private static bool HasMinimumOperationalAreaSpacing(Node[] nodes, float minimumSpacing)
+        {
+            float minimumSquared = minimumSpacing * minimumSpacing;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                float2 current = nodes[i].m_Position.xz;
+                float2 next = nodes[(i + 1) % nodes.Length].m_Position.xz;
+                if (math.distancesq(current, next) < minimumSquared)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static List<float2> BuildOperationalAreaFanHull(
+            List<float2> existing,
+            float2 center,
+            float2 tangent,
+            float2 normal,
+            float radius,
+            float skew,
+            float halfAngle,
+            int arcSegments)
+        {
+            var points = new List<float2>(existing.Count + arcSegments + 1);
+            points.AddRange(existing);
+            for (int i = 0; i <= arcSegments; i++)
+            {
+                float angle = skew + halfAngle - 2f * halfAngle * i / arcSegments;
+                float2 direction = normal * math.cos(angle) + tangent * math.sin(angle);
+                points.Add(center + direction * radius);
+            }
+            return ConvexHull(points);
+        }
+
+        private static List<float2> ConvexHull(List<float2> points)
+        {
+            points.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+            var unique = new List<float2>(points.Count);
+            foreach (float2 point in points)
+            {
+                if (unique.Count == 0 || math.distancesq(unique[unique.Count - 1], point) > 0.01f)
+                {
+                    unique.Add(point);
+                }
+            }
+            if (unique.Count < 3)
+            {
+                return null;
+            }
+            var hull = new List<float2>(unique.Count * 2);
+            foreach (float2 point in unique)
+            {
+                while (hull.Count >= 2
+                    && Cross(hull[hull.Count - 1] - hull[hull.Count - 2], point - hull[hull.Count - 1]) <= 0f)
+                {
+                    hull.RemoveAt(hull.Count - 1);
+                }
+                hull.Add(point);
+            }
+            int lowerCount = hull.Count;
+            for (int i = unique.Count - 2; i >= 0; i--)
+            {
+                float2 point = unique[i];
+                while (hull.Count > lowerCount
+                    && Cross(hull[hull.Count - 1] - hull[hull.Count - 2], point - hull[hull.Count - 1]) <= 0f)
+                {
+                    hull.RemoveAt(hull.Count - 1);
+                }
+                hull.Add(point);
+            }
+            hull.RemoveAt(hull.Count - 1);
+            return hull;
+        }
+
+        private static float Cross(float2 a, float2 b) => a.x * b.y - a.y * b.x;
+
+        private static bool TryOrientOperationalAreaHull(
+            List<float2> hull,
+            float2 lockedStart,
+            float2 lockedEnd,
+            out List<float2> oriented)
+        {
+            oriented = null;
+            if (hull == null)
+            {
+                return false;
+            }
+            int start = hull.FindIndex(point => math.distancesq(point, lockedStart) < 0.01f);
+            int end = hull.FindIndex(point => math.distancesq(point, lockedEnd) < 0.01f);
+            if (start < 0 || end < 0)
+            {
+                return false;
+            }
+            if ((start + 1) % hull.Count != end)
+            {
+                if ((end + 1) % hull.Count != start)
+                {
+                    return false;
+                }
+                hull.Reverse();
+                start = hull.FindIndex(point => math.distancesq(point, lockedStart) < 0.01f);
+            }
+            oriented = new List<float2>(hull.Count);
+            for (int i = 0; i < hull.Count; i++)
+            {
+                oriented.Add(hull[(start + i) % hull.Count]);
+            }
+            return oriented.Count >= 3 && math.distancesq(oriented[1], lockedEnd) < 0.01f;
+        }
+
+        private bool IsOperationalAreaCandidateClear(
+            Entity building,
+            Node[] nodes,
+            out string reason)
+        {
+            var polygon = new List<float2>(nodes.Length);
+            foreach (Node node in nodes)
+            {
+                polygon.Add(node.m_Position.xz);
+                if (!IsOnOwnedTile(node.m_Position))
+                {
+                    reason = "a planned fan node is outside owned map tiles";
+                    return false;
+                }
+            }
+            using (NativeArray<Entity> buildings = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity other in buildings)
+                {
+                    if (other == building || IsAreaOwnedBy(other, building))
+                    {
+                        continue;
+                    }
+                    Transform transform = EntityManager.GetComponentData<Transform>(other);
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(other);
+                    float clearance = BuildingRadius(prefabRef.m_Prefab) + 2f;
+                    if (clearance > 2f
+                        && DistanceToPolygon(transform.m_Position.xz, polygon) < clearance)
+                    {
+                        reason = "planned fan intersects an existing building";
+                        return false;
+                    }
+                }
+            }
+            using (NativeArray<Entity> roads = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity road in roads)
+                {
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(road);
+                    float clearance = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f + 2f
+                        : 2f;
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(road);
+                    for (int i = 0; i <= 24; i++)
+                    {
+                        float2 point = BezierPoint(curve.m_Bezier, i / 24f).xz;
+                        if (DistanceToPolygon(point, polygon) < clearance)
+                        {
+                            reason = "planned fan intersects an existing road";
+                            return false;
+                        }
+                    }
+                }
+            }
+            reason = null;
+            return true;
+        }
+
+        private static float DistanceToPolygon(float2 point, List<float2> polygon)
+        {
+            bool inside = false;
+            float distance = float.MaxValue;
+            for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+            {
+                float2 a = polygon[j];
+                float2 b = polygon[i];
+                float2 edge = b - a;
+                float t = math.saturate(math.dot(point - a, edge) / math.max(0.001f, math.lengthsq(edge)));
+                distance = math.min(distance, math.distance(point, a + edge * t));
+                if ((a.y > point.y) != (b.y > point.y)
+                    && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x)
+                {
+                    inside = !inside;
+                }
+            }
+            return inside ? 0f : distance;
+        }
+
+        private static Node FindNearestOperationalAreaNode(DynamicBuffer<Node> nodes, float2 point)
+        {
+            int selected = 0;
+            float best = float.MaxValue;
+            for (int i = 0; i < nodes.Length; i++)
+            {
+                float distance = math.distancesq(nodes[i].m_Position.xz, point);
+                if (distance < best)
+                {
+                    best = distance;
+                    selected = i;
+                }
+            }
+            return nodes[selected];
+        }
+
+        private static Node CreateOperationalAreaNode(
+            Node template,
+            float2 xz,
+            ref TerrainHeightData heightData)
+        {
+            float3 position = new float3(xz.x, template.m_Position.y, xz.y);
+            position.y = TerrainUtils.SampleHeight(ref heightData, position);
+            template.m_Position = position;
+            return template;
         }
 
         private object BuildOperationalAreaView(

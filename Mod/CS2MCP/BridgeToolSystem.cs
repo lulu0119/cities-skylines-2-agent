@@ -73,7 +73,7 @@ namespace CS2MCP
         private Entity m_PendingOwner;
         private float m_PendingPreviousAreaSurface;
         private int m_PendingPreviousStorageCapacity;
-        private float m_PendingExpansionMeters;
+        private float m_PendingTargetArea;
         private ZoneType m_PendingZone;
         private float2 m_PendingZoneCenter;
         private float m_PendingZoneRadius;
@@ -338,7 +338,7 @@ namespace CS2MCP
             Game.Areas.Node[] polygonNodes,
             float previousSurface,
             int previousCapacity,
-            float expansionMeters,
+            float targetArea,
             BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
@@ -353,7 +353,7 @@ namespace CS2MCP
             m_PendingOperationalAreaNodes = polygonNodes;
             m_PendingPreviousAreaSurface = previousSurface;
             m_PendingPreviousStorageCapacity = previousCapacity;
-            m_PendingExpansionMeters = expansionMeters;
+            m_PendingTargetArea = targetArea;
             m_PendingRequest = request;
             Activate();
             return true;
@@ -869,7 +869,7 @@ namespace CS2MCP
                         expanded = true,
                         area = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
                         prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
-                        requestedExtraDepthM = m_PendingExpansionMeters,
+                        targetAreaM2 = (float)Math.Round(m_PendingTargetArea, 1),
                         previousSurfaceAreaM2 = (float)Math.Round(m_PendingPreviousAreaSurface, 1),
                         previousCapacity = m_PendingPreviousStorageCapacity,
                         nodes = m_PendingOperationalAreaNodes != null ? m_PendingOperationalAreaNodes.Length : 0,

@@ -520,7 +520,7 @@
     },
     {
       "name": "expand_operational_area",
-      "description": "EXPERIMENTAL one-step landfill expansion: extend the free edge of one owner-linked four-corner storage area while preserving its building-side locked edge. Uses the game's native area relocation, validation and apply pipeline. Expansion only; extractor and irregular polygons are rejected. Call get_operational_area afterward to verify surface, capacity and ownership.",
+      "description": "Expand one owner-linked landfill storage area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits the best clear candidate through the game's native validation/apply pipeline. Expansion only; extractors are handled by their resource-aware planner. Call get_operational_area afterward to verify the result.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -532,17 +532,17 @@
             "type": "integer",
             "description": "Landfill building entity version from list_buildings"
           },
-          "extra_depth_m": {
+          "target_area_m2": {
             "type": "number",
-            "minimum": 8,
-            "maximum": 64,
-            "description": "Metres to extend the free edge away from the building; positive expansion only"
+            "minimum": 64,
+            "maximum": 250000,
+            "description": "Requested total polygon surface in square metres; must exceed the current surface"
           }
         },
         "required": [
           "index",
           "version",
-          "extra_depth_m"
+          "target_area_m2"
         ]
       },
       "route": "/build/operational-area/expand",
@@ -556,8 +556,8 @@
           "arg": "version"
         },
         {
-          "key": "extra_depth_m",
-          "arg": "extra_depth_m"
+          "key": "target_area_m2",
+          "arg": "target_area_m2"
         }
       ],
       "response": "json"
@@ -817,13 +817,40 @@
     },
     {
       "name": "list_buildings",
-      "description": "List buildings existing in the city with their prefab name, world position, entity id (index+version, needed for demolish) and lot footprint (lotSize in 8m cells, footprintMeters). Filter by name substring or spatially with x/z/radius. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the query/range.",
+      "description": "Find buildings existing in the city by typed service role, operational-area capability, prefab-name substring, or location. Returns roles, capabilities, world position, current entity id and footprint. Prefer role over guessing internal prefab names; use role=garbage for landfills, role=police for police facilities, and role=specialized-industry with operational_area=extractor for farms/extractors. Entity ids change after save reload. Hard max 128 results.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
             "type": "string",
             "description": "Case-insensitive prefab-name substring filter"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "power",
+              "water",
+              "sewage",
+              "garbage",
+              "healthcare",
+              "fire",
+              "police",
+              "education",
+              "transport",
+              "post",
+              "telecom",
+              "specialized-industry"
+            ],
+            "description": "Typed role derived from prefab ECS components"
+          },
+          "operational_area": {
+            "type": "string",
+            "enum": [
+              "any",
+              "storage",
+              "extractor"
+            ],
+            "description": "Require an owner-linked operational area of this kind"
           },
           "x": {
             "type": "number",
@@ -852,6 +879,14 @@
         {
           "key": "query",
           "arg": "query"
+        },
+        {
+          "key": "role",
+          "arg": "role"
+        },
+        {
+          "key": "operational_area",
+          "arg": "operational_area"
         },
         {
           "key": "x",
