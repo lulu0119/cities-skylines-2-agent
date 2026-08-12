@@ -20,6 +20,7 @@ Dated notes under `guide/` / `research/` / `ops/`. Frozen M1 smoke checklist liv
 | [2026-08-10-cs2-mod-hot-reload.md](./research/2026-08-10-cs2-mod-hot-reload.md) | CS2 data/UI/C# hot-reload feasibility; stable host + replaceable policy architecture |
 | [2026-08-11-tool-deepening-next-seams.md](./research/2026-08-11-tool-deepening-next-seams.md) | ECS prefab roles, road features vs replacement, and owner-linked operational-area seams |
 | [2026-08-11-cs2-map-image-mod.md](./research/2026-08-11-cs2-map-image-mod.md) | CS2MapView / Carto map-image mods; open-source status and agent integration options |
+| [2026-08-12-cs2-sewage-outlet-placement-rules.md](./research/2026-08-12-cs2-sewage-outlet-placement-rules.md) | Official evidence for shoreline, road, and pipe requirements of water pumps and sewage outlets |
 
 ## Ops
 
