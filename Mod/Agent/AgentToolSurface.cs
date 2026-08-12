@@ -66,8 +66,9 @@ namespace CitiesSkylines2Agent.Agent
             m_EnabledGroups.Clear();
         }
 
-        public bool EnableGroup(string group, bool visionAvailable)
+        public bool EnableGroup(string group, bool visionAvailable, out string[] enabledTools)
         {
+            enabledTools = Array.Empty<string>();
             string normalized = group?.Trim();
             if (string.IsNullOrWhiteSpace(normalized) || !s_Groups.ContainsKey(normalized))
             {
@@ -79,6 +80,15 @@ namespace CitiesSkylines2Agent.Agent
                 return false;
             }
             m_EnabledGroups.Add(normalized);
+            var exposed = new List<string>();
+            foreach (string name in s_Groups[normalized])
+            {
+                if (IsAllowed(name, visionAvailable))
+                {
+                    exposed.Add(name);
+                }
+            }
+            enabledTools = exposed.ToArray();
             return true;
         }
 
@@ -113,23 +123,13 @@ namespace CitiesSkylines2Agent.Agent
 
         private bool IsExposed(string name, bool visionAvailable)
         {
-            if (!visionAvailable &&
-                (name == "screenshot" || name == "get_camera" || name == "set_camera"))
+            if (!IsAllowed(name, visionAvailable))
             {
                 return false;
             }
             if (s_DevelopmentTools.Contains(name))
             {
-                return Setting.StaticEnableDevelopmentTools;
-            }
-            if (name == "purchase_development_node" &&
-                !Setting.StaticAllowProgressionPurchases)
-            {
-                return false;
-            }
-            if (name == "demolish" && !Setting.StaticAllowDemolition)
-            {
-                return false;
+                return true;
             }
             if (s_CoreTools.Contains(name))
             {
@@ -146,6 +146,25 @@ namespace CitiesSkylines2Agent.Agent
             return false;
         }
 
+        private static bool IsAllowed(string name, bool visionAvailable)
+        {
+            if (!visionAvailable &&
+                (name == "screenshot" || name == "get_camera" || name == "set_camera"))
+            {
+                return false;
+            }
+            if (s_DevelopmentTools.Contains(name))
+            {
+                return Setting.StaticEnableDevelopmentTools;
+            }
+            if (name == "purchase_development_node" &&
+                !Setting.StaticAllowProgressionPurchases)
+            {
+                return false;
+            }
+            return name != "demolish" || Setting.StaticAllowDemolition;
+        }
+
         private static void AddMetaTools(List<AITool> tools, bool visionAvailable)
         {
             string groupEnum = visionAvailable
@@ -154,8 +173,8 @@ namespace CitiesSkylines2Agent.Agent
             tools.Add(AIFunctionFactory.CreateDeclaration(
                 "agent_enable_tool_group",
                 visionAvailable
-                    ? "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, visual."
-                    : "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression. Visual tools are unavailable for this model.",
+                    ? "Enable a specialized tool group for the current turn. The successful result lists tools added to the next model round; continue the task by calling them directly. Available groups: construction, finance, progression, visual."
+                    : "Enable a specialized tool group for the current turn. The successful result lists tools added to the next model round; continue the task by calling them directly. Available groups: construction, finance, progression. Visual tools are unavailable for this model.",
                 ParseSchema("{\"type\":\"object\",\"properties\":{\"group\":{\"type\":\"string\",\"enum\":" +
                     groupEnum + "}},\"required\":[\"group\"]}"),
                 null));

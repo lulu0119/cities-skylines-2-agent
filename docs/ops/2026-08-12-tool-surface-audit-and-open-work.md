@@ -204,9 +204,11 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 `agent_enable_tool_group(construction)` 成功后，下一次 generation 虽已携带扩展后的工具
 定义（输入 token 明显增加），模型仍沿用首次 generation 的“没有 demolish”判断并结束回合；
 而 `AgentToolSurface.m_EnabledGroups` 又没有在下一玩家回合开始时清空，使 construction
-错误跨回合保留，第二个玩家回合才可直接调用 `demolish`。待修复不变量是：启用结果必须
-明确要求模型在下一轮使用新增工具，同时每个新玩家回合先 reset 工具组，确保
-“Enable a specialized tool group for the current turn” 与真实生命周期一致。
+错误跨回合保留，第二个玩家回合才可直接调用 `demolish`。本地修复现已让每个新玩家
+回合先 reset 工具组，并让 `agent_enable_tool_group` 返回经过视觉/科技树/拆除权限过滤的
+真实工具名及“下一 generation 直接调用”的明确指令；工具说明同步强调该行为。
+`dotnet build` 通过（0 error，15 条既有 ILRepack warning），仍需在另一张全新受控存档
+验证同回合启用后立即调用，以及下一玩家回合不再继承该组。
 
 #### 本轮排水口排查新增的代码问题
 

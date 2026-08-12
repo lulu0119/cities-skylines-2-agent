@@ -334,6 +334,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnCts = new CancellationTokenSource();
                 m_TurnGenerationCount = 0;
                 m_TimeoutOccurred = false;
+                m_ToolSurface.Reset();
                 m_ToolExecutor.Reset();
                 Stopwatch turnTimer = Stopwatch.StartNew();
 

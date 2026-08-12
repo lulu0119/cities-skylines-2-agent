@@ -138,14 +138,20 @@ namespace CitiesSkylines2Agent.Agent
             {
                 string group = GetString(document.RootElement, "group", "");
                 bool visionAvailable = m_ClientFactory.GetProfile().VisionAvailable;
-                if (!m_ToolSurface.EnableGroup(group, visionAvailable))
+                if (!m_ToolSurface.EnableGroup(group, visionAvailable, out string[] enabledTools))
                 {
                     string message = string.Equals(group, "visual", StringComparison.OrdinalIgnoreCase) && !visionAvailable
                         ? "visual tools require a vision-capable model" : "unknown or unavailable tool group: " + group;
                     return Error(message);
                 }
                 m_Emit(new AgentUiEvent { Kind = "status", Text = "Enabled tool group: " + group });
-                return Ok(JsonSerializer.Serialize(new { enabled = true, group }));
+                return Ok(JsonSerializer.Serialize(new
+                {
+                    enabled = true,
+                    group,
+                    tools = enabledTools,
+                    instruction = "These tools are available in the next model round of this turn. Continue the current task and call them directly.",
+                }));
             }
         }
 
