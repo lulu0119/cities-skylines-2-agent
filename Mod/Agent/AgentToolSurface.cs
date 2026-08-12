@@ -82,11 +82,9 @@ namespace CitiesSkylines2Agent.Agent
             return true;
         }
 
-        public bool IsAvailable(string name, AgentModelProfile profile, bool visionEnabled)
+        public bool IsAvailable(string name, AgentModelProfile profile)
         {
-            return IsExposed(
-                name,
-                profile != null && profile.SupportsVision && visionEnabled);
+            return IsExposed(name, profile != null && profile.VisionAvailable);
         }
 
         public bool IsMetaTool(string name)
@@ -94,14 +92,12 @@ namespace CitiesSkylines2Agent.Agent
             return s_MetaTools.Contains(name);
         }
 
-        public List<AITool> Build(AgentModelProfile profile, bool visionEnabled)
+        public List<AITool> Build(AgentModelProfile profile)
         {
             var tools = new List<AITool>();
             foreach (ToolDefinition tool in ToolCatalog.Tools)
             {
-                if (!IsExposed(
-                    tool.Name,
-                    profile != null && profile.SupportsVision && visionEnabled))
+                if (!IsExposed(tool.Name, profile != null && profile.VisionAvailable))
                 {
                     continue;
                 }
@@ -111,7 +107,7 @@ namespace CitiesSkylines2Agent.Agent
                     tool.Parameters,
                     null));
             }
-            AddMetaTools(tools, profile != null && profile.SupportsVision && visionEnabled);
+            AddMetaTools(tools, profile != null && profile.VisionAvailable);
             return tools;
         }
 

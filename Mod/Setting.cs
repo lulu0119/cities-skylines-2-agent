@@ -7,41 +7,37 @@ using Game.Settings;
 
 namespace CitiesSkylines2Agent
 {
-    public enum ProviderKind
+    public enum VisionToolMode
     {
-        OpenAI,
-        DeepSeek,
-        OpenRouter,
-        Custom,
+        Auto,
+        On,
+        Off,
     }
 
     [FileLocation(nameof(CitiesSkylines2Agent))]
-    [SettingsUIGroupOrder(kProviderGroup, kAgentGroup)]
-    [SettingsUIShowGroupName(kProviderGroup, kAgentGroup)]
+    [SettingsUIGroupOrder(kConnectionGroup, kAgentGroup)]
+    [SettingsUIShowGroupName(kConnectionGroup, kAgentGroup)]
     public class Setting : ModSetting
     {
         public const string kSection = "Main";
-        public const string kProviderGroup = "Provider";
+        public const string kConnectionGroup = "Connection";
         public const string kAgentGroup = "Agent";
 
         public static Setting Instance { get; set; }
 
         public Setting(IMod mod) : base(mod) { }
 
-        // ---- Provider -------------------------------------
+        // ---- Connection -----------------------------------
 
-        [SettingsUISection(kSection, kProviderGroup)]
-        public ProviderKind Provider { get; set; } = ProviderKind.OpenAI;
-
-        [SettingsUISection(kSection, kProviderGroup)]
+        [SettingsUISection(kSection, kConnectionGroup)]
         [SettingsUITextInput]
         public string Endpoint { get; set; } = "https://api.openai.com/v1";
 
-        [SettingsUISection(kSection, kProviderGroup)]
+        [SettingsUISection(kSection, kConnectionGroup)]
         [SettingsUITextInput]
         public string ApiKey { get; set; } = "";
 
-        [SettingsUISection(kSection, kProviderGroup)]
+        [SettingsUISection(kSection, kConnectionGroup)]
         [SettingsUITextInput]
         public string Model { get; set; } = "";
 
@@ -62,15 +58,16 @@ namespace CitiesSkylines2Agent
         [SettingsUISection(kSection, kAgentGroup)]
         public bool EnableDevelopmentTools { get; set; } = false;
 
+        [SettingsUISection(kSection, kAgentGroup)]
+        public VisionToolMode VisionTools { get; set; } = VisionToolMode.Auto;
+
         // ---- Hidden --------------------------------------
 
         public string StartupPrompt { get; set; } = "";
         public int WindowTokens { get; set; } = 200_000;
-        public bool EnableVisionTools { get; set; } = true;
 
         // ---- Static facade ---------------------------------
 
-        public static ProviderKind StaticProvider => Instance?.Provider ?? ProviderKind.OpenAI;
         public static string StaticEndpoint => Instance?.Endpoint ?? "https://api.openai.com/v1";
         public static string StaticModel => Instance?.Model ?? "";
 
@@ -86,13 +83,13 @@ namespace CitiesSkylines2Agent
         public static bool StaticAllowDemolition => Instance?.AllowDemolition ?? true;
         public static bool StaticEnableDevelopmentTools =>
             Instance?.EnableDevelopmentTools ?? false;
+        public static VisionToolMode StaticVisionToolMode =>
+            Instance?.VisionTools ?? VisionToolMode.Auto;
         public static string StaticApiKey => Instance?.ApiKey ?? "";
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
-        public static bool StaticEnableVisionTools => Instance?.EnableVisionTools ?? true;
 
         public override void SetDefaults()
         {
-            Provider = ProviderKind.OpenAI;
             Endpoint = "https://api.openai.com/v1";
             ApiKey = "";
             Model = "";
@@ -101,21 +98,9 @@ namespace CitiesSkylines2Agent
             AllowProgressionPurchases = true;
             AllowDemolition = true;
             EnableDevelopmentTools = false;
+            VisionTools = VisionToolMode.Auto;
             StartupPrompt = "";
             WindowTokens = 200_000;
-            EnableVisionTools = true;
-        }
-
-        public void SetProviderWithEndpoint(ProviderKind kind)
-        {
-            Provider = kind;
-            Endpoint = kind switch
-            {
-                ProviderKind.OpenAI => "https://api.openai.com/v1",
-                ProviderKind.DeepSeek => "https://api.deepseek.com/v1",
-                ProviderKind.OpenRouter => "https://openrouter.ai/api/v1",
-                _ => Endpoint,
-            };
         }
     }
 
@@ -131,23 +116,15 @@ namespace CitiesSkylines2Agent
             {
                 { m_Setting.GetSettingsLocaleID(), "Cities Skylines 2 Agent" },
                 { m_Setting.GetOptionTabLocaleID(Setting.kSection), "Main" },
-                { m_Setting.GetOptionGroupLocaleID(Setting.kProviderGroup), "Provider" },
+                { m_Setting.GetOptionGroupLocaleID(Setting.kConnectionGroup), "Connection" },
                 { m_Setting.GetOptionGroupLocaleID(Setting.kAgentGroup), "Agent" },
 
-                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Provider)), "Provider" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Provider)), "Select provider. Endpoint auto-filled." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Endpoint)), "Endpoint" },
-                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "API base URL. Auto-filled." },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.Endpoint)), "OpenAI-compatible API base URL." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ApiKey)), "API key" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.ApiKey)), "Stored in settings only." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Model)), "Model" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Model)), "e.g. gpt-5.6-sol, deepseek-v4-flash." },
-
-                // Enum value locale keys: format is {SettingsLocaleID}.{PropertyName}.{EnumType}[{Value}]
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.OpenAI) + "]", "OpenAI" },
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.DeepSeek) + "]", "DeepSeek" },
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.OpenRouter) + "]", "OpenRouter" },
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.Provider) + ".PROVIDERKIND[" + nameof(ProviderKind.Custom) + "]", "Custom" },
 
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AutoStart)), "Auto-start" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.AutoStart)), "Start a turn on city load." },
@@ -159,6 +136,13 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.AllowDemolition)), "Let the agent bulldoze buildings and road segments without a confirmation dialog." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EnableDevelopmentTools)), "Development / acceptance tools" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.EnableDevelopmentTools)), "Expose diagnostic, experimental, and manual-save tools to the in-game agent." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.VisionTools)), "Visual tools" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.VisionTools)), "Auto follows model-name capabilities; On and Off force the result." },
+
+                // Enum value locale keys: format is {SettingsLocaleID}.{PropertyName}.{EnumType}[{Value}]
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Auto) + "]", "Auto" },
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.On) + "]", "On" },
+                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Off) + "]", "Off" },
             };
         }
 

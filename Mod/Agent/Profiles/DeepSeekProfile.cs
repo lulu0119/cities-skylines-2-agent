@@ -1,14 +1,7 @@
 namespace CitiesSkylines2Agent.Agent
 {
-    internal sealed class DeepSeekProfile : IProviderProfile
+    internal sealed class DeepSeekProfile : IModelProfile
     {
-        public string Name => "DeepSeek";
-
-        public bool MatchesEndpoint(string normalizedEndpoint)
-        {
-            return normalizedEndpoint.Contains("deepseek");
-        }
-
         public ModelCapabilities Resolve(string modelName)
         {
             string model = (modelName ?? "").ToLowerInvariant();

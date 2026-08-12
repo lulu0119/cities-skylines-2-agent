@@ -283,7 +283,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                         ["estimatedTokens"] = m_EstimatedTokens,
                         ["compactAtTokens"] = profile.CompactAtTokens,
                         ["source"] = profile.Source,
-                        ["vision"] = profile.SupportsVision && Setting.StaticEnableVisionTools,
+                        ["vision"] = profile.VisionAvailable,
                     },
                     ["contextBlocks"] = JsonNode.Parse(ContextBlockStore.ToJsonString()),
                     ["messages"] = messages,
@@ -485,7 +485,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 ModelId = Setting.StaticModel,
                 Temperature = 0.3f,
                 MaxOutputTokens = (int)Math.Min(int.MaxValue, profile.OutputReserveTokens),
-                Tools = m_ToolSurface.Build(profile, Setting.StaticEnableVisionTools),
+                Tools = m_ToolSurface.Build(profile),
                 ToolMode = ChatToolMode.Auto,
             };
 

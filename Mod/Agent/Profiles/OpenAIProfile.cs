@@ -1,14 +1,7 @@
 namespace CitiesSkylines2Agent.Agent
 {
-    internal sealed class OpenAIProfile : IProviderProfile
+    internal sealed class OpenAIProfile : IModelProfile
     {
-        public string Name => "OpenAI";
-
-        public bool MatchesEndpoint(string normalizedEndpoint)
-        {
-            return normalizedEndpoint.Contains("api.openai.com");
-        }
-
         public ModelCapabilities Resolve(string modelName)
         {
             string model = (modelName ?? "").ToLowerInvariant();

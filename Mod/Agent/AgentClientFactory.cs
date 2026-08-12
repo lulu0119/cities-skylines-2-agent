@@ -82,7 +82,8 @@ namespace CitiesSkylines2Agent.Agent
         private void RefreshConfigurationLocked()
         {
             string signature = Setting.StaticEndpoint + "|" +
-                Setting.StaticApiKey + "|" + Setting.StaticModel;
+                Setting.StaticApiKey + "|" + Setting.StaticModel + "|" +
+                Setting.StaticWindowTokens + "|" + Setting.StaticVisionToolMode;
             if (string.Equals(m_ConfigSignature, signature, StringComparison.Ordinal))
             {
                 return;
@@ -92,9 +93,9 @@ namespace CitiesSkylines2Agent.Agent
             m_Client = null;
             m_ConfigSignature = signature;
             m_Profile = AgentModelProfile.Resolve(
-                Setting.StaticEndpoint,
                 Setting.StaticModel,
-                Setting.StaticWindowTokens);
+                Setting.StaticWindowTokens,
+                Setting.StaticVisionToolMode);
         }
 
         public void Dispose()

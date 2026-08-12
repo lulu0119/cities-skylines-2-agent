@@ -100,7 +100,7 @@ namespace CitiesSkylines2Agent.Agent
             try
             {
                 if (m_ToolSurface.IsMetaTool(name)) return await InvokeMetaToolAsync(name, argumentsJson, cancellationToken);
-                if (!m_ToolSurface.IsAvailable(name, m_ClientFactory.GetProfile(), Setting.StaticEnableVisionTools))
+                if (!m_ToolSurface.IsAvailable(name, m_ClientFactory.GetProfile()))
                 {
                     return Error("tool is not enabled; call agent_enable_tool_group for its domain first, or use a vision-capable model for visual tools");
                 }
@@ -150,7 +150,7 @@ namespace CitiesSkylines2Agent.Agent
             using (JsonDocument document = JsonDocument.Parse(argumentsJson))
             {
                 string group = GetString(document.RootElement, "group", "");
-                bool visionAvailable = m_ClientFactory.GetProfile().SupportsVision && Setting.StaticEnableVisionTools;
+                bool visionAvailable = m_ClientFactory.GetProfile().VisionAvailable;
                 if (!m_ToolSurface.EnableGroup(group, visionAvailable))
                 {
                     string message = string.Equals(group, "visual", StringComparison.OrdinalIgnoreCase) && !visionAvailable
@@ -195,8 +195,8 @@ namespace CitiesSkylines2Agent.Agent
 
         private void AppendToolImage(string imagePath)
         {
-            if (string.IsNullOrWhiteSpace(imagePath) || !m_ClientFactory.GetProfile().SupportsVision ||
-                !Setting.StaticEnableVisionTools || !File.Exists(imagePath)) return;
+            if (string.IsNullOrWhiteSpace(imagePath) || !m_ClientFactory.GetProfile().VisionAvailable ||
+                !File.Exists(imagePath)) return;
             try
             {
                 byte[] image = File.ReadAllBytes(imagePath);
