@@ -35,7 +35,8 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string ModDataDirectory => Path.Combine(UserDataRoot, "Mods", ModId);
 
-        public static string RuntimeDataDirectory => Path.Combine(UserDataRoot, ModId);
+        public static string RuntimeDataDirectory =>
+            Path.Combine(UserDataRoot, "ModsData", ModId);
 
         public static string LogsDirectory => Path.Combine(RuntimeDataDirectory, "logs");
 
