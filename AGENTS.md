@@ -16,13 +16,15 @@ Gameface UI (chat)  ↔  Cohtml bindings  ↔  C# agent loop + ToolQueueSystem (
 | `archive/` | Offline POCs + frozen M1 smoke — do not treat as the product root |
 | `docs/` | Dated notes under `guide/` / `research/` / `ops/`, plus accepted decisions under `adr/` — see `docs/README.md` |
 
-**Provisional agent loop:** C# `IChatClient` (MEAI) + hand-rolled function-calling / ReAct. **Not** Gameface apeira/xsai, Semantic Kernel, or Agent Framework first. Tools always enqueue to the simulation main thread; no forced pausing — the game validates construction while the simulation runs, and blocked calls retry via `find_placement`. Details: `docs/research/2026-08-06-csharp-agent-runtimes.md`.
+**Agent loop:** C# `IChatClient` (MEAI) + hand-rolled function-calling / ReAct. **Not** Gameface apeira/xsai, Semantic Kernel, or Agent Framework. Tools always enqueue to the simulation main thread; no forced pausing — the game validates construction while the simulation runs. Placement search and recovery belong inside the write tool rather than a separate model-facing preview call. Details: `docs/research/2026-08-06-csharp-agent-runtimes.md` and `docs/adr/2026-08-13-agent-tool-surface-and-permissions.md`.
 
 **Hard constraints**
 
 - API keys never enter the repo (settings / env only).
 - Do not append UI to bare `"Game"` (collides with `-developerMode` F/S/H/Q); use `GameBottomRight` + `Portal`.
 - Real Windows + in-game load is the authority; Mac/browser POCs in `archive/` are historical.
+- Use the game's normal placement validation. The product does not provide or depend on Anarchy / collision-bypass behavior.
+- Buildings use one-step `place_building(prefab, x, z, radius?, rotation?)`; roads use `build_road` because linear networks and placed objects have different native transactions.
 - Prefer smallest correct diff; no drive-by refactors or unsolicited docs.
 
 ## Design philosophy

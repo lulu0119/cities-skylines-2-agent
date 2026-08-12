@@ -1,6 +1,12 @@
 # Docs index
 
-Dated notes under `guide/` / `research/` / `ops/`. Frozen M1 smoke checklist lives in [`../archive/docs/`](../archive/docs/).
+Dated notes under `guide/` / `research/` / `ops/`; accepted product and architecture decisions under `adr/`. Frozen M1 smoke checklist lives in [`../archive/docs/`](../archive/docs/).
+
+## ADR
+
+| Doc | Decision |
+| --- | --- |
+| [2026-08-13-agent-tool-surface-and-permissions.md](./adr/2026-08-13-agent-tool-surface-and-permissions.md) | One-step prefab placement, normal native validation, player permissions, development tools, model capability resolution, and runtime data lifecycle |
 
 ## Guide
 
