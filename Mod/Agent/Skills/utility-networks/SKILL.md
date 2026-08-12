@@ -16,14 +16,14 @@ description: How electricity, water and sewage networks work in CS2.
 - Rule of thumb: wind turbines -> low voltage; every other power producer -> high voltage; buildings/consumers -> low voltage.
 
 ## When separate underground networks are needed
-- Off-road facilities need separate underground connections.
-- Connect water/sewage plant to road network with underground pipes at one end.
-- WaterPumpingStation01 draws SURFACE water: use terrain water samples to find a shoreline, keep the building on land, and put its intake side in water. Do not use groundWater data for this prefab.
+- Off-road utility facilities need separate underground connections when their prefab declares a water, sewage or low-voltage node.
+- Connect an off-road water/sewage facility to the road-carried network with the corresponding underground pipe.
+- WaterPumpingStation01 draws SURFACE water: search near a shoreline and let place_building/native validation resolve the exact wet/dry pose. Do not use groundWater data for this prefab.
 - A Groundwater Pumping Station is a different prefab: use gridmap (groundWater) only for that building. A Water Tower does not need a water source.
-- A utility building only functions when a ROAD reaches it: build a short road to the site FIRST, then place the pump/outlet/plant adjacent to that road (place_building auto-finds the road-facing spot). Do not place it in empty land.
+- Do not infer road access from a facility's name or category. find_infrastructure_candidate and place_building read BuildingFlags.RequireRoad: only those prefabs need road frontage. A shoreline requirement is independent and comes from PlacementFlags.Shoreline.
 
 ## Connecting new buildings precisely
-- place_building handles utility connections: a road-fronted water pump uses the pipes already carried by the road; wind turbines, sewage outlets, and power plants receive their required short cable/pipe. Normally you do NOT need to draw connectors by hand.
+- place_building handles utility connections from prefab node flags: road-fronted nodes use the utilities carried by the road, while off-road nodes receive the corresponding short pipe/cable. Normally you do NOT need to draw connectors by hand.
 - If you connect manually, network connections attach at NODES: every line/pipeline should start or end at a known node. list_roads returns each segment's start/end — those coordinates ARE the nodes.
 - Buildings placed via place_building report their exact x/z — reuse those coordinates as the network endpoint when connecting manually.
 
@@ -34,7 +34,7 @@ description: How electricity, water and sewage networks work in CS2.
 
 ## Sewage is critical
 - If problems[] shows sewage or notifications show "Sewage Notification": BUILD SewageOutlet01 near water immediately.
-- place_building SewageOutlet01 with x/z + radius: it finds a legal water-adjacent, road-facing spot and places it in ONE step (auto-connected to the road network).
+- place_building SewageOutlet01 with x/z + radius: it snaps to a legal shoreline pose and places it in ONE step. The outlet does not need road frontage; place_building connects its sewage node to the nearby road-carried network with an underground sewage pipe.
 - After building, use wait_simulation() once (advances 1 in-game hour) and re-check problems[].
 - Population cannot grow with sewage backing up.
 

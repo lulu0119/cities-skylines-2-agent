@@ -101,7 +101,6 @@ namespace CS2MCP
         private uint m_ProbeConstructionCost;
         private float m_ProbeDistanceFromCenter;
         private float m_ProbeRoadClearance;
-        private bool m_ProbeRequiresShoreline;
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
         private bool m_AutoConnectQueued;
@@ -232,7 +231,6 @@ namespace CS2MCP
             public uint ConstructionCost;
             public float DistanceFromCenter;
             public float RoadClearance;
-            public bool RequiresShoreline;
         }
 
         public bool TryQueueInfrastructureCandidate(
@@ -260,7 +258,6 @@ namespace CS2MCP
             m_ProbeConstructionCost = plan.ConstructionCost;
             m_ProbeDistanceFromCenter = plan.DistanceFromCenter;
             m_ProbeRoadClearance = plan.RoadClearance;
-            m_ProbeRequiresShoreline = plan.RequiresShoreline;
             return true;
         }
 
@@ -595,12 +592,12 @@ namespace CS2MCP
                                 m_PendingKind = OperationKind.Net;
                                 m_PendingPrefabEntity = m_AutoConnectPrefabEntity;
                                 m_PendingPrefab = m_AutoConnectPrefab;
-                                m_PendingPosition = m_PlacedBuildingPosition;
+                                m_PendingPosition = m_AutoConnectStart;
                                 m_PendingEnd = m_AutoConnectEnd;
                                 m_PendingMid = default;
                                 m_PendingHasMid = false;
-                                // Pipes and ground cables belong underground;
-                                // high-voltage lines run above ground.
+                                // Auto-connect currently owns only pipes and
+                                // low-voltage ground cables, all underground.
                                 string netName = m_AutoConnectPrefab != null
                                     ? m_AutoConnectPrefab.name
                                     : "";
@@ -637,7 +634,7 @@ namespace CS2MCP
                     case Stage.ProbeValidate:
                         m_ProbeTried++;
                         bool allowApply = GetAllowApply();
-                        string validationBlock = allowApply && RequiresRoadAccess(m_PendingPrefabEntity)
+                        string validationBlock = allowApply && PrefabRequiresRoad(m_PendingPrefabEntity)
                             ? DescribeValidationBlock()
                             : null;
                         bool roadBlocked = validationBlock != null &&
@@ -854,7 +851,7 @@ namespace CS2MCP
                 connection = new
                 {
                     prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
-                    start = new { x = m_PlacedBuildingPosition.x, z = m_PlacedBuildingPosition.z },
+                    start = new { x = m_AutoConnectStart.x, z = m_AutoConnectStart.z },
                     end = new { x = m_AutoConnectEnd.x, z = m_AutoConnectEnd.z },
                 },
                 note = "building placed; utility connector (pipe/cable) auto-built to the nearest road network",
@@ -997,7 +994,7 @@ namespace CS2MCP
 
         private BridgeResponse BuildProbeSuccess()
         {
-            bool isBuilding = RequiresRoadAccess(m_PendingPrefabEntity);
+            bool requiresRoad = PrefabRequiresRoad(m_PendingPrefabEntity);
             var payload = new Dictionary<string, object>
             {
                 ["found"] = true,
@@ -1010,40 +1007,50 @@ namespace CS2MCP
                 },
                 ["rotation"] = m_ProbeRotationDegrees,
                 ["attemptsTried"] = m_ProbeTried,
-                ["note"] = isBuilding
+                ["note"] = requiresRoad
                     ? "validated by the game's placement validation WITH road access; call place_building with these exact coordinates"
                     : "validated by the game's placement validation; call place_building with these exact coordinates",
             };
-            if (isBuilding)
+            if (requiresRoad)
             {
                 payload["roadAccess"] = true;
             }
             if (!string.IsNullOrEmpty(m_ProbeIntentRole))
             {
+                bool requiresShoreline = PrefabRequiresShoreline(m_PendingPrefabEntity);
                 payload["role"] = m_ProbeIntentRole;
                 payload["constructionCost"] = m_ProbeConstructionCost;
                 payload["generatedCandidates"] = m_ProbePreflightCandidates;
                 payload["preflightRejected"] = m_ProbePreflightRejected;
-                payload["evidence"] = new
+                var evidence = new Dictionary<string, object>
                 {
-                    typedUnlockedPrefab = true,
-                    ownedTile = true,
-                    footprintClear = true,
-                    roadFacing = true,
-                    shoreline = m_ProbeRequiresShoreline ? "required-and-present" : "not-required",
-                    distanceFromSearchCenterM = (float)Math.Round(m_ProbeDistanceFromCenter, 1),
-                    roadClearanceM = (float)Math.Round(m_ProbeRoadClearance, 1),
-                    nativeValidation = true,
+                    ["typedUnlockedPrefab"] = true,
+                    ["ownedTile"] = true,
+                    ["footprintClear"] = true,
+                    ["shoreline"] = requiresShoreline ? "required-and-present" : "not-required",
+                    ["distanceFromSearchCenterM"] = (float)Math.Round(m_ProbeDistanceFromCenter, 1),
+                    ["nativeValidation"] = true,
                 };
+                if (requiresRoad)
+                {
+                    evidence["roadFacing"] = true;
+                    evidence["roadClearanceM"] = (float)Math.Round(m_ProbeRoadClearance, 1);
+                }
+                payload["evidence"] = evidence;
                 payload["note"] = "one deterministic, native-validated candidate; call place_building with the returned prefab/position/rotation to commit";
             }
             return BridgeResponse.Json(payload);
         }
 
-        private bool RequiresRoadAccess(Entity prefabEntity)
+        private bool PrefabRequiresRoad(Entity prefabEntity)
         {
-            return prefabEntity != Entity.Null &&
-                EntityManager.HasComponent<BuildingData>(prefabEntity);
+            if (prefabEntity == Entity.Null
+                || !EntityManager.HasComponent<BuildingData>(prefabEntity))
+            {
+                return false;
+            }
+            BuildingData building = EntityManager.GetComponentData<BuildingData>(prefabEntity);
+            return (building.m_Flags & BuildingFlags.RequireRoad) != 0;
         }
 
         private string DescribeProbeFailure()
@@ -1051,9 +1058,35 @@ namespace CS2MCP
             string lastError = string.IsNullOrWhiteSpace(m_ProbeLastError)
                 ? "unknown"
                 : m_ProbeLastError;
+            string hint;
+            if (PrefabRequiresShoreline(m_PendingPrefabEntity))
+            {
+                hint = PrefabRequiresRoad(m_PendingPrefabEntity)
+                    ? "Try a center near a shoreline with road frontage."
+                    : "Try a center nearer a wet/dry shoreline transition.";
+            }
+            else if (PrefabRequiresRoad(m_PendingPrefabEntity))
+            {
+                hint = "Try a larger radius, a different rotation, or a center closer to a road.";
+            }
+            else
+            {
+                hint = "Try a larger radius or a different center.";
+            }
             return "no valid placement found near the requested position: tried " +
-                   m_ProbeTried + " candidate(s). Last reason: " + lastError +
-                   " Try a larger radius, a different rotation (90/180/270), or a center closer to a road.";
+                   m_ProbeTried + " candidate(s). Last reason: " + lastError + " " + hint;
+        }
+
+        private bool PrefabRequiresShoreline(Entity prefabEntity)
+        {
+            if (prefabEntity == Entity.Null
+                || !EntityManager.HasComponent<PlaceableObjectData>(prefabEntity))
+            {
+                return false;
+            }
+            PlaceableObjectData placeable =
+                EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity);
+            return (placeable.m_Flags & Game.Objects.PlacementFlags.Shoreline) != 0;
         }
 
         private void CompletePending(BridgeResponse response)
@@ -1157,7 +1190,7 @@ namespace CS2MCP
             reasons.Add(DescribeErrorType(error));
         }
 
-        private static string DescribeErrorType(ErrorType error)
+        private string DescribeErrorType(ErrorType error)
         {
             switch (error)
             {
@@ -1172,7 +1205,11 @@ namespace CS2MCP
                 case ErrorType.TightCurve:
                     return "TightCurve (curve too sharp)";
                 case ErrorType.InWater:
-                    return "InWater (cross water needs bridge elevation or another route)";
+                    return m_PendingKind == OperationKind.Net
+                        ? "InWater (network crossing needs bridge elevation or another route)"
+                        : "InWater (object placement is invalid at this water depth)";
+                case ErrorType.NotOnShoreline:
+                    return "NotOnShoreline (move the placement seed closer to a wet/dry shoreline transition)";
                 case ErrorType.ExceedsCityLimits:
                     return "ExceedsCityLimits (outside owned map tiles)";
                 case ErrorType.AlreadyExists:
@@ -1216,7 +1253,6 @@ namespace CS2MCP
             m_ProbeConstructionCost = 0;
             m_ProbeDistanceFromCenter = 0f;
             m_ProbeRoadClearance = 0f;
-            m_ProbeRequiresShoreline = false;
             m_AutoConnectQueued = false;
             m_AutoConnectPrefabEntity = Entity.Null;
             m_AutoConnectPrefab = null;

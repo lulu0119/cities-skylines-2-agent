@@ -487,7 +487,7 @@
     },
     {
       "name": "find_infrastructure_candidate",
-      "description": "Find one deterministic, native-validated site for an unlocked infrastructure/service role without committing construction. The tool chooses a typed prefab, samples both sides of existing roads, auto-orients frontage, and hides owned-tile, footprint, collision and shoreline checks. Omit x/z to search around owned tiles. Use the returned prefab/position/rotation with place_building to commit.",
+      "description": "Find one deterministic, native-validated site for an unlocked infrastructure/service role without committing construction. The tool chooses a typed standalone prefab and derives its search from prefab data: shoreline snapping when required, road frontage only when RequireRoad is set, and free placement otherwise. It also checks owned tiles, footprint collisions and required off-road utility connections. Omit x/z to search around owned tiles. Use the returned prefab/position/rotation with place_building to commit.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -627,7 +627,7 @@
     },
     {
       "name": "place_building",
-      "description": "ONE-STEP placement: give prefab + x/z (and optional radius). With radius>0 the tool searches owned land for one non-overlapping, road-facing candidate, then asks the game's real tool pipeline to validate and place it; if the game rejects that candidate, move/build the road or retry with a nearby center/rotation. It intentionally does not multi-probe because rejected previews can wedge the game tool. With radius omitted it preflights and places exactly at x/z. Utility buildings are connected to the nearby road network with the appropriate pipe/cable. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
+      "description": "ONE-STEP placement: give prefab + x/z (and optional radius). With radius>0 the tool searches for one non-overlapping candidate, deriving shoreline snapping and road frontage from the prefab's PlacementFlags.Shoreline and BuildingFlags.RequireRoad values, then asks the game's real tool pipeline to validate and place it. With radius omitted it resolves and preflights the exact seed. Off-road utility nodes receive the required pipe/cable connection; road-fronted nodes use the networks carried by the road. It intentionally sends only one selected candidate to native preview because rejected previews can wedge the game tool. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -647,11 +647,11 @@
             "type": "number",
             "minimum": 8,
             "maximum": 300,
-            "description": "Heuristic search radius in meters (omit for exact placement). Only one selected candidate enters the game tool; a rejection requires another center/rotation or a road/layout fix."
+            "description": "Search radius in meters (omit to resolve the exact seed). Only one selected candidate enters the game tool; a rejection requires another center or a layout/network fix."
           },
           "rotation": {
             "type": "number",
-            "description": "Rotation around Y axis in degrees. Omit to auto-align toward the nearest road; an explicit value is preserved during radius search."
+            "description": "Rotation around Y axis in degrees. For RequireRoad prefabs, omit to face the nearest road. Shoreline snapping derives its orientation from the wet/dry boundary."
           },
           "force": {
             "type": "boolean",
@@ -801,7 +801,7 @@
     },
     {
       "name": "find_placement",
-      "description": "Preview ONE exact placement without committing. This tool deliberately probes only x/z once; radius and attempts do not create a multi-candidate search because rejected previews can wedge the game tool. Prefer place_building with radius for one-step placement. A preview's roadAccess field is advisory; exact place_building performs the final frontage preflight. Failures report game reasons such as NoRoadAccess, OverlapExisting, NoWater, InWater or ExceedsCityLimits.",
+      "description": "Preview ONE resolved placement without committing. The tool derives shoreline snapping and road frontage from prefab flags before sending one candidate to native validation; radius and attempts do not create a multi-candidate native probe because rejected previews can wedge the game tool. Prefer place_building with radius for one-step placement. roadAccess is returned only for a prefab that declares RequireRoad. Failures report game reasons such as NoRoadAccess, NotOnShoreline, OverlapExisting, InWater or ExceedsCityLimits.",
       "parameters": {
         "type": "object",
         "properties": {
