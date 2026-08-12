@@ -34,3 +34,4 @@ Dated notes under `guide/` / `research/` / `ops/`. Frozen M1 smoke checklist liv
 | [2026-08-09-10k-loop-task.md](./ops/2026-08-09-10k-loop-task.md) | Codex task brief: iterate launch/observe/diagnose/build until the in-game agent reaches 10k population |
 | [2026-08-10-placement-utilities-handoff.md](./ops/2026-08-10-placement-utilities-handoff.md) | Completed 10k handoff: one-step place, auto-connect, zoning pipeline, list/buy tiles and cold acceptance evidence |
 | [2026-08-10-gameplay-capability-backlog.md](./ops/2026-08-10-gameplay-capability-backlog.md) | Post-10k backlog: rectangle zoning, progression/dev tree, road hierarchy, specialized industry and editable landfill areas |
+| [2026-08-12-tool-surface-audit-and-open-work.md](./ops/2026-08-12-tool-surface-audit-and-open-work.md) | Read-only audit: place/find tool surface, "candidate returns one site" design issue, and the authoritative open-work inventory |
