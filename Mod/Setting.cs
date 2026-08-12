@@ -53,6 +53,15 @@ namespace CitiesSkylines2Agent
         [SettingsUISection(kSection, kAgentGroup)]
         public bool Continuous { get; set; } = true;
 
+        [SettingsUISection(kSection, kAgentGroup)]
+        public bool AllowProgressionPurchases { get; set; } = true;
+
+        [SettingsUISection(kSection, kAgentGroup)]
+        public bool AllowDemolition { get; set; } = true;
+
+        [SettingsUISection(kSection, kAgentGroup)]
+        public bool EnableDevelopmentTools { get; set; } = false;
+
         // ---- Hidden --------------------------------------
 
         public string StartupPrompt { get; set; } = "";
@@ -72,6 +81,11 @@ namespace CitiesSkylines2Agent
 
         public static bool StaticAutoStart => Instance?.AutoStart ?? true;
         public static bool StaticContinuous => Instance?.Continuous ?? true;
+        public static bool StaticAllowProgressionPurchases =>
+            Instance?.AllowProgressionPurchases ?? true;
+        public static bool StaticAllowDemolition => Instance?.AllowDemolition ?? true;
+        public static bool StaticEnableDevelopmentTools =>
+            Instance?.EnableDevelopmentTools ?? false;
         public static string StaticApiKey => Instance?.ApiKey ?? "";
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
         public static bool StaticEnableVisionTools => Instance?.EnableVisionTools ?? true;
@@ -84,6 +98,9 @@ namespace CitiesSkylines2Agent
             Model = "";
             AutoStart = true;
             Continuous = true;
+            AllowProgressionPurchases = true;
+            AllowDemolition = true;
+            EnableDevelopmentTools = false;
             StartupPrompt = "";
             WindowTokens = 200_000;
             EnableVisionTools = true;
@@ -136,6 +153,12 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.AutoStart)), "Start a turn on city load." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.Continuous)), "Continue" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.Continuous)), "Keep the agent running without stopping." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AllowProgressionPurchases)), "Allow development purchases" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.AllowProgressionPurchases)), "Let the agent spend earned Development Points on the Development Tree." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.AllowDemolition)), "Allow demolition" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.AllowDemolition)), "Let the agent bulldoze buildings and road segments without a confirmation dialog." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.EnableDevelopmentTools)), "Development / acceptance tools" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.EnableDevelopmentTools)), "Expose diagnostic, experimental, and manual-save tools to the in-game agent." },
             };
         }
 

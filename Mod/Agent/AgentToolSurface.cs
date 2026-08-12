@@ -16,10 +16,10 @@ namespace CitiesSkylines2Agent.Agent
             {
                 ["construction"] = new[]
                 {
-                    "find_prefabs", "find_infrastructure_candidate", "place_building", "build_road", "find_placement",
-                    "list_buildings", "get_operational_area", "expand_operational_area", "list_zones", "zone_area", "zone_rectangle", "set_road_features", "replace_road_type",
+                    "find_prefabs", "place_building", "build_road",
+                    "list_buildings", "get_operational_area", "expand_operational_area", "list_zones", "zone_area", "zone_rectangle", "set_road_features",
                     "list_roads", "demolish", "terrain", "gridmap", "zoning",
-                    "list_tiles", "buy_tiles", "debug_zone_blocks", "list_objects",
+                    "list_tiles", "buy_tiles", "list_objects",
                 },
                 ["finance"] = new[]
                 {
@@ -29,11 +29,6 @@ namespace CitiesSkylines2Agent.Agent
                 ["progression"] = new[]
                 {
                     "get_progression", "purchase_development_node",
-                },
-                ["districts"] = new[]
-                {
-                    "list_districts", "create_district", "district_policies",
-                    "set_district_policy",
                 },
                 ["visual"] = new[]
                 {
@@ -46,7 +41,13 @@ namespace CitiesSkylines2Agent.Agent
             {
                 "ping", "game_state", "city_overview", "demand",
                 "budget", "city_services", "labor", "statistics", "notifications",
-                "inspect", "save_game", "wait_simulation",
+                "inspect", "wait_simulation",
+            };
+
+        private static readonly HashSet<string> s_DevelopmentTools =
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "replace_road_type", "debug_zone_blocks", "save_game",
             };
 
         private static readonly HashSet<string> s_MetaTools =
@@ -121,6 +122,19 @@ namespace CitiesSkylines2Agent.Agent
             {
                 return false;
             }
+            if (s_DevelopmentTools.Contains(name))
+            {
+                return Setting.StaticEnableDevelopmentTools;
+            }
+            if (name == "purchase_development_node" &&
+                !Setting.StaticAllowProgressionPurchases)
+            {
+                return false;
+            }
+            if (name == "demolish" && !Setting.StaticAllowDemolition)
+            {
+                return false;
+            }
             if (s_CoreTools.Contains(name))
             {
                 return true;
@@ -139,13 +153,13 @@ namespace CitiesSkylines2Agent.Agent
         private static void AddMetaTools(List<AITool> tools, bool visionAvailable)
         {
             string groupEnum = visionAvailable
-                ? "[\"construction\",\"finance\",\"progression\",\"districts\",\"visual\"]"
-                : "[\"construction\",\"finance\",\"progression\",\"districts\"]";
+                ? "[\"construction\",\"finance\",\"progression\",\"visual\"]"
+                : "[\"construction\",\"finance\",\"progression\"]";
             tools.Add(AIFunctionFactory.CreateDeclaration(
                 "agent_enable_tool_group",
                 visionAvailable
-                    ? "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, districts, visual."
-                    : "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, districts. Visual tools are unavailable for this model.",
+                    ? "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression, visual."
+                    : "Enable a specialized tool group for the current turn. Available groups: construction, finance, progression. Visual tools are unavailable for this model.",
                 ParseSchema("{\"type\":\"object\",\"properties\":{\"group\":{\"type\":\"string\",\"enum\":" +
                     groupEnum + "}},\"required\":[\"group\"]}"),
                 null));
