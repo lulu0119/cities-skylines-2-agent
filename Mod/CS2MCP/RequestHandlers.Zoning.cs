@@ -195,9 +195,9 @@ namespace CS2MCP
                 error = BridgeResponse.Error(404, $"unknown zone '{zoneName}'; list via /zones");
                 return false;
             }
-            if (IsLocked(zonePrefabEntity) && !IsForced(request))
+            if (IsLocked(zonePrefabEntity))
             {
-                error = BridgeResponse.Error(409, $"zone '{zonePrefab.name}' is locked (milestone not reached); pass force=true to zone anyway");
+                error = BridgeResponse.Error(409, $"zone '{zonePrefab.name}' is locked (milestone not reached)");
                 return false;
             }
             targetZone = EntityManager.GetComponentData<ZoneData>(zonePrefabEntity).m_ZoneType;

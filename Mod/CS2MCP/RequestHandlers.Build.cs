@@ -547,9 +547,9 @@ namespace CS2MCP
             {
                 return prefabError;
             }
-            if (IsLocked(prefabEntity) && !IsForced(request))
+            if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to place anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
@@ -635,7 +635,6 @@ namespace CS2MCP
                     PlacementSearchHint(capabilities));
             }
             if (searchRadius <= 0f
-                && !IsForced(request)
                 && !IsCandidateBuildable(
                     capabilities,
                     pose,
@@ -712,9 +711,9 @@ namespace CS2MCP
             {
                 return prefabError;
             }
-            if (IsLocked(prefabEntity) && !IsForced(request))
+            if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to search anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
@@ -1242,9 +1241,9 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(404, $"unknown network prefab '{prefabName}'; search via /prefabs?category=road|net&query=...");
             }
-            if (IsLocked(prefabEntity) && !IsForced(request))
+            if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached); pass force=true to build anyway");
+                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
@@ -1434,10 +1433,10 @@ namespace CS2MCP
                 return BridgeResponse.Error(409,
                     $"road already uses prefab '{newPrefab.name}'");
             }
-            if (IsLocked(newPrefabEntity) && !IsForced(request))
+            if (IsLocked(newPrefabEntity))
             {
                 return BridgeResponse.Error(409,
-                    $"road prefab '{newPrefab.name}' is locked; pass force=true only for disposable-map testing");
+                    $"road prefab '{newPrefab.name}' is locked (milestone not reached)");
             }
             NetInitializeSystem netInitialize = World.GetOrCreateSystemManaged<NetInitializeSystem>();
             NetData newNetData = EntityManager.GetComponentData<NetData>(newPrefabEntity);
@@ -1710,11 +1709,6 @@ namespace CS2MCP
                 return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
             }
             return null;
-        }
-
-        private static bool IsForced(BridgeRequest request)
-        {
-            return request.TryGetBool("force", out bool force) && force;
         }
 
         private enum UtilityConnectionKind

@@ -652,10 +652,6 @@
           "rotation": {
             "type": "number",
             "description": "Rotation around Y axis in degrees. For RequireRoad prefabs, omit to face the nearest road. Shoreline snapping derives its orientation from the wet/dry boundary."
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Place even if the prefab is milestone-locked"
           }
         },
         "required": [
@@ -681,11 +677,6 @@
         {
           "key": "radius",
           "arg": "radius"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         },
         {
           "key": "rotation",
@@ -739,10 +730,6 @@
             "minimum": -30,
             "maximum": 60,
             "description": "Elevation at end in meters relative to terrain (-30..60). Not an entity id. Omit for ground level."
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Build even if the prefab is milestone-locked"
           }
         },
         "required": [
@@ -774,11 +761,6 @@
         {
           "key": "z2",
           "arg": "z2"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         },
         {
           "key": "cx",
@@ -832,10 +814,6 @@
           "rotation": {
             "type": "number",
             "description": "Rotation in degrees to require (default 0); retry with 90/180/270 if not found"
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Search even if the prefab is milestone-locked"
           }
         },
         "required": [
@@ -869,11 +847,6 @@
         {
           "key": "rotation",
           "arg": "rotation"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         }
       ],
       "response": "json"
@@ -1005,10 +978,6 @@
             "minimum": 8,
             "maximum": 200,
             "description": "Radius in meters (default 32)"
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Zone even if the zone type is milestone-locked"
           }
         },
         "required": [
@@ -1030,11 +999,6 @@
         {
           "key": "z",
           "arg": "z"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         },
         {
           "key": "radius",
@@ -1076,10 +1040,6 @@
           "rotation": {
             "type": "number",
             "description": "Rectangle rotation in degrees (default 0)"
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Zone even if the zone type is milestone-locked"
           }
         },
         "required": [
@@ -1115,11 +1075,6 @@
         {
           "key": "rotation",
           "arg": "rotation"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         }
       ],
       "response": "json"
@@ -1251,10 +1206,6 @@
           "prefab": {
             "type": "string",
             "description": "Exact replacement road prefab from find_prefabs(category=road)"
-          },
-          "force": {
-            "type": "boolean",
-            "description": "Allow a milestone-locked road only for disposable-map testing"
           }
         },
         "required": [
@@ -1276,11 +1227,6 @@
         {
           "key": "prefab",
           "arg": "prefab"
-        },
-        {
-          "key": "force",
-          "arg": "force",
-          "boolMode": "trueOnly"
         }
       ],
       "response": "json"
