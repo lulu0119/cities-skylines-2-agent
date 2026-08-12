@@ -16,7 +16,7 @@ namespace CitiesSkylines2Agent.Agent
         public string BoolMode; // "trueOnly" | null
     }
 
-    /// <summary>One tool definition from the 45-tool catalog.</summary>
+    /// <summary>One tool definition from the embedded catalog.</summary>
     public sealed class ToolDefinition
     {
         public string Name;
@@ -30,7 +30,7 @@ namespace CitiesSkylines2Agent.Agent
     /// <summary>
     /// Loads Mod/Agent/ToolCatalog.json (owned by this mod; originally derived
     /// from the CS2MCP upstream catalog, see Mod/CS2MCP/NOTICE.txt) and exposes
-    /// the 45 tools.
+    /// its tool definitions.
     /// </summary>
     public static class ToolCatalog
     {
