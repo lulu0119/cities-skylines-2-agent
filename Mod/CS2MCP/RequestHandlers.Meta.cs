@@ -569,8 +569,8 @@ namespace CS2MCP
                 error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=&version= of a district from /districts");
                 return false;
             }
-            var entity = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(entity) || !EntityManager.HasComponent<District>(entity))
+            if (!TryResolveExistingEntity(index, version, out Entity entity)
+                || !EntityManager.HasComponent<District>(entity))
             {
                 error = BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} is not an existing district");
                 return false;

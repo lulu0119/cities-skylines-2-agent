@@ -187,6 +187,16 @@ CDP 脚本现共用一个连接 lifecycle module：不启用完整 Runtime 事�
 `CDP_EXPRESSIONS` / `CDP_REPEAT` 在一个连接内完成多步操作，并禁止返回整棵 DOM 的
 重复文本。
 
+同一轮受控权限验收随后发现所有接收外部 `index/version` 的实体工具存在共同输入边界
+缺口：`demolish(2147483647, 2147483647)` 和只读 `inspect` 都把不存在目标返回成
+`NullReferenceException` / `kind=internal`，而不是稳定的 `not_found`。根因是 Unity
+Entities 1.3 的 `EntityManager.Exists` 只接受已处于实体存储理论索引范围内的
+`Entity.Index`；它不是面向不可信请求整数的安全解析接口。修复集中新增一个私有实体
+resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引，并由 `inspect`、`demolish`、
+道路特征/替换、行政区解析和 operational-area 读写共 7 个入口复用。`dotnet build`
+通过（0 error，15 条既有 ILRepack warning）；真机绿灯复验必须在下一张全新受控存档中
+确认同一极端 ID 返回 `kind=not_found`。
+
 #### 本轮排水口排查新增的代码问题
 
 截至 2026-08-12，这些问题的修复已由 `2bc07d7` 提交并推送；`Mod` 构建通过。

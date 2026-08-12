@@ -30,8 +30,7 @@ namespace CS2MCP
                     "provide ?index=&version= of a building from /city/buildings");
             }
 
-            var building = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(building)
+            if (!TryResolveExistingEntity(index, version, out Entity building)
                 || !EntityManager.HasComponent<Game.Buildings.Building>(building))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound,
@@ -98,8 +97,7 @@ namespace CS2MCP
                     "target_area_m2 must be between 64 and 250000 square metres");
             }
 
-            var building = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(building)
+            if (!TryResolveExistingEntity(index, version, out Entity building)
                 || !EntityManager.HasComponent<Game.Buildings.Building>(building))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound,

@@ -621,8 +621,7 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=<int>&version=<int>");
             }
-            var entity = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(entity))
+            if (!TryResolveExistingEntity(index, version, out Entity entity))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} does not exist");
             }

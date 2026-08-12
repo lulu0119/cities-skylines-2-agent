@@ -47,6 +47,30 @@ namespace CS2MCP
                 && EntityManager.IsComponentEnabled<Game.Prefabs.Locked>(prefabEntity);
         }
 
+        // Unity Entities 1.3 stores entity indices in 16,384 blocks of 8,192.
+        // EntityManager.Exists assumes its caller already supplied an index in
+        // that range; unchecked external integers can otherwise escape as an
+        // internal NullReferenceException instead of a normal not-found result.
+        private const uint kMaximumEntityIndexExclusive = 134_217_728u;
+
+        private bool TryResolveExistingEntity(int index, int version, out Entity entity)
+        {
+            entity = Entity.Null;
+            if ((uint)index >= kMaximumEntityIndexExclusive)
+            {
+                return false;
+            }
+
+            var candidate = new Entity { Index = index, Version = version };
+            if (!EntityManager.Exists(candidate))
+            {
+                return false;
+            }
+
+            entity = candidate;
+            return true;
+        }
+
         public BridgeResponse Handle(BridgeRequest request)
         {
             switch (request.Path)

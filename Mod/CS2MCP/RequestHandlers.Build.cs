@@ -1329,8 +1329,8 @@ namespace CS2MCP
                     $"provide ?upgrades=<comma list>: {string.Join(", ", kUpgradeNames.Keys)}");
             }
 
-            var entity = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(entity) || !EntityManager.HasComponent<Game.Net.Edge>(entity))
+            if (!TryResolveExistingEntity(index, version, out Entity entity)
+                || !EntityManager.HasComponent<Game.Net.Edge>(entity))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} is not an existing road segment");
             }
@@ -1394,8 +1394,7 @@ namespace CS2MCP
                     "provide ?prefab=<exact road prefab name from find_prefabs(category=road)>");
             }
 
-            var target = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(target)
+            if (!TryResolveExistingEntity(index, version, out Entity target)
                 || !EntityManager.HasComponent<Game.Net.Edge>(target)
                 || !EntityManager.HasComponent<Game.Net.Curve>(target)
                 || !EntityManager.HasComponent<PrefabRef>(target))
@@ -1677,8 +1676,7 @@ namespace CS2MCP
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=<int>&version=<int> from /city/buildings");
             }
 
-            var entity = new Entity { Index = index, Version = version };
-            if (!EntityManager.Exists(entity))
+            if (!TryResolveExistingEntity(index, version, out Entity entity))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} does not exist (stale id?)");
             }
