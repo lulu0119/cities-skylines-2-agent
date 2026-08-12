@@ -82,7 +82,7 @@ namespace CS2MCP
             }
             if (!request.TryGetInt("amount", out int amount))
             {
-                return BridgeResponse.Error(400, "provide ?amount=<int> (new loan principal; 0 repays fully)");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?amount=<int> (new loan principal; 0 repays fully)");
             }
             LoanSystem loans = World.GetOrCreateSystemManaged<LoanSystem>();
             int applied = math.clamp(amount, 0, loans.Creditworthiness);
@@ -140,17 +140,17 @@ namespace CS2MCP
             if (!request.Query.TryGetValue("resource", out string resourceName)
                 || !Enum.TryParse(resourceName, ignoreCase: true, out PlayerResource resource))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"provide ?resource=<{string.Join("|", Enum.GetNames(typeof(PlayerResource)))}>");
             }
             if (!request.TryGetFloat("fee", out float fee))
             {
-                return BridgeResponse.Error(400, "provide ?fee=<float>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?fee=<float>");
             }
             DynamicBuffer<ServiceFee> fees = EntityManager.GetBuffer<ServiceFee>(city);
             if (!ServiceFeeSystem.TryGetFee(resource, fees, out float previous))
             {
-                return BridgeResponse.Error(400, $"resource '{resource}' has no adjustable fee in this city");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"resource '{resource}' has no adjustable fee in this city");
             }
             ServiceFeeSystem.SetFee(resource, fees, fee);
             return BridgeResponse.Json(new

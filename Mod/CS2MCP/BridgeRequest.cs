@@ -8,13 +8,10 @@ using Newtonsoft.Json;
 namespace CS2MCP
 {
     /// <summary>
-    /// A parsed HTTP request handed from a listener thread to the simulation
-    /// thread. The listener thread blocks on WaitForResponse until the
-    /// simulation thread calls Complete.
+    /// One in-process tool command handed to the simulation thread.
     /// </summary>
     public sealed class BridgeRequest
     {
-        public string Method;
         public string Path;
         public Dictionary<string, string> Query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public string Body;
@@ -49,37 +46,60 @@ namespace CS2MCP
         {
             m_Completion.TrySetResult(response);
         }
+    }
 
-        /// <summary>Returns null on timeout.</summary>
-        public BridgeResponse WaitForResponse(int timeoutMs)
-        {
-            return m_Completion.Task.Wait(timeoutMs) ? m_Completion.Task.Result : null;
-        }
+    public enum BridgeErrorKind
+    {
+        InvalidArguments,
+        NotFound,
+        Conflict,
+        Unavailable,
+        Timeout,
+        Internal,
     }
 
     public sealed class BridgeResponse
     {
-        public int Status = 200;
-        public string ContentType = "application/json; charset=utf-8";
+        public bool Success = true;
+        public BridgeErrorKind? ErrorKind;
         public byte[] Body = Array.Empty<byte>();
 
-        public static BridgeResponse Json(object payload, int status = 200)
+        public static BridgeResponse Json(object payload)
         {
             return new BridgeResponse
             {
-                Status = status,
                 Body = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload, Formatting.None)),
             };
         }
 
-        public static BridgeResponse Error(int status, string message)
+        public static BridgeResponse Error(BridgeErrorKind kind, string message)
         {
-            return Json(new { error = message }, status);
+            return new BridgeResponse
+            {
+                Success = false,
+                ErrorKind = kind,
+                Body = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(
+                    new { error = message, kind = ErrorKindName(kind) },
+                    Formatting.None)),
+            };
         }
 
         public static BridgeResponse Png(byte[] png)
         {
-            return new BridgeResponse { ContentType = "image/png", Body = png };
+            return new BridgeResponse { Body = png };
+        }
+
+        private static string ErrorKindName(BridgeErrorKind kind)
+        {
+            switch (kind)
+            {
+                case BridgeErrorKind.InvalidArguments: return "invalid_arguments";
+                case BridgeErrorKind.NotFound: return "not_found";
+                case BridgeErrorKind.Conflict: return "conflict";
+                case BridgeErrorKind.Unavailable: return "unavailable";
+                case BridgeErrorKind.Timeout: return "timeout";
+                default: return "internal";
+            }
         }
     }
 }

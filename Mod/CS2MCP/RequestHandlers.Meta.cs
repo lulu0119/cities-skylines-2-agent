@@ -115,7 +115,7 @@ namespace CS2MCP
             }
             if (m_System.AutoPauseTargetFrame != 0)
             {
-                return BridgeResponse.Error(409, "a timed simulation wait is already active; wait for it to finish first");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "a timed simulation wait is already active; wait for it to finish first");
             }
             if (!request.TryGetFloat("hours", out float hours))
             {
@@ -159,7 +159,7 @@ namespace CS2MCP
             MenuUISystem menu = World.GetExistingSystemManaged<MenuUISystem>();
             if (menu == null)
             {
-                return BridgeResponse.Error(503, "menu system unavailable");
+                return BridgeResponse.Error(BridgeErrorKind.Unavailable, "menu system unavailable");
             }
             var saveInfo = menu.GetSaveInfo(autoSave: false);
             // The save pipeline requires a preview texture (null crashes it) —
@@ -188,7 +188,7 @@ namespace CS2MCP
                 : filterRaw.Trim().ToLowerInvariant();
             if (filter != "all" && filter != "owned" && filter != "unowned" && filter != "available")
             {
-                return BridgeResponse.Error(400, "filter must be 'all', 'owned', 'unowned' or 'available'");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "filter must be 'all', 'owned', 'unowned' or 'available'");
             }
             MapTilePurchaseSystem tiles = World.GetOrCreateSystemManaged<MapTilePurchaseSystem>();
             int availableTileSlots = tiles.GetAvailableTiles();
@@ -264,7 +264,7 @@ namespace CS2MCP
                 }
                 if (tile == Entity.Null)
                 {
-                    return BridgeResponse.Error(404, $"map tile entity {index} not found; list via /city/tiles");
+                    return BridgeResponse.Error(BridgeErrorKind.NotFound, $"map tile entity {index} not found; list via /city/tiles");
                 }
             }
             else if (request.TryGetInt("gridX", out int gridX) && request.TryGetInt("gridZ", out int gridZ))
@@ -287,17 +287,17 @@ namespace CS2MCP
                 }
                 if (tile == Entity.Null)
                 {
-                    return BridgeResponse.Error(404, $"map tile at grid ({gridX},{gridZ}) not found");
+                    return BridgeResponse.Error(BridgeErrorKind.NotFound, $"map tile at grid ({gridX},{gridZ}) not found");
                 }
             }
             else
             {
-                return BridgeResponse.Error(400, "provide ?index=<tile entity index> (from /city/tiles) or ?gridX=&gridZ=");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=<tile entity index> (from /city/tiles) or ?gridX=&gridZ=");
             }
 
             if (!EntityManager.HasComponent<Game.Common.Native>(tile))
             {
-                return BridgeResponse.Error(409, "this map tile is already owned");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "this map tile is already owned");
             }
 
             MapTilePurchaseSystem purchase = World.GetOrCreateSystemManaged<MapTilePurchaseSystem>();
@@ -334,7 +334,7 @@ namespace CS2MCP
 
             if (status != TilePurchaseErrorFlags.None)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"purchase blocked by the game: {status}; estimated cost {cost} (check money/permits)");
             }
 
@@ -400,18 +400,18 @@ namespace CS2MCP
             }
             if (!request.Query.TryGetValue("nodes", out string nodesRaw) || string.IsNullOrEmpty(nodesRaw))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?nodes=x1,z1;x2,z2;x3,z3;... (3+ polygon corners, counter-clockwise, in world meters)");
             }
 
             string[] pairs = nodesRaw.Split(';');
             if (pairs.Length < 3)
             {
-                return BridgeResponse.Error(400, "polygon needs at least 3 corners");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "polygon needs at least 3 corners");
             }
             if (pairs.Length > 32)
             {
-                return BridgeResponse.Error(400, "polygon too complex (max 32 corners)");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "polygon too complex (max 32 corners)");
             }
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
@@ -424,7 +424,7 @@ namespace CS2MCP
                     || !float.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x)
                     || !float.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
                 {
-                    return BridgeResponse.Error(400, $"cannot parse corner '{pairs[i]}'; expected x,z");
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"cannot parse corner '{pairs[i]}'; expected x,z");
                 }
                 var position = new float3(x, 0f, z);
                 position.y = TerrainUtils.SampleHeight(ref heightData, position);
@@ -437,7 +437,7 @@ namespace CS2MCP
             {
                 if (!TryFindPrefabByName(DistrictPrefabQuery, prefabName, out prefabEntity, out prefab))
                 {
-                    return BridgeResponse.Error(404, $"unknown district prefab '{prefabName}'");
+                    return BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown district prefab '{prefabName}'");
                 }
             }
             else
@@ -445,7 +445,7 @@ namespace CS2MCP
                 using NativeArray<Entity> prefabs = DistrictPrefabQuery.ToEntityArray(Allocator.Temp);
                 if (prefabs.Length == 0)
                 {
-                    return BridgeResponse.Error(500, "no district prefab found");
+                    return BridgeResponse.Error(BridgeErrorKind.Internal, "no district prefab found");
                 }
                 prefabEntity = prefabs[0];
                 prefab = World.GetOrCreateSystemManaged<PrefabSystem>().GetPrefab<PrefabBase>(prefabEntity);
@@ -454,7 +454,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueArea(prefabEntity, prefab, nodes, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -525,11 +525,11 @@ namespace CS2MCP
             }
             if (!request.Query.TryGetValue("name", out string policyName) || string.IsNullOrEmpty(policyName))
             {
-                return BridgeResponse.Error(400, "provide ?name=<policy name from /district/policies>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?name=<policy name from /district/policies>");
             }
             if (!request.TryGetBool("active", out bool active))
             {
-                return BridgeResponse.Error(400, "provide ?active=true|false");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?active=true|false");
             }
             request.TryGetFloat("adjustment", out float adjustment);
 
@@ -545,7 +545,7 @@ namespace CS2MCP
                     }
                     if (IsLocked(entity))
                     {
-                        return BridgeResponse.Error(409, $"policy '{prefab.name}' is locked (milestone not reached)");
+                        return BridgeResponse.Error(BridgeErrorKind.Conflict, $"policy '{prefab.name}' is locked (milestone not reached)");
                     }
                     World.GetOrCreateSystemManaged<PoliciesUISystem>().SetPolicy(district, entity, active, adjustment);
                     return BridgeResponse.Json(new
@@ -557,7 +557,7 @@ namespace CS2MCP
                     });
                 }
             }
-            return BridgeResponse.Error(404, $"unknown district policy '{policyName}'");
+            return BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown district policy '{policyName}'");
         }
 
         private bool TryResolveDistrict(BridgeRequest request, out Entity district, out BridgeResponse error)
@@ -566,13 +566,13 @@ namespace CS2MCP
             error = null;
             if (!request.TryGetInt("index", out int index) || !request.TryGetInt("version", out int version))
             {
-                error = BridgeResponse.Error(400, "provide ?index=&version= of a district from /districts");
+                error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=&version= of a district from /districts");
                 return false;
             }
             var entity = new Entity { Index = index, Version = version };
             if (!EntityManager.Exists(entity) || !EntityManager.HasComponent<District>(entity))
             {
-                error = BridgeResponse.Error(404, $"entity {index}:{version} is not an existing district");
+                error = BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} is not an existing district");
                 return false;
             }
             district = entity;

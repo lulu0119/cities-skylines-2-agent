@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Colossal.Mathematics;
 using Game.Prefabs;
@@ -159,7 +159,7 @@ namespace CS2MCP
                 requestedRole = requestedRole.Trim().ToLowerInvariant();
                 if (!kPrefabRoles.Contains(requestedRole))
                 {
-                    return BridgeResponse.Error(400,
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                         $"unknown role '{requestedRole}'; use {string.Join(", ", kPrefabRoles)}");
                 }
             }
@@ -171,7 +171,7 @@ namespace CS2MCP
                     && operationalAreaFilter != "storage"
                     && operationalAreaFilter != "extractor")
                 {
-                    return BridgeResponse.Error(400,
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                         "operational_area must be any, storage or extractor");
                 }
             }
@@ -187,12 +187,12 @@ namespace CS2MCP
                 && sort != "traffic_volume"
                 && sort != "congestion")
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "sort must be distance, traffic_volume or congestion");
             }
             if (sort == "distance" && !hasCenter)
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "sort=distance requires both x and z");
             }
 
@@ -381,7 +381,7 @@ namespace CS2MCP
                     query = TreePrefabQuery;
                     break;
                 default:
-                    return BridgeResponse.Error(400, "category must be 'building', 'road', 'net' (all networks incl. pipes/power/tracks/paths) or 'tree'");
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "category must be 'building', 'road', 'net' (all networks incl. pipes/power/tracks/paths) or 'tree'");
             }
 
             request.Query.TryGetValue("query", out string search);
@@ -389,7 +389,7 @@ namespace CS2MCP
             requestedRole = requestedRole?.Trim().ToLowerInvariant();
             if (!string.IsNullOrEmpty(requestedRole) && !kPrefabRoles.Contains(requestedRole))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"unknown prefab role '{requestedRole}'; valid: {string.Join(", ", kPrefabRoles)}");
             }
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 200) : 50;
@@ -531,11 +531,11 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
             {
-                return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?prefab=<name from /prefabs>");
             }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
-                return BridgeResponse.Error(400, "provide ?x=<float>&z=<float> world coordinates");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=<float>&z=<float> world coordinates");
             }
             request.TryGetFloat("rotation", out float rotationDegrees);
 
@@ -549,7 +549,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
@@ -614,7 +614,7 @@ namespace CS2MCP
                 }
                 if (!found)
                 {
-                    return BridgeResponse.Error(404,
+                    return BridgeResponse.Error(BridgeErrorKind.NotFound,
                         $"no valid placement found inside radius {searchRadius:F0}m around ({x:F0},{z:F0}): " +
                         lastReason + ". " + PlacementRetryHint(
                             capabilities,
@@ -633,7 +633,7 @@ namespace CS2MCP
                     out pose,
                     out string resolveReason))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"cannot resolve placement for '{prefab.name}' near ({x:F0},{z:F0}): {resolveReason}. " +
                     PlacementRetryHint(capabilities, searchRadius, hasRotation));
             }
@@ -644,7 +644,7 @@ namespace CS2MCP
                     out _,
                     out string exactReason))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"cannot place '{prefab.name}' at ({x:F0},{z:F0}): {exactReason}. " +
                     PlacementRetryHint(capabilities, searchRadius, hasRotation));
             }
@@ -662,7 +662,7 @@ namespace CS2MCP
                 out float3 connectEnd,
                 out string connectReason))
             {
-                return BridgeResponse.Error(409, connectReason);
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, connectReason);
             }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
@@ -677,7 +677,7 @@ namespace CS2MCP
                 connectStart,
                 connectEnd))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;
@@ -692,11 +692,11 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
             {
-                return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?prefab=<name from /prefabs>");
             }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
-                return BridgeResponse.Error(400, "provide ?x=<float>&z=<float> search center");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=<float>&z=<float> search center");
             }
             float radius = request.TryGetFloat("radius", out float rawRadius)
                 ? math.clamp(rawRadius, 8f, 300f)
@@ -716,7 +716,7 @@ namespace CS2MCP
             }
             if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
@@ -770,7 +770,7 @@ namespace CS2MCP
             }
             if (candidates.Count == 0)
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"no placement candidate could be resolved within {radius:F0}m: {lastReason}. " +
                     PlacementRetryHint(capabilities, radius, hasRotation));
             }
@@ -778,7 +778,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueProbe(prefabEntity, prefab, candidates, resolvedRotation, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;
@@ -820,13 +820,13 @@ namespace CS2MCP
             if (!request.Query.TryGetValue("role", out string role)
                 || string.IsNullOrWhiteSpace(role))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?role=power|water|sewage|garbage|healthcare|fire|police|education|transport|post|telecom");
             }
             role = role.Trim().ToLowerInvariant();
             if (!kInfrastructureCandidateRoles.Contains(role))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"role '{role}' is not supported by infrastructure candidate planning; valid: {string.Join(", ", kInfrastructureCandidateRoles)}");
             }
 
@@ -834,7 +834,7 @@ namespace CS2MCP
             bool hasZ = request.TryGetFloat("z", out float z);
             if (hasX != hasZ)
             {
-                return BridgeResponse.Error(400, "provide both x and z, or omit both to search around owned tiles");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide both x and z, or omit both to search around owned tiles");
             }
             float2 center = hasX
                 ? new float2(x, z)
@@ -874,7 +874,7 @@ namespace CS2MCP
             }
             if (prefabs.Count == 0)
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"no unlocked placeable building prefab has typed role '{role}'");
             }
             prefabs.Sort((a, b) =>
@@ -917,7 +917,7 @@ namespace CS2MCP
             }
             if (candidates.Count == 0)
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"no valid '{role}' site was found within {radius:F0}m of ({center.x:F0},{center.y:F0}); " +
                     "checked prefab shoreline, road-access and utility-connection requirements");
             }
@@ -959,7 +959,7 @@ namespace CS2MCP
                     },
                     request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -1222,31 +1222,31 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
             {
-                return BridgeResponse.Error(400, "provide ?prefab=<name from /prefabs?category=road>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?prefab=<name from /prefabs?category=road>");
             }
             if (!request.TryGetFloat("x1", out float x1) || !request.TryGetFloat("z1", out float z1)
                 || !request.TryGetFloat("x2", out float x2) || !request.TryGetFloat("z2", out float z2))
             {
-                return BridgeResponse.Error(400, "provide ?x1=&z1=&x2=&z2= world coordinates for both endpoints");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x1=&z1=&x2=&z2= world coordinates for both endpoints");
             }
 
             float length = math.distance(new float2(x1, z1), new float2(x2, z2));
             if (length < 8f)
             {
-                return BridgeResponse.Error(400, $"segment too short ({length:F1}m); minimum ~8m");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"segment too short ({length:F1}m); minimum ~8m");
             }
             if (length > 1500f)
             {
-                return BridgeResponse.Error(400, $"segment too long ({length:F0}m); split into segments of <=1500m");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"segment too long ({length:F0}m); split into segments of <=1500m");
             }
 
             if (!TryFindPrefabByName(NetPrefabQuery, prefabName, out Entity prefabEntity, out PrefabBase prefab))
             {
-                return BridgeResponse.Error(404, $"unknown network prefab '{prefabName}'; search via /prefabs?category=road|net&query=...");
+                return BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown network prefab '{prefabName}'; search via /prefabs?category=road|net&query=...");
             }
             if (IsLocked(prefabEntity))
             {
-                return BridgeResponse.Error(409, $"prefab '{prefab.name}' is locked (milestone not reached)");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, $"prefab '{prefab.name}' is locked (milestone not reached)");
             }
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
@@ -1271,13 +1271,13 @@ namespace CS2MCP
             // confuse e1/e2 with entity indexes ~hundreds).
             if (request.Query.ContainsKey("e1") && (e1 < -30f || e1 > 60f))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"e1={e1:F0} out of range; e1/e2 are elevation in meters relative to terrain (-30..60), " +
                     "not entity indexes. Omit them for ground-level roads; use ~5-20 for short bridges.");
             }
             if (request.Query.ContainsKey("e2") && (e2 < -30f || e2 > 60f))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"e2={e2:F0} out of range; e1/e2 are elevation in meters relative to terrain (-30..60), " +
                     "not entity indexes. Omit them for ground-level roads; use ~5-20 for short bridges.");
             }
@@ -1295,7 +1295,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueRoad(prefabEntity, prefab, start, end, mid, hasMid, elevations, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -1321,24 +1321,24 @@ namespace CS2MCP
             }
             if (!request.TryGetInt("index", out int index) || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400, "provide ?index=&version= of a road segment from /city/roads");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=&version= of a road segment from /city/roads");
             }
             if (!request.Query.TryGetValue("upgrades", out string upgradesRaw) || string.IsNullOrEmpty(upgradesRaw))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"provide ?upgrades=<comma list>: {string.Join(", ", kUpgradeNames.Keys)}");
             }
 
             var entity = new Entity { Index = index, Version = version };
             if (!EntityManager.Exists(entity) || !EntityManager.HasComponent<Game.Net.Edge>(entity))
             {
-                return BridgeResponse.Error(404, $"entity {index}:{version} is not an existing road segment");
+                return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} is not an existing road segment");
             }
 
             string side = request.Query.TryGetValue("side", out string rawSide) ? rawSide.ToLowerInvariant() : "both";
             if (side != "left" && side != "right" && side != "both")
             {
-                return BridgeResponse.Error(400, "side must be 'left', 'right' or 'both'");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "side must be 'left', 'right' or 'both'");
             }
             Game.Prefabs.CompositionFlags flags = default;
             foreach (string name in upgradesRaw.Split(','))
@@ -1346,7 +1346,7 @@ namespace CS2MCP
                 string trimmed = name.Trim();
                 if (!kUpgradeNames.TryGetValue(trimmed, out (Game.Prefabs.CompositionFlags.General general, Game.Prefabs.CompositionFlags.Side side) mapped))
                 {
-                    return BridgeResponse.Error(400, $"unknown road feature '{trimmed}'; valid: {string.Join(", ", kUpgradeNames.Keys)}");
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"unknown road feature '{trimmed}'; valid: {string.Join(", ", kUpgradeNames.Keys)}");
                 }
                 flags.m_General |= mapped.general;
                 if (side == "left" || side == "both")
@@ -1370,7 +1370,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueUpgrade(entity, prefabName, flags, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -1384,13 +1384,13 @@ namespace CS2MCP
             if (!request.TryGetInt("index", out int index)
                 || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?index=&version= of a standalone road segment from /city/roads");
             }
             if (!request.Query.TryGetValue("prefab", out string prefabName)
                 || string.IsNullOrWhiteSpace(prefabName))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?prefab=<exact road prefab name from find_prefabs(category=road)>");
             }
 
@@ -1400,25 +1400,25 @@ namespace CS2MCP
                 || !EntityManager.HasComponent<Game.Net.Curve>(target)
                 || !EntityManager.HasComponent<PrefabRef>(target))
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"entity {index}:{version} is not an existing road edge");
             }
             Entity oldPrefabEntity = EntityManager.GetComponentData<PrefabRef>(target).m_Prefab;
             if (!EntityManager.HasComponent<RoadData>(oldPrefabEntity))
             {
-                return BridgeResponse.Error(409, "target edge is not a road");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "target edge is not a road");
             }
             if (EntityManager.HasComponent<Game.Common.Owner>(target)
                 || EntityManager.HasComponent<Game.Net.Fixed>(target))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "v0 replacement only accepts ownerless, non-fixed road edges");
             }
 
             Game.Net.Edge edge = EntityManager.GetComponentData<Game.Net.Edge>(target);
             if (!IsStandaloneRoadEndpoint(edge.m_Start) || !IsStandaloneRoadEndpoint(edge.m_End))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "v0 replacement only accepts a standalone edge whose endpoints each connect to exactly one edge; intersections and chain segments are not yet supported");
             }
 
@@ -1428,24 +1428,24 @@ namespace CS2MCP
                     out Entity newPrefabEntity,
                     out PrefabBase newPrefab))
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"unknown road prefab '{prefabName}'; search via find_prefabs(category=road)");
             }
             if (newPrefabEntity == oldPrefabEntity)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"road already uses prefab '{newPrefab.name}'");
             }
             if (IsLocked(newPrefabEntity))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"road prefab '{newPrefab.name}' is locked (milestone not reached)");
             }
             NetInitializeSystem netInitialize = World.GetOrCreateSystemManaged<NetInitializeSystem>();
             NetData newNetData = EntityManager.GetComponentData<NetData>(newPrefabEntity);
             if (!netInitialize.CanReplace(newNetData, inGame: true))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"the game marks road prefab '{newPrefab.name}' as not replaceable in game mode");
             }
 
@@ -1459,7 +1459,7 @@ namespace CS2MCP
                     newPrefab,
                     request))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "another build operation is in progress, retry shortly");
             }
             return null;
@@ -1674,13 +1674,13 @@ namespace CS2MCP
 
             if (!request.TryGetInt("index", out int index) || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400, "provide ?index=<int>&version=<int> from /city/buildings");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=<int>&version=<int> from /city/buildings");
             }
 
             var entity = new Entity { Index = index, Version = version };
             if (!EntityManager.Exists(entity))
             {
-                return BridgeResponse.Error(404, $"entity {index}:{version} does not exist (stale id?)");
+                return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} does not exist (stale id?)");
             }
             bool isBuilding = EntityManager.HasComponent<Game.Buildings.Building>(entity);
             bool isRoadEdge = false;
@@ -1692,12 +1692,12 @@ namespace CS2MCP
             }
             if (!isBuilding && !isRoadEdge)
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "demolish only accepts a building from list_buildings or a road segment from list_roads; trees, plants, districts and other network types are unsupported");
             }
             if (EntityManager.HasComponent<Game.Common.Deleted>(entity))
             {
-                return BridgeResponse.Error(409, "entity is already being deleted");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "entity is already being deleted");
             }
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
@@ -1713,7 +1713,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueDemolish(entity, prefabName, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -2494,13 +2494,13 @@ namespace CS2MCP
             if (!TryFindPrefabByName(BuildingPrefabQuery, name, out prefabEntity, out prefab)
                 && !TryFindPrefabByName(TreePrefabQuery, name, out prefabEntity, out prefab))
             {
-                error = BridgeResponse.Error(404,
+                error = BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"unknown building/tree prefab '{name}'; search via /prefabs?category=building|tree&query=...");
                 return false;
             }
             if (!IsIndependentBuildingPrefab(prefabEntity))
             {
-                error = BridgeResponse.Error(400,
+                error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"prefab '{prefab.name}' is a building upgrade and cannot be placed independently; install it through its owning service building");
                 prefabEntity = Entity.Null;
                 prefab = null;

@@ -144,14 +144,14 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("type", out string typeName))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?type=<StatisticType>, e.g. Population, Money, Income, Expense, Unemployed, CrimeRate; " +
                     "optional &parameter=<int> and &samples=<1-512>");
             }
             if (!Enum.TryParse(typeName, ignoreCase: true, out StatisticType type)
                 || type == StatisticType.Invalid || type == StatisticType.Count)
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"unknown statistic type '{typeName}'; valid types: {string.Join(", ", Enum.GetNames(typeof(StatisticType)))}");
             }
 

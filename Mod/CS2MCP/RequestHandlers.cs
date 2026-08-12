@@ -159,7 +159,7 @@ namespace CS2MCP
                 case "/screenshot":
                     return Screenshot(request);
                 default:
-                    return BridgeResponse.Error(404,
+                    return BridgeResponse.Error(BridgeErrorKind.NotFound,
                         $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +
                         "/city/budget /city/services /city/labor /city/statistics /city/taxes /city/taxes/set " +
                         "/city/policies /city/policies/set /city/service-budgets /city/service-budgets/set " +
@@ -329,14 +329,14 @@ namespace CS2MCP
             GameManager manager = GameManager.instance;
             if (manager == null || manager.gameMode != GameMode.Game)
             {
-                error = BridgeResponse.Error(409, "no city loaded (in main menu or editor); load a save first");
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict, "no city loaded (in main menu or editor); load a save first");
                 return false;
             }
 
             city = World.GetOrCreateSystemManaged<CitySystem>().City;
             if (city == Entity.Null)
             {
-                error = BridgeResponse.Error(409, "city entity not initialized yet, try again shortly");
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict, "city entity not initialized yet, try again shortly");
                 return false;
             }
             return true;

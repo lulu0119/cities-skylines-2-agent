@@ -115,11 +115,11 @@ namespace CS2MCP
                 || !Enum.TryParse(areaName, ignoreCase: true, out TaxAreaType area)
                 || area == TaxAreaType.None)
             {
-                return BridgeResponse.Error(400, "provide ?area=Residential|Commercial|Industrial|Office");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?area=Residential|Commercial|Industrial|Office");
             }
             if (!request.TryGetInt("rate", out int rate))
             {
-                return BridgeResponse.Error(400, "provide ?rate=<integer percent>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?rate=<integer percent>");
             }
 
             TaxSystem tax = World.GetOrCreateSystemManaged<TaxSystem>();
@@ -186,11 +186,11 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("service", out string serviceName) || string.IsNullOrEmpty(serviceName))
             {
-                return BridgeResponse.Error(400, "provide ?service=<name from /city/service-budgets>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?service=<name from /city/service-budgets>");
             }
             if (!request.TryGetInt("percentage", out int percentage))
             {
-                return BridgeResponse.Error(400, "provide ?percentage=<50-150>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?percentage=<50-150>");
             }
 
             CityServiceBudgetSystem budgetSystem = World.GetOrCreateSystemManaged<CityServiceBudgetSystem>();
@@ -217,7 +217,7 @@ namespace CS2MCP
                 }
             }
 
-            return BridgeResponse.Error(404, $"unknown service '{serviceName}'; list names via /city/service-budgets");
+            return BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown service '{serviceName}'; list names via /city/service-budgets");
         }
     }
 }

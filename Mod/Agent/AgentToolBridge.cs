@@ -63,7 +63,7 @@ namespace CitiesSkylines2Agent.Agent
                 return Error($"tool '{tool.Name}' did not complete within {BridgeTimeoutMs / 1000}s; " +
                              "the game may be busy, retry once or switch approach");
             }
-            if (response.Status != 200)
+            if (!response.Success)
             {
                 string body = Encoding.UTF8.GetString(response.Body ?? Array.Empty<byte>());
                 return BridgeError(body);
@@ -130,7 +130,7 @@ namespace CitiesSkylines2Agent.Agent
             try
             {
                 CS2MCP.BridgeResponse state = await bridge.InvokeAsync("/state");
-                if (state != null && state.Status == 200)
+                if (state != null && state.Success)
                 {
                     finalStateNode = JsonNode.Parse(
                         Encoding.UTF8.GetString(state.Body ?? Array.Empty<byte>()));

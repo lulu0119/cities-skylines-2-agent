@@ -26,7 +26,7 @@ namespace CS2MCP
             if (!request.TryGetInt("index", out int index)
                 || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?index=&version= of a building from /city/buildings");
             }
 
@@ -34,7 +34,7 @@ namespace CS2MCP
             if (!EntityManager.Exists(building)
                 || !EntityManager.HasComponent<Game.Buildings.Building>(building))
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"entity {index}:{version} is not an existing building");
             }
 
@@ -87,14 +87,14 @@ namespace CS2MCP
             if (!request.TryGetInt("index", out int index)
                 || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?index=&version= of a landfill building from /city/buildings");
             }
             if (!request.TryGetFloat("target_area_m2", out float targetArea)
                 || targetArea < 64f
                 || targetArea > 250000f)
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "target_area_m2 must be between 64 and 250000 square metres");
             }
 
@@ -102,7 +102,7 @@ namespace CS2MCP
             if (!EntityManager.Exists(building)
                 || !EntityManager.HasComponent<Game.Buildings.Building>(building))
             {
-                return BridgeResponse.Error(404,
+                return BridgeResponse.Error(BridgeErrorKind.NotFound,
                     $"entity {index}:{version} is not an existing building");
             }
             if (!TryResolveExpandableOperationalArea(
@@ -124,7 +124,7 @@ namespace CS2MCP
             float lockedLength = math.length(lockedEdge);
             if (lockedLength < 8f)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "the building-side locked edge is too short to expand safely");
             }
 
@@ -140,7 +140,7 @@ namespace CS2MCP
             float signedDepth = math.dot(areaCenter - lockedMid, normal);
             if (math.abs(signedDepth) < 8f)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "the operational area does not have a usable free side away from the building");
             }
             if (signedDepth < 0f)
@@ -151,7 +151,7 @@ namespace CS2MCP
             float previousPolygonArea = CalculatePolygonArea(currentNodes);
             if (targetArea <= previousPolygonArea + 1f)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"target_area_m2 must exceed the current {previousPolygonArea:F1} m2 area; shrinking is not supported");
             }
 
@@ -215,7 +215,7 @@ namespace CS2MCP
             }
             if (expandedNodeArray == null)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"no clear expansion fan could reach {targetArea:F1} m2 after {candidatesTested} candidates: {lastRejection ?? "no valid geometry"}");
             }
 
@@ -245,7 +245,7 @@ namespace CS2MCP
                     selectedResourceScore.MaxConcentration,
                     request))
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "another build operation is in progress, retry shortly");
             }
             return null;
@@ -270,7 +270,7 @@ namespace CS2MCP
             error = null;
             if (!EntityManager.HasBuffer<Game.Areas.SubArea>(building))
             {
-                error = BridgeResponse.Error(409,
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "building has no owned operational areas");
                 return false;
             }
@@ -311,7 +311,7 @@ namespace CS2MCP
                 }
                 if (area != Entity.Null)
                 {
-                    error = BridgeResponse.Error(409,
+                    error = BridgeResponse.Error(BridgeErrorKind.Conflict,
                         "building has multiple expandable storage areas; v0 requires exactly one");
                     return false;
                 }
@@ -327,7 +327,7 @@ namespace CS2MCP
 
             if (area == Entity.Null)
             {
-                error = BridgeResponse.Error(409,
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict,
                     "no supported owner-linked landfill storage or extractor area is available");
                 return false;
             }

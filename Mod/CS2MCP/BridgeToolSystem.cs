@@ -127,7 +127,7 @@ namespace CS2MCP
             {
                 return;
             }
-            CompletePending(BridgeResponse.Error(504,
+            CompletePending(BridgeResponse.Error(BridgeErrorKind.Timeout,
                 "build operation aborted: it did not finish within the bridge watchdog window; " +
                 "stage=" + m_Stage + " probeIndex=" + m_ProbeIndex + "/" + m_ProbePositions.Count +
                 " tried=" + m_ProbeTried + " lastError=" + m_ProbeLastError));
@@ -622,7 +622,7 @@ namespace CS2MCP
                             }
                             else
                             {
-                                CompletePending(BridgeResponse.Error(409, DescribeValidationBlock()));
+                                CompletePending(BridgeResponse.Error(BridgeErrorKind.Conflict, DescribeValidationBlock()));
                             }
                         }
                         if (m_Stage != Stage.CreateDefinitions)
@@ -667,7 +667,7 @@ namespace CS2MCP
                             }
                             else
                             {
-                                CompletePending(BridgeResponse.Error(404, DescribeProbeFailure()));
+                                CompletePending(BridgeResponse.Error(BridgeErrorKind.NotFound, DescribeProbeFailure()));
                                 m_Stage = Stage.Finish;
                             }
                         }
@@ -701,7 +701,7 @@ namespace CS2MCP
             catch (Exception e)
             {
                 Mod.Log.Warn($"BridgeToolSystem error in stage {m_Stage}: {e}");
-                CompletePending(BridgeResponse.Error(500, $"tool operation failed: {e.GetType().Name}: {e.Message}"));
+                CompletePending(BridgeResponse.Error(BridgeErrorKind.Internal, $"tool operation failed: {e.GetType().Name}: {e.Message}"));
                 applyMode = ApplyMode.None;
                 Deactivate();
             }

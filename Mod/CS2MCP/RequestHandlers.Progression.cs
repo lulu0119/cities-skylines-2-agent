@@ -103,7 +103,7 @@ namespace CS2MCP
             }
             if (MilestoneLevelQuery.IsEmptyIgnoreFilter)
             {
-                return BridgeResponse.Error(503, "milestone state is not ready yet");
+                return BridgeResponse.Error(BridgeErrorKind.Unavailable, "milestone state is not ready yet");
             }
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
@@ -255,11 +255,11 @@ namespace CS2MCP
             }
             if (partialMatches.Count > 1)
             {
-                error = BridgeResponse.Error(409,
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"development service '{requestedService}' is ambiguous: {string.Join(", ", partialMatches)}");
                 return false;
             }
-            error = BridgeResponse.Error(404,
+            error = BridgeResponse.Error(BridgeErrorKind.NotFound,
                 $"unknown development service '{requestedService}'; available services: {string.Join(", ", services)}");
             return false;
         }
@@ -297,7 +297,7 @@ namespace CS2MCP
             if (!request.Query.TryGetValue("name", out string requestedName)
                 || string.IsNullOrWhiteSpace(requestedName))
             {
-                return BridgeResponse.Error(400, "provide ?name=<development node name from get_progression>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?name=<development node name from get_progression>");
             }
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
@@ -316,7 +316,7 @@ namespace CS2MCP
                 devTreeSystem.points);
             if (snapshot.BlockedReasons.Count > 0)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"development node '{nodeName}' is not eligible: {string.Join("; ", snapshot.BlockedReasons)}");
             }
 
@@ -325,7 +325,7 @@ namespace CS2MCP
             int pointsAfter = devTreeSystem.points;
             if (data.m_Cost > 0 && pointsAfter != pointsBefore - data.m_Cost)
             {
-                return BridgeResponse.Error(409,
+                return BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"the game rejected development node '{nodeName}'; refresh get_progression and retry only if it is still eligible");
             }
             return BridgeResponse.Json(new
@@ -533,11 +533,11 @@ namespace CS2MCP
                 {
                     names.Add(match.Value);
                 }
-                error = BridgeResponse.Error(409,
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict,
                     $"development node name '{requestedName}' is ambiguous: {string.Join(", ", names)}");
                 return false;
             }
-            error = BridgeResponse.Error(404,
+            error = BridgeResponse.Error(BridgeErrorKind.NotFound,
                 $"unknown development node '{requestedName}'; refresh get_progression for valid names");
             return false;
         }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Game.City;
 using Game.Prefabs;
@@ -111,7 +111,7 @@ namespace CS2MCP
 
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
-                return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=&z= center coordinates");
             }
             float radius = request.TryGetFloat("radius", out float rawRadius)
                 ? math.clamp(rawRadius, kCellSize, 200f)
@@ -126,7 +126,7 @@ namespace CS2MCP
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueueZoneCircle(targetZone, resolvedName, center, radius, request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             // Completed asynchronously by BridgeToolSystem during ToolUpdate.
             return null;
@@ -140,12 +140,12 @@ namespace CS2MCP
             }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
-                return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=&z= center coordinates");
             }
             if (!request.TryGetFloat("width", out float rawWidth)
                 || !request.TryGetFloat("depth", out float rawDepth))
             {
-                return BridgeResponse.Error(400, "provide ?width=&depth= rectangle dimensions in meters");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?width=&depth= rectangle dimensions in meters");
             }
             float width = math.clamp(rawWidth, kCellSize, 1000f);
             float depth = math.clamp(rawDepth, kCellSize, 1000f);
@@ -164,7 +164,7 @@ namespace CS2MCP
                     rotationDegrees,
                     request))
             {
-                return BridgeResponse.Error(409, "another build operation is in progress, retry shortly");
+                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
             return null;
         }
@@ -180,7 +180,7 @@ namespace CS2MCP
             error = null;
             if (!request.Query.TryGetValue("zone", out string zoneName) || string.IsNullOrEmpty(zoneName))
             {
-                error = BridgeResponse.Error(400, "provide ?zone=<name from /zones, or 'None' to dezone>");
+                error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?zone=<name from /zones, or 'None' to dezone>");
                 return false;
             }
             if (string.Equals(zoneName, "None", StringComparison.OrdinalIgnoreCase))
@@ -192,12 +192,12 @@ namespace CS2MCP
             string lookupName = ResolveZoneNameForTheme(zoneName);
             if (!TryFindPrefabByName(ZonePrefabQuery, lookupName, out Entity zonePrefabEntity, out PrefabBase zonePrefab))
             {
-                error = BridgeResponse.Error(404, $"unknown zone '{zoneName}'; list via /zones");
+                error = BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown zone '{zoneName}'; list via /zones");
                 return false;
             }
             if (IsLocked(zonePrefabEntity))
             {
-                error = BridgeResponse.Error(409, $"zone '{zonePrefab.name}' is locked (milestone not reached)");
+                error = BridgeResponse.Error(BridgeErrorKind.Conflict, $"zone '{zonePrefab.name}' is locked (milestone not reached)");
                 return false;
             }
             targetZone = EntityManager.GetComponentData<ZoneData>(zonePrefabEntity).m_ZoneType;
@@ -252,7 +252,7 @@ namespace CS2MCP
             }
             if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
             {
-                return BridgeResponse.Error(400, "provide ?x=&z= center coordinates");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=&z= center coordinates");
             }
             float radius = request.TryGetFloat("radius", out float rawRadius)
                 ? math.clamp(rawRadius, 16f, 1000f)

@@ -147,7 +147,9 @@ namespace CS2MCP
                 catch (Exception e)
                 {
                     Mod.Log.Warn($"error handling {request.Path}: {e}");
-                    response = BridgeResponse.Error(500, $"{e.GetType().Name}: {e.Message}");
+                    response = BridgeResponse.Error(
+                        BridgeErrorKind.Internal,
+                        $"{e.GetType().Name}: {e.Message}");
                 }
                 if (response != null)
                 {
@@ -174,7 +176,6 @@ namespace CS2MCP
         {
             var request = new BridgeRequest
             {
-                Method = "GET",
                 Path = path,
                 Body = body ?? string.Empty,
             };

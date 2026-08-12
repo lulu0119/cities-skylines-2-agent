@@ -59,7 +59,7 @@ namespace CS2MCP
             CameraController controller = cameraSystem.gamePlayController;
             if (controller == null)
             {
-                return BridgeResponse.Error(503, "gameplay camera controller not available (still loading?)");
+                return BridgeResponse.Error(BridgeErrorKind.Unavailable, "gameplay camera controller not available (still loading?)");
             }
             return BridgeResponse.Json(new
             {
@@ -77,7 +77,7 @@ namespace CS2MCP
             CameraController controller = cameraSystem.gamePlayController;
             if (controller == null)
             {
-                return BridgeResponse.Error(503, "gameplay camera controller not available (still loading?)");
+                return BridgeResponse.Error(BridgeErrorKind.Unavailable, "gameplay camera controller not available (still loading?)");
             }
 
             bool changed = false;
@@ -117,7 +117,7 @@ namespace CS2MCP
 
             if (!changed)
             {
-                return BridgeResponse.Error(400, "provide at least one of: x&z (pivot, y optional), angleX, angleY, zoom");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide at least one of: x&z (pivot, y optional), angleX, angleY, zoom");
             }
             return GetCamera();
         }
@@ -207,7 +207,7 @@ namespace CS2MCP
             }
             if (!request.Query.TryGetValue("layer", out string layer) || string.IsNullOrEmpty(layer))
             {
-                return BridgeResponse.Error(400,
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?layer=landValue|groundPollution|airPollution|noisePollution|groundWater|groundWaterPollution");
             }
             if (!TryGetWorldBounds(request, out float xMin, out float zMin, out float xMax, out float zMax, out BridgeResponse boundsError))
@@ -276,7 +276,7 @@ namespace CS2MCP
                     break;
                 }
                 default:
-                    return BridgeResponse.Error(400, $"unknown layer '{layer}'");
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"unknown layer '{layer}'");
             }
 
             float cellSize = kWorldHalfSize * 2f / sourceSize;
@@ -384,7 +384,7 @@ namespace CS2MCP
                       & request.TryGetFloat("z", out float z)
                       & request.TryGetFloat("radius", out float radius)))
                 {
-                    error = BridgeResponse.Error(400,
+                    error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                         "provide a map range: x&z&radius OR xMin&zMin&xMax&zMax");
                     return false;
                 }
@@ -409,7 +409,7 @@ namespace CS2MCP
             zMax = math.clamp(zMax, -kWorldHalfSize, kWorldHalfSize);
             if (xMax - xMin < 1f || zMax - zMin < 1f)
             {
-                error = BridgeResponse.Error(400, "range too small; need at least 1m on each axis");
+                error = BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "range too small; need at least 1m on each axis");
                 return false;
             }
             return true;
@@ -619,12 +619,12 @@ namespace CS2MCP
             }
             if (!request.TryGetInt("index", out int index) || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(400, "provide ?index=<int>&version=<int>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=<int>&version=<int>");
             }
             var entity = new Entity { Index = index, Version = version };
             if (!EntityManager.Exists(entity))
             {
-                return BridgeResponse.Error(404, $"entity {index}:{version} does not exist");
+                return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} does not exist");
             }
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();

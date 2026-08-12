@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Game.Policies;
 using Game.Prefabs;
@@ -107,11 +107,11 @@ namespace CS2MCP
 
             if (!request.Query.TryGetValue("name", out string policyName) || string.IsNullOrEmpty(policyName))
             {
-                return BridgeResponse.Error(400, "provide ?name=<policy name from /city/policies>");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?name=<policy name from /city/policies>");
             }
             if (!request.TryGetBool("active", out bool active))
             {
-                return BridgeResponse.Error(400, "provide ?active=true|false");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?active=true|false");
             }
             request.TryGetFloat("adjustment", out float adjustment);
 
@@ -127,7 +127,7 @@ namespace CS2MCP
                     }
                     if (IsLocked(entity))
                     {
-                        return BridgeResponse.Error(409, $"policy '{prefab.name}' is locked (milestone not reached)");
+                        return BridgeResponse.Error(BridgeErrorKind.Conflict, $"policy '{prefab.name}' is locked (milestone not reached)");
                     }
 
                     World.GetOrCreateSystemManaged<PoliciesUISystem>().SetCityPolicy(entity, active, adjustment);
@@ -141,7 +141,7 @@ namespace CS2MCP
                 }
             }
 
-            return BridgeResponse.Error(404, $"unknown policy '{policyName}'; list names via /city/policies");
+            return BridgeResponse.Error(BridgeErrorKind.NotFound, $"unknown policy '{policyName}'; list names via /city/policies");
         }
     }
 }

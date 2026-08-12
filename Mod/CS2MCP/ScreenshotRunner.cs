@@ -59,7 +59,7 @@ namespace CS2MCP
                 byte[] png = ImageConversion.EncodeToPNG(output);
                 if (png == null || png.Length == 0)
                 {
-                    request.Complete(BridgeResponse.Error(500, "PNG encode failed"));
+                    request.Complete(BridgeResponse.Error(BridgeErrorKind.Internal, "PNG encode failed"));
                 }
                 else
                 {
@@ -68,7 +68,7 @@ namespace CS2MCP
             }
             catch (Exception e)
             {
-                request.Complete(BridgeResponse.Error(500, $"screenshot failed: {e.GetType().Name}: {e.Message}"));
+                request.Complete(BridgeResponse.Error(BridgeErrorKind.Internal, $"screenshot failed: {e.GetType().Name}: {e.Message}"));
             }
             finally
             {
