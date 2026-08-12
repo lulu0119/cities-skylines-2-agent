@@ -194,8 +194,19 @@ Entities 1.3 的 `EntityManager.Exists` 只接受已处于实体存储理论索�
 `Entity.Index`；它不是面向不可信请求整数的安全解析接口。修复集中新增一个私有实体
 resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引，并由 `inspect`、`demolish`、
 道路特征/替换、行政区解析和 operational-area 读写共 7 个入口复用。`dotnet build`
-通过（0 error，15 条既有 ILRepack warning）；真机绿灯复验必须在下一张全新受控存档中
-确认同一极端 ID 返回 `kind=not_found`。
+通过（0 error，15 条既有 ILRepack warning）。`d262512` 推送后已作废原受控城及其
+`13-August-03-55-49.cok` / `.cid` 自动存档，并经正式 Launcher 路径创建另一张
+`purpose NewGame` 的河谷三角洲普通模式城市（解锁全部、无限资金、解锁地图区块均关闭）。
+新 session `ba2496ad` 中，同一极端 ID 的 `demolish` 与只读 `inspect` 均稳定返回
+`kind=not_found`，没有实体写入，公共 resolver 真机验收通过。
+
+该复验同时发现工具组的回合生命周期不符合接口承诺：第一轮调用
+`agent_enable_tool_group(construction)` 成功后，下一次 generation 虽已携带扩展后的工具
+定义（输入 token 明显增加），模型仍沿用首次 generation 的“没有 demolish”判断并结束回合；
+而 `AgentToolSurface.m_EnabledGroups` 又没有在下一玩家回合开始时清空，使 construction
+错误跨回合保留，第二个玩家回合才可直接调用 `demolish`。待修复不变量是：启用结果必须
+明确要求模型在下一轮使用新增工具，同时每个新玩家回合先 reset 工具组，确保
+“Enable a specialized tool group for the current turn” 与真实生命周期一致。
 
 #### 本轮排水口排查新增的代码问题
 
