@@ -14,7 +14,7 @@ Gameface UI (chat)  ↔  Cohtml bindings  ↔  C# agent loop + ToolQueueSystem (
 | --- | --- |
 | `Mod/` | Shippable product (C# + `Mod/UI`) |
 | `archive/` | Offline POCs + frozen M1 smoke — do not treat as the product root |
-| `docs/` | Dated notes under `guide/` / `research/` / `ops/` — see `docs/README.md` |
+| `docs/` | Dated notes under `guide/` / `research/` / `ops/`, plus accepted decisions under `adr/` — see `docs/README.md` |
 
 **Provisional agent loop:** C# `IChatClient` (MEAI) + hand-rolled function-calling / ReAct. **Not** Gameface apeira/xsai, Semantic Kernel, or Agent Framework first. Tools always enqueue to the simulation main thread; no forced pausing — the game validates construction while the simulation runs, and blocked calls retry via `find_placement`. Details: `docs/research/2026-08-06-csharp-agent-runtimes.md`.
 
@@ -95,9 +95,13 @@ For seam/module design vocabulary in this repo, use the **codebase-design** skil
 
 `type(scope): English subject` — e.g. `feat(mod): …`, `docs(guide): …`.
 
+- Complete, verify, commit, and push one coherent work item at a time. Do not leave completed work uncommitted or accumulate unrelated completed items in one local batch.
+- Keep each commit scoped to that work item and preserve unrelated user changes already present in the worktree. If a push is blocked, report the blocker immediately rather than silently allowing commits to pile up locally.
+
 ## Docs
 
 - New research/ops/guide notes: `docs/<bucket>/YYYY-MM-DD-<slug>.md`, then link from `docs/README.md`.
+- Persist accepted product and architecture decisions as ADRs under `docs/adr/YYYY-MM-DD-<slug>.md`, then link them from `docs/README.md`. Record the context, decision, and consequences; do not leave durable decisions only in chat or an ops backlog.
 - Do not resurrect live M1 click-checklists; historical procedure stays in `archive/docs/`.
 - Prefer updating the relevant dated note or README over scattering duplicate status.
 
