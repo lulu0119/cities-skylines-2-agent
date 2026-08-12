@@ -1680,13 +1680,17 @@ namespace CS2MCP
                 return BridgeResponse.Error(404, $"entity {index}:{version} does not exist (stale id?)");
             }
             bool isBuilding = EntityManager.HasComponent<Game.Buildings.Building>(entity);
-            bool isNetEdge = EntityManager.HasComponent<Game.Net.Edge>(entity);
-            bool isFlora = EntityManager.HasComponent<Game.Objects.Tree>(entity)
-                || EntityManager.HasComponent<Game.Objects.Plant>(entity);
-            bool isDistrict = EntityManager.HasComponent<Game.Areas.District>(entity);
-            if (!isBuilding && !isNetEdge && !isFlora && !isDistrict)
+            bool isRoadEdge = false;
+            if (EntityManager.HasComponent<Game.Net.Edge>(entity)
+                && EntityManager.HasComponent<PrefabRef>(entity))
             {
-                return BridgeResponse.Error(400, "entity is not a building, road segment, tree/plant or district; refusing to delete");
+                Entity prefabEntity = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
+                isRoadEdge = EntityManager.HasComponent<RoadData>(prefabEntity);
+            }
+            if (!isBuilding && !isRoadEdge)
+            {
+                return BridgeResponse.Error(400,
+                    "demolish only accepts a building from list_buildings or a road segment from list_roads; trees, plants, districts and other network types are unsupported");
             }
             if (EntityManager.HasComponent<Game.Common.Deleted>(entity))
             {

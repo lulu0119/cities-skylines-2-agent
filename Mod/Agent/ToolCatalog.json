@@ -1302,17 +1302,17 @@
     },
     {
       "name": "demolish",
-      "description": "Demolish (bulldoze) one building (from list_buildings) or road segment (from list_roads) identified by its entity index and version. Irreversible 鈥?double-check the target first.",
+      "description": "Demolish (bulldoze) one building from list_buildings or road segment from list_roads, identified by entity index and version. Trees, plants, districts and non-road networks are unsupported. Irreversible 鈥?double-check the target first.",
       "parameters": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Entity index from list_buildings"
+            "description": "Entity index from list_buildings or list_roads"
           },
           "version": {
             "type": "integer",
-            "description": "Entity version from list_buildings"
+            "description": "Entity version from list_buildings or list_roads"
           }
         },
         "required": [
