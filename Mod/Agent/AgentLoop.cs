@@ -163,13 +163,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         public void Send(string text)
         {
             Interlocked.Exchange(ref m_SuppressAutoContinue, 0);
-            // #region agent log
-            Debug548a1a.Log(
-                "H-DUP-A",
-                "AgentLoop.Send",
-                "csharp_emit_user",
-                "{\"textLen\":" + (text ?? "").Length + "}");
-            // #endregion
             m_Pending.Writer.TryWrite(new AgentInput { Text = text ?? "" });
             m_Observability.InterleavedQueued(text ?? "");
             Emit(new AgentUiEvent { Kind = "user", Text = text ?? "" });

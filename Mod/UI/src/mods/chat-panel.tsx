@@ -50,7 +50,6 @@ type ChatStore = {
   status: string;
   busy: boolean;
   pending: number;
-  mounts: number;
 };
 
 const state$ = bindValue<string>(mod.id, "state", "{}");
@@ -66,7 +65,6 @@ const getStore = (): ChatStore => {
       status: "Idle",
       busy: false,
       pending: 0,
-      mounts: 0,
     };
   }
   return root.__cs2AgentChat;
@@ -174,29 +172,6 @@ const toUiMessages = (messages: StateMessage[]): UiMessage[] =>
       text: message.text ?? "",
     }));
 
-// #region agent log
-const debugLog = (
-  hypothesisId: string,
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-) => {
-  trigger(
-    mod.id,
-    "debugLog",
-    JSON.stringify({
-      sessionId: "548a1a",
-      runId: "post-fix",
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  );
-};
-// #endregion
-
 export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const store = getStore();
   const [open, setOpen] = useState(true);
@@ -210,18 +185,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const stateJson = useValue(state$);
   const subscribed = useRef(false);
 
-  useEffect(() => {
-    store.mounts += 1;
-    // #region agent log
-    debugLog("H-DUP-C", "chat-panel.tsx:mount", "mounted", {
-      mounts: store.mounts,
-      session: store.session,
-      messageCount: store.messages.length,
-      open: true,
-    });
-    // #endregion
-  }, []);
-
   const syncMessages = (next: UiMessage[]) => {
     store.messages = next;
     setMessages(next);
@@ -229,15 +192,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
 
   const pushMessage = (message: Omit<UiMessage, "id">) => {
     const id = store.nextId++;
-    // #region agent log
-    if (message.role === "user") {
-      debugLog("H-DUP-A", "chat-panel.tsx:pushMessage", "ui_push", {
-        id,
-        role: message.role,
-        textLen: (message.text || "").length,
-      });
-    }
-    // #endregion
     syncMessages([...store.messages, { ...message, id }]);
   };
 
@@ -338,14 +292,6 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
       setContext(parsed.context ?? null);
       return;
     }
-    // #region agent log
-    debugLog("H-DUP-C", "chat-panel.tsx:stateHydrate", "session_change", {
-      prevSession: store.session,
-      nextSession: parsed.session,
-      existingMessages: store.messages.length,
-      stateMessages: (parsed.messages ?? []).length,
-    });
-    // #endregion
     store.session = parsed.session;
     store.status = parsed.status;
     store.busy = parsed.busy;
@@ -362,14 +308,11 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
     }
   }, [stateJson]);
 
-  const send = (source: "submit" | "button") => {
+  const send = () => {
     const text = draft.trim();
     if (!text) {
       return;
     }
-    // #region agent log
-    debugLog("H-DUP-B", "chat-panel.tsx:send", "ui_send", { source, textLen: text.length });
-    // #endregion
     trigger(mod.id, "send", text);
     store.busy = true;
     setBusy(true);
@@ -378,7 +321,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    send("submit");
+    send();
   };
 
   return (
@@ -409,7 +352,7 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
                   <Button
                     variant="primary"
                     style={actionButtonStyle}
-                    onSelect={() => send("button")}
+                    onSelect={send}
                   >
                     Send
                   </Button>

@@ -50,9 +50,6 @@ namespace CitiesSkylines2Agent.Agent
                 if (string.Equals(signature, m_LastSignature, StringComparison.Ordinal)) m_IdenticalCount++;
                 else { m_LastSignature = signature; m_IdenticalCount = 1; }
                 Stopwatch timer = Stopwatch.StartNew();
-                // #region agent log
-                // Skip tool_start spam; only log slow/end results (H-BLK-K).
-                // #endregion
                 m_Emit(new AgentUiEvent { Kind = "tool", Tool = call.Name ?? call.CallId, Text = argumentsJson });
                 ToolInvocationResult result;
                 try
@@ -72,16 +69,6 @@ namespace CitiesSkylines2Agent.Agent
                 }
                 timer.Stop();
                 FunctionCount++;
-                // #region agent log
-                if (timer.ElapsedMilliseconds >= 100)
-                {
-                    string blockId = string.Equals(call.Name, "screenshot", StringComparison.Ordinal) ? "H-BLK-B" :
-                        (call.Name != null && (call.Name.Contains("simulation") || call.Name.Contains("advance_time"))) ? "H-BLK-A" : "H-BLK-C";
-                    Debug548a1a.Log(blockId, "AgentToolExecutor.ExecuteAsync", "tool_end_slow",
-                        "{\"tool\":\"" + (call.Name ?? "") + "\",\"ms\":" + timer.ElapsedMilliseconds +
-                        ",\"ok\":" + (result.Success ? "true" : "false") + "}");
-                }
-                // #endregion
                 m_Observability.Function(call.Name, argumentsJson, result.Text, result.Success, timer.ElapsedMilliseconds, 0,
                     result.Success ? null : result.Text);
                 m_AppendHistory(new ChatMessage(ChatRole.Tool,
