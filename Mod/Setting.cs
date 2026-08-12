@@ -139,10 +139,11 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.VisionTools)), "Visual tools" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.VisionTools)), "Auto follows model-name capabilities; On and Off force the result." },
 
-                // Enum value locale keys: format is {SettingsLocaleID}.{PropertyName}.{EnumType}[{Value}]
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Auto) + "]", "Auto" },
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.On) + "]", "On" },
-                { m_Setting.GetSettingsLocaleID() + "." + nameof(Setting.VisionTools) + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Off) + "]", "Off" },
+                // Enum value locale keys are based on the enum type, not the
+                // property name: {SettingsLocaleID}.{EnumType}[{Value}].
+                { m_Setting.GetSettingsLocaleID() + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Auto) + "]", "Auto" },
+                { m_Setting.GetSettingsLocaleID() + ".VISIONTOOLMODE[" + nameof(VisionToolMode.On) + "]", "On" },
+                { m_Setting.GetSettingsLocaleID() + ".VISIONTOOLMODE[" + nameof(VisionToolMode.Off) + "]", "Off" },
             };
         }
 

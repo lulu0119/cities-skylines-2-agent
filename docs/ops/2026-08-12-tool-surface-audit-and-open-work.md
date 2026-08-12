@@ -163,6 +163,12 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 从 2 降为 0；用户数据树中的 hot-reload `.dll` 数量为 0，正式 override 目录由 host
 重建为空目录。该轮尚停留在 MainMenu，没有载入旧城市。
 
+首次受控新城设置验收发现 Visual tools 的值虽然是 `Auto`，Gameface 却显示完整的
+未解析 locale key。实际请求格式为
+`{SettingsLocaleID}.VISIONTOOLMODE[Auto]`；代码错误地插入了属性名
+`.VisionTools.`。三项枚举 locale key 已按游戏请求格式修正，等待冷启动复验
+`Auto` / `On` / `Off` 均显示正常。
+
 #### 本轮排水口排查新增的代码问题
 
 截至 2026-08-12，这些问题的修复已由 `2bc07d7` 提交并推送；`Mod` 构建通过。
