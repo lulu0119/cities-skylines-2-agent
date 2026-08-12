@@ -164,10 +164,13 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 重建为空目录。该轮尚停留在 MainMenu，没有载入旧城市。
 
 首次受控新城设置验收发现 Visual tools 的值虽然是 `Auto`，Gameface 却显示完整的
-未解析 locale key。实际请求格式为
-`{SettingsLocaleID}.VISIONTOOLMODE[Auto]`；代码错误地插入了属性名
-`.VisionTools.`。三项枚举 locale key 已按游戏请求格式修正，等待冷启动复验
-`Auto` / `On` / `Off` 均显示正常。
+未解析 locale key。`ea820bc` 去掉属性名 `.VisionTools.` 后，第一次冷启动复验仍失败：
+手工拼接遗漏了 `ModSetting.id` 中游戏生成的完整设置类型标识。当前 `Game.dll` 的
+权威实现会通过 `GetEnumValueLocaleID(value)` 生成
+`Options.{id}.{EnumType.ToUpper()}[{value}]`；三项枚举现改为直接调用该 helper，避免
+复制游戏内部 key 规则。2026-08-13 随后从 Steam → Paradox Launcher 正式冷启动，
+设置页下拉菜单同时正确显示 `Auto` / `On` / `Off`；依次选择 `On`、`Off` 后控件文本
+均正确，最终恢复为 `Auto`。该本地化 bug 真机验收通过。
 
 #### 本轮排水口排查新增的代码问题
 
