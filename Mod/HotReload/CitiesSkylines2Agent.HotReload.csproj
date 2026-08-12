@@ -38,7 +38,7 @@
 
   <Target Name="DeployHotReloadPayload" AfterTargets="Build">
     <PropertyGroup>
-      <HotReloadDir>$(UserDataPath)\CitiesSkylines2Agent\hot-reload</HotReloadDir>
+      <HotReloadDir>$(UserDataPath)\ModsData\CitiesSkylines2Agent\hot-reload</HotReloadDir>
     </PropertyGroup>
     <ItemGroup>
       <HotReloadSkills Include="..\Agent\Skills\**\SKILL.md" />
