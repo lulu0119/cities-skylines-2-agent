@@ -1,20 +1,20 @@
 # Tool surface audit & open-work inventory (2026-08-12)
 
-**Status:** read-only audit; no code changed.
-**Context:** the Windows verification machine is down (no display signal; last
-documented crash `0x133 DPC_WATCHDOG_VIOLATION` after switching Cities II to the
-RTX 3060 while the GameViewer virtual display remained active). Before resuming
-any real-game acceptance, this note fixes one authoritative inventory of
-unfinished work and stale tool-surface items. Old docs keep their historical
-status; this note is the current open list.
+**Status:** 2026-08-13 implementation reconciliation complete; controlled real-game
+acceptance remains open.
+**Context:** the Windows verification machine is available again and `main` is clean
+and pushed. The accepted product decisions now live in
+`docs/adr/2026-08-13-agent-tool-surface-and-permissions.md`; they supersede the
+alternatives captured during the original 2026-08-12 audit. This note retains the
+investigation evidence and tracks the remaining live acceptance work.
 
 ## 1. 当前选址/放置工具面（三件套）
 
 | 工具 | 语义 | 当前状态 |
 | --- | --- | --- |
 | `place_building(prefab, x, z, radius?)` | 一步搜索+提交：radius>0 时在 mod 侧做启发式网格搜索（归属/重叠/临街/海岸线），选一个候选直接进游戏原生管线验证并建造；radius 省略时精确放置 | 主路径；prompt 与 skill 均推荐 |
-| `find_infrastructure_candidate(role, x?, z?, radius?)` | 只读规划器：仅 11 种基础设施/服务角色，沿现有道路两侧生成候选→预检→按造价/距离/名字排序→把**唯一 finalist** 送原生预览；返回 prefab/position/rotation 供 `place_building` 提交 | 已实现、构建通过；真机验收 pending；命名与 "candidate" 语义不一致 |
-| `find_placement(prefab, x, z, attempts=1)` | 旧预览工具：`attempts` 被硬性 clamp 为 1，只对单点做原生 probe，不提交 | 模型面已无引导使用；catalog 描述自称 prefer `place_building`；仍暴露在 construction 组、HTTP `/build/find-place`；AGENTS.md 仍有过时引用 |
+| `find_infrastructure_candidate(role, x?, z?, radius?)` | 旧只读规划器：沿现有道路两侧生成候选，最终只把一个位置送原生预览 | 已退出模型面；backend 暂留作兼容/诊断实现，不再是真机产品验收项 |
+| `find_placement(prefab, x, z, attempts=1)` | 旧预览工具：`attempts` 被硬性 clamp 为 1，只对单点做原生 probe，不提交 | 已退出模型面；backend 暂留作兼容/诊断实现；AGENTS.md 已改为通过 `place_building` 的 radius/rotation 恢复 |
 
 `find_infrastructure_candidate` 支持的角色（代码与 catalog 一致）：
 
@@ -40,19 +40,13 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
 "recommendation / recommended site"，不是让调用者做选择。既然只有一个，
 下一步很自然会问"为什么不直接放"。
 
-### 可选设计（待决策，未实现）
+### 2026-08-13 已接受设计
 
-| 方案 | 做法 | 代价/收益 |
-| --- | --- | --- |
-| A. 改名/明示单推荐 | 改为 `recommend_infrastructure_site`，文档说明"返回唯一推荐点，用 place_building 提交" | 最小改动；保留只读预检与原生预览边界 |
-| B. 返回 top-N 启发式候选 | 只读返回若干候选+证据，不逐个做原生预览；`place_building` 提交所选 | 恢复 "candidate" 字面含义；不触碰多 probe 卡死；需要定义 N 与排序证据 |
-| C. 合并进 place_building | `place_building(role=...)` 直接选点+一步提交，删除两步 | 调用面最小；丢失"先看后建"的只读预检与证据，且与现有验收习惯冲突 |
-
-用户修正后的立场：合并只适用于 `find_placement`（单点、无选择、无独立
-信息价值）。`find_infrastructure_candidate` 不应并入 `place_building`：
-后续要接视觉模型，希望模型能指定一个小范围、拿到若干候选并用截图比较，
-再决定提交哪个。因此方案 B（小范围 top-N 只读候选 + `place_building`
-提交所选）是当前方向，方案 C 不再推荐。
+不做模型可见的多候选池，也不让写工具接受 `role`。Agent 先通过 prefab 查询选择
+具体 prefab，再调用 `place_building(prefab, x, z, radius?, rotation?)`。常规自主
+放置提供期望中心和合理 radius、默认省略 rotation；module 内部负责候选搜索、
+prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/提交状态机。
+`find_placement` 与 `find_infrastructure_candidate` 均退出模型面。
 
 ## 3. 全量工具组合/分离审计（2026-08-12）
 
@@ -113,13 +107,12 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
 - `upgrade_road`：HTTP 兼容别名，未暴露给模型；保留即可。
 - `find_placement`：模型面下线后，HTTP `/build/find-place` 可保留为诊断。
 
-### F. 命名与重构决定（用户确认，代码改动待后续）
+### F. 命名与重构决定（2026-08-13 对账）
 
-- `find_prefabs` → 建议改名为 `search_prefabs` 或 `list_prefabs`（二选一待定），
-  旧名保留为兼容别名。
-- `find_placement` → 模型面下线；未来是否以"多候选版"回归，之后再定。
-- `find_infrastructure_candidate` → 多结果（top-N）实现后保留；单结果现状下
-  不作为独立工具存在。角色扩展（如 `specialized-industry`）可后续考虑。
+- `find_prefabs` 以及道路 construction/features/replacement 的命名和介绍以后做一次
+  一致性整理；当前不为改名扩大验收范围。
+- `find_placement` 与 `find_infrastructure_candidate` 已从模型面下线；不做多候选版。
+- 兼容 backend 暂留是 implementation detail，不构成 Agent 接口承诺。
 
 ## 4. 未完成工作清单
 
@@ -128,41 +121,36 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
 1. **专门工业/资源提取闭环**：`expand_operational_area` 已支持提取器+资源打分
    （耕地/矿石/石油/渔业）+ 森林实体扫描，但"建 hub → 画提取区 → 真出车出产"
    整条链路从未在游戏里跑通。（backlog §6）
-2. **`find_infrastructure_candidate` 真机验收**：构建通过、单点原生预览机制已
-   确认，live acceptance pending。（backlog §3）
-3. **科技树正向购买**：只验过"没点数时拒绝"；未验"攒够点数真买一个节点"。
+2. **科技树正向购买**：只验过"没点数时拒绝"；未验"攒够点数真买一个节点"。
    （backlog §2）
-4. **道路分级**：`list_roads` 交通量/拥堵排序未与游戏 infoview 对比。
+3. **道路分级**：`list_roads` 交通量/拥堵排序未与游戏 infoview 对比。
    （backlog §4）
-5. **道路替换**：只验过独立无主路段；交叉口/连续路/保存重载未验。
+4. **道路替换**：只验过独立无主路段；交叉口/连续路/保存重载未验。该工具只在
+   开发/验收模式暴露，且永远只支持 road-to-road。
    （backlog §3）
-6. **填埋场扇形扩容冷启动重载**：未验收；非空填埋场+卡车运转未验。
+5. **填埋场扇形扩容冷启动重载**：未验收；非空填埋场+卡车运转未验。
    （backlog §7）
-7. **风车/污水连接端点埋深 −10m**：未做实体级验证。
+6. **风车/污水连接端点埋深 −10m**：未做实体级验证。
    （placement-utilities handoff §4.3）
 
 ### B. 只有提案/调研，代码未写
 
-8. **地图图片工具 `map_export`**：CS2MapView/Carto 调研完成，明确"本次未改
+7. **地图图片工具 `map_export`**：CS2MapView/Carto 调研完成，明确"本次未改
    代码"。（research/2026-08-11-cs2-map-image-mod.md）
-9. **`place_specialized_industry` 组合接口**（hub+提取区一步）：设计建议后续做，
+8. **`place_specialized_industry` 组合接口**（hub+提取区一步）：设计建议后续做，
    无代码。（research/2026-08-11-tool-deepening-next-seams.md §3）
-10. **UI 自动滚动 / Gameface CDP 打包为 MCP**：08-07 handoff 的可选项，未做。
+9. **UI 自动滚动 / Gameface CDP 打包为 MCP**：08-07 handoff 的可选项，未做。
 
 ### C. 遗留未清理
 
-11. `find_placement`：模型面应下线（移除出 construction 组）；HTTP 路由与
-    handler 是否保留待定；AGENTS.md "blocked calls retry via find_placement"
-    为过时描述。
-12. `save_game`：当前是核心工具（模型每回合可见）；没有任何验收要求 Agent
-    保存，是否保留待定。
-13. `list_objects` 半径过滤：08-06/08-07 均标 "suspect / open"，后续无确认。
-14. `Debug548a1a.cs` 硬编码 `C:\Users\super\...` 路径未泛化；调试代码按约定
-    保留到 sign-off。
-15. UI.log 无效 CSS `display` 警告未清理。
-16. 10k 任务书的"条件保险丝"（`find_placement` 成功但未 `place_building` 时
-    改为代码强制）：目前仍是 prompt 规则；若 `find_placement` 下线则自然作废。
-17. "先建路再放建筑"是否已日志级根除：skill 已加规则，但无确认证据。
+10. `list_objects` 半径过滤：08-06/08-07 均标 "suspect / open"，后续无确认。
+11. UI.log 无效 CSS `display` 警告未清理。
+12. "先建路再放建筑"是否已日志级根除：skill 已加规则，但无确认证据。
+
+以下遗留已经清理：`find_placement`/`find_infrastructure_candidate` 已退出模型面；
+`save_game`、`replace_road_type`、`debug_zone_blocks` 只在默认关闭的开发/验收模式
+暴露；`Debug548a1a` 已删除；运行数据已迁到 `ModsData`；进程内 bridge 已用
+`Success + BridgeErrorKind` 取代 HTTP 状态码。
 
 #### 本轮排水口排查新增的代码问题
 
@@ -215,28 +203,26 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
 - 结论：marker fallback 已在真实 prefab、真实原生放置与自动施工链路上通过；
   风机的低压地缆由 `place_building` 自动排队施工，不是 Agent 手动接线。
 
-### D. 产品决策未定
+### D. 已决策但仍需后续实现或数据校准
 
-18. 提取区最低资源覆盖率阈值。
-19. 是否允许缩小已占用填埋场（文档推荐不允许）。
-20. `set_road_features` / `decorate_road` 正式命名（代码已用前者）。
-21. 地图图片工具走 Carto / CS2MapView / 方案 C（纯截图）。
+13. 提取区第一版拒绝零资源候选并按剩余资源证据排序；真实阈值以后用真机数据校准，
+    不向玩家暴露设置。
+14. operational area 不支持缩小，且不作为活跃 TODO。
+15. 道路工具统一命名与介绍是后续整理项；当前保留 `set_road_features`。
+16. 地图图片能力与可选 Python/Carto adapter 均为长期工作，不阻塞本轮验收。
 
-### E. 机器/环境阻塞
+### E. 已解除的机器/环境阻塞
 
-22. 显示链路不稳定（0x133 DPC_WATCHDOG_VIOLATION；虚拟显示 + RTX 3060 切换；
-    当前开机无信号）。backlog 明确要求：display-driver path 稳定前不得声称
-    新的真机验收。
-23. Windows 机器可能存在的未提交 diff：GitHub 主分支完整（add1706），但机器
-    上的 `git status` / `git diff` 尚未查看。
+显示链路已经恢复；2026-08-13 已确认 Windows 工作区干净并与 `origin/main` 同步。
+若显示驱动再次出现 `0x133 DPC_WATCHDOG_VIOLATION`，该轮不能计为完成真机验收。
 
 ## 5. 建议恢复顺序
 
-1. 恢复显示链路（虚拟显示器/显卡驱动路径）→ 开机。
-2. 开机后第一件事：`git status` / `git diff`，确认/提交未保存工作。
-3. A 组按 1→2→3→…→7 顺序做真机验收（专门工业闭环优先）。
-4. C 组清理可离线进行（工具面暴露、AGENTS.md、路径泛化、文档标记）。
-5. 决策 D 组后更新 backlog。
+1. 完成模型工具面、catalog、skill、ADR/ops 的最终对账并构建、提交、推送。
+2. 消除 stale hot-reload payload 覆盖风险。
+3. 第一张全新存档做受控功能验收；发现的 bug 每项独立修复、构建、提交、推送、复验。
+4. 功能清单全部通过后，第二张全新存档做长期自主经营；人口过万后重点记录 Agent
+   如何读取和处理交通拥堵，不提供人工指定的交通方案。
 
 ## 6. 依据
 

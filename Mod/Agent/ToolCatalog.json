@@ -123,7 +123,7 @@
     },
     {
       "name": "debug_zone_blocks",
-      "description": "Diagnostics (use only when asked): dump zone prefab metadata, per-block cell state and VacantLot buffers around x,z. Use ?x=&z=&radius=.",
+      "description": "DEVELOPMENT/ACCEPTANCE DIAGNOSTIC (use only when asked): dump zone prefab metadata, per-block cell state and VacantLot buffers around x,z.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1191,7 +1191,7 @@
     },
     {
       "name": "replace_road_type",
-      "description": "EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_roads after success.",
+      "description": "DEVELOPMENT/ACCEPTANCE EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. Only road-to-road replacement is supported. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_roads after success.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1777,7 +1777,7 @@
     },
     {
       "name": "list_objects",
-      "description": "List standalone trees and plants (not building sub-objects) with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Use the entity id with demolish to remove them.",
+      "description": "Read-only inventory of standalone trees and plants (not building sub-objects), with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Generic demolish does not remove these objects; clearing is deferred to a future spatial brush tool.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1833,7 +1833,7 @@
     },
     {
       "name": "save_game",
-      "description": "Trigger a manual save (asynchronous). Use before large construction batches as a safety net. Default name is timestamped 'CS2MCP ...'.",
+      "description": "DEVELOPMENT/ACCEPTANCE: trigger an asynchronous manual save when an acceptance procedure or the player explicitly requires one. Do not use it as an ordinary autonomous safety step. The default name is timestamped 'CS2MCP ...'.",
       "parameters": {
         "type": "object",
         "properties": {
