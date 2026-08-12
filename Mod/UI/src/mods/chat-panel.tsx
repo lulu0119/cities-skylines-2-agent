@@ -301,11 +301,9 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
     setBusy(store.busy);
     setPending(store.pending);
     setContext(parsed.context ?? null);
-    if (store.messages.length === 0) {
-      const hydrated = toUiMessages(parsed.messages ?? []);
-      store.nextId = hydrated.length;
-      syncMessages(hydrated);
-    }
+    const hydrated = toUiMessages(parsed.messages ?? []);
+    store.nextId = hydrated.length;
+    syncMessages(hydrated);
   }, [stateJson]);
 
   const send = () => {

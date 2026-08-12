@@ -44,8 +44,6 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string StateDirectory => Path.Combine(RuntimeDataDirectory, "state");
 
-        public static string ContextBlocksFile => Path.Combine(StateDirectory, "context-blocks.json");
-
         /// <summary>
         /// Development payloads live outside Mods so rebuilding them does not
         /// trigger the game's asset watcher or a Gameface media reload.

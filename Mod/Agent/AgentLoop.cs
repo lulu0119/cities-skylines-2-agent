@@ -116,6 +116,19 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             return Instance;
         }
 
+        /// <summary>
+        /// Starts a clean session for a newly loaded city. The previous loop is
+        /// cancelled and disposed so pending work, history and enabled tool
+        /// groups cannot leak across saves.
+        /// </summary>
+        public static AgentLoop StartCitySession()
+        {
+            AgentLoop previous = Instance;
+            var current = new AgentLoop();
+            previous?.Dispose();
+            return current;
+        }
+
         private readonly Channel<AgentInput> m_Pending = Channel.CreateUnbounded<AgentInput>();
         private readonly List<ChatMessage> m_History = new List<ChatMessage>();
         private readonly object m_Lock = new object();

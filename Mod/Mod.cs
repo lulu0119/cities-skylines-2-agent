@@ -11,7 +11,6 @@ namespace CitiesSkylines2Agent
     {
         public static ILog log = LogManager.GetLogger($"{nameof(CitiesSkylines2Agent)}.{nameof(Mod)}").SetShowsErrorsInUI(false);
         private Setting m_Setting;
-        private AgentLoop m_AgentLoop;
 
         public void OnLoad(UpdateSystem updateSystem)
         {
@@ -28,7 +27,7 @@ namespace CitiesSkylines2Agent
             AssetDatabase.global.LoadSettings(nameof(CitiesSkylines2Agent), m_Setting, new Setting(this));
             Setting.Instance = m_Setting;
 
-            m_AgentLoop = AgentLoop.EnsureCreated();
+            AgentLoop.EnsureCreated();
 
             // UIUpdate keeps running while the simulation is paused.
             updateSystem.UpdateAt<ToolQueueSystem>(SystemUpdatePhase.UIUpdate);
@@ -40,8 +39,7 @@ namespace CitiesSkylines2Agent
         public void OnDispose()
         {
             log.Info(nameof(OnDispose));
-            m_AgentLoop?.Dispose();
-            m_AgentLoop = null;
+            AgentLoop.Instance?.Dispose();
             Setting.Instance = null;
             if (m_Setting != null)
             {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Threading;
+using Colossal.Serialization.Entities;
 using Colossal.UI.Binding;
 using Game;
 using Game.SceneFlow;
@@ -25,7 +26,7 @@ namespace CitiesSkylines2Agent.Agent
         private ValueBinding<string> m_StateBinding;
         private EventBinding<string> m_EventBinding;
         private int m_StateDirty;
-        private bool m_Subscribed;
+        private AgentLoop m_SubscribedLoop;
         private AgentUiEvent m_DeferredEvent;
         private bool m_AutoStartSent;
 
@@ -34,12 +35,7 @@ namespace CitiesSkylines2Agent.Agent
         {
             base.OnCreate();
 
-            AgentLoop loop = AgentLoop.EnsureCreated();
-            if (!m_Subscribed)
-            {
-                loop.UiEvent += OnAgentEvent;
-                m_Subscribed = true;
-            }
+            Subscribe(AgentLoop.EnsureCreated());
 
             m_StateBinding = new ValueBinding<string>(
                 Group,
@@ -62,6 +58,25 @@ namespace CitiesSkylines2Agent.Agent
             PushState();
         }
 
+        [Preserve]
+        protected override void OnGameLoadingComplete(Purpose purpose, GameMode mode)
+        {
+            base.OnGameLoadingComplete(purpose, mode);
+            if (mode != GameMode.Game)
+            {
+                return;
+            }
+
+            Unsubscribe();
+            ContextBlockStore.Clear();
+            Subscribe(AgentLoop.StartCitySession());
+            while (m_Events.TryDequeue(out _)) { }
+            m_DeferredEvent = null;
+            m_AutoStartSent = false;
+            Interlocked.Exchange(ref m_StateDirty, 1);
+            PushState();
+        }
+
         private void OnSend(string text)
         {
             if (!string.IsNullOrWhiteSpace(text))
@@ -73,6 +88,27 @@ namespace CitiesSkylines2Agent.Agent
         private void OnInterrupt()
         {
             AgentLoop.EnsureCreated().Interrupt();
+        }
+
+        private void Subscribe(AgentLoop loop)
+        {
+            if (ReferenceEquals(m_SubscribedLoop, loop))
+            {
+                return;
+            }
+            Unsubscribe();
+            m_SubscribedLoop = loop;
+            m_SubscribedLoop.UiEvent += OnAgentEvent;
+        }
+
+        private void Unsubscribe()
+        {
+            if (m_SubscribedLoop == null)
+            {
+                return;
+            }
+            m_SubscribedLoop.UiEvent -= OnAgentEvent;
+            m_SubscribedLoop = null;
         }
 
         private void OnAgentEvent(AgentUiEvent agentEvent)
@@ -187,15 +223,7 @@ namespace CitiesSkylines2Agent.Agent
         [Preserve]
         protected override void OnDestroy()
         {
-            if (m_Subscribed)
-            {
-                AgentLoop loop = AgentLoop.Instance;
-                if (loop != null)
-                {
-                    loop.UiEvent -= OnAgentEvent;
-                }
-                m_Subscribed = false;
-            }
+            Unsubscribe();
             base.OnDestroy();
         }
     }
