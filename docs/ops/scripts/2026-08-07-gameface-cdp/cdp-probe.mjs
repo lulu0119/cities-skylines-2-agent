@@ -1,92 +1,11 @@
 /**
  * Gameface CDP DOM probe for Cities: Skylines II (-uiDeveloperMode → :9444).
- * Session 548a1a handoff helper. Requires `ws` on NODE_PATH (e.g. npm i ws in a temp dir).
- *
- *   $env:NODE_PATH = "$env:TEMP\cdp-ws\node_modules"
- *   node docs/ops/scripts/2026-08-07-gameface-cdp/cdp-probe.mjs
+ * Requires `ws` on NODE_PATH (for example, npm i ws in a temp directory).
  */
-import http from "node:http"
-import { createRequire } from "node:module"
-
-const require = createRequire(import.meta.url)
-
-function getJson(url) {
-  return new Promise((resolve, reject) => {
-    http
-      .get(url, (res) => {
-        let data = ""
-        res.on("data", (chunk) => {
-          data += chunk
-        })
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch (error) {
-            reject(error)
-          }
-        })
-      })
-      .on("error", reject)
-  })
-}
-
-function loadWebSocket() {
-  return require("ws")
-}
-
-async function evaluate(wsUrl, expression) {
-  const WebSocket = loadWebSocket()
-  const ws = new WebSocket(wsUrl)
-  let nextId = 0
-  const pending = new Map()
-
-  const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = ++nextId
-      const timer = setTimeout(() => {
-        pending.delete(id)
-        reject(new Error(`timeout ${method}`))
-      }, 10000)
-      pending.set(id, {
-        resolve: (message) => {
-          clearTimeout(timer)
-          resolve(message)
-        },
-        reject,
-      })
-      ws.send(JSON.stringify({ id, method, params }))
-    })
-
-  ws.on("message", (raw) => {
-    const message = JSON.parse(String(raw))
-    if (message.id && pending.has(message.id)) {
-      pending.get(message.id).resolve(message)
-      pending.delete(message.id)
-    }
-  })
-
-  await new Promise((resolve, reject) => {
-    ws.once("open", resolve)
-    ws.once("error", reject)
-  })
-
-  await send("Runtime.enable")
-  const result = await send("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-  })
-  ws.close()
-  return result
-}
-
-const pages = await getJson("http://127.0.0.1:9444/json/list")
-const wsUrl = pages[0]?.webSocketDebuggerUrl
-if (!wsUrl) {
-  throw new Error("no Gameface page on :9444 — start CS2 with -uiDeveloperMode")
-}
+import { evaluateExpressions } from "./cdp-client.mjs"
 
 // Gameface QuerySelector rejects :not(); keep selectors simple.
-const expression = process.env.CDP_EXPRESSION || `(() => {
+const defaultExpression = `(() => {
   const textHits = []
   const walk = (node, depth) => {
     if (!node || depth > 30) return
@@ -123,12 +42,30 @@ const expression = process.env.CDP_EXPRESSION || `(() => {
   return {
     title: document.title,
     url: location.href,
-    bodyLen: (document.body && document.body.innerHTML ? document.body.innerHTML.length : 0),
+    bodyLen: document.body?.innerHTML?.length || 0,
     textHits: Array.from(new Set(textHits)).slice(0, 40),
     panels,
     controls,
   }
 })()`
 
-const result = await evaluate(wsUrl, expression)
-console.log(JSON.stringify({ wsUrl, result }, null, 2))
+let expressions
+if (process.env.CDP_EXPRESSIONS) {
+  expressions = JSON.parse(process.env.CDP_EXPRESSIONS)
+  if (!Array.isArray(expressions) || expressions.some((value) => typeof value !== "string")) {
+    throw new Error("CDP_EXPRESSIONS must be a JSON array of strings")
+  }
+} else {
+  const expression = process.env.CDP_EXPRESSION || defaultExpression
+  const parsedRepeat = Number.parseInt(process.env.CDP_REPEAT || "1", 10)
+  const repeat = Number.isFinite(parsedRepeat) ? Math.max(1, Math.min(100, parsedRepeat)) : 1
+  expressions = Array.from({ length: repeat }, () => expression)
+}
+
+const parsedDelay = Number.parseInt(process.env.CDP_DELAY_MS || "0", 10)
+const delayMs = Number.isFinite(parsedDelay) ? Math.max(0, parsedDelay) : 0
+const evaluated = await evaluateExpressions(expressions, { delayMs })
+const output = evaluated.results.length === 1
+  ? { wsUrl: evaluated.wsUrl, result: evaluated.results[0] }
+  : evaluated
+console.log(JSON.stringify(output, null, 2))

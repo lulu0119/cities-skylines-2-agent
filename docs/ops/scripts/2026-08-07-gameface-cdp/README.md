@@ -24,6 +24,29 @@ node docs/ops/scripts/2026-08-07-gameface-cdp/cdp-probe.mjs
 Remove-Item Env:CDP_EXPRESSION
 ```
 
+For repeated probes or multi-step UI work, keep one inspector connection instead of
+starting one Node process per expression:
+
+```powershell
+$env:CDP_EXPRESSION = '(() => ({ title: document.title }))()'
+$env:CDP_REPEAT = '20'
+node docs/ops/scripts/2026-08-07-gameface-cdp/cdp-probe.mjs
+Remove-Item Env:CDP_EXPRESSION, Env:CDP_REPEAT
+
+$env:CDP_EXPRESSIONS = @(
+  '(() => ({ step: 1 }))()',
+  '(() => ({ step: 2 }))()'
+) | ConvertTo-Json -Compress
+$env:CDP_DELAY_MS = '200'
+node docs/ops/scripts/2026-08-07-gameface-cdp/cdp-probe.mjs
+Remove-Item Env:CDP_EXPRESSIONS, Env:CDP_DELAY_MS
+```
+
+The shared client deliberately does not enable the whole Runtime event domain. It
+uses short-lived object groups, releases them after every evaluation, and waits for
+the WebSocket close handshake. Prefer `CDP_EXPRESSIONS`/`CDP_REPEAT` for acceptance
+automation so a sequence reuses one connection.
+
 **Gotchas observed**
 
 - Gameface has no `fetch`, incomplete `HTMLElement.click`, and rejects CSS `:not()` in `querySelector`.
