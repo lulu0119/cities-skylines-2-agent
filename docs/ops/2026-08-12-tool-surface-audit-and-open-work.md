@@ -204,11 +204,24 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 `agent_enable_tool_group(construction)` 成功后，下一次 generation 虽已携带扩展后的工具
 定义（输入 token 明显增加），模型仍沿用首次 generation 的“没有 demolish”判断并结束回合；
 而 `AgentToolSurface.m_EnabledGroups` 又没有在下一玩家回合开始时清空，使 construction
-错误跨回合保留，第二个玩家回合才可直接调用 `demolish`。本地修复现已让每个新玩家
+错误跨回合保留，第二个玩家回合才可直接调用 `demolish`。`f4a5ed2` 已让每个新玩家
 回合先 reset 工具组，并让 `agent_enable_tool_group` 返回经过视觉/科技树/拆除权限过滤的
 真实工具名及“下一 generation 直接调用”的明确指令；工具说明同步强调该行为。
-`dotnet build` 通过（0 error，15 条既有 ILRepack warning），仍需在另一张全新受控存档
-验证同回合启用后立即调用，以及下一玩家回合不再继承该组。
+`dotnet build` 通过（0 error，15 条既有 ILRepack warning）。随后在另一张全新河谷三角洲
+普通模式城市的 session `f5990708` 完成真机复验：回合 `aa4ca9a4` 先启用 construction，
+下一 generation 立即调用 `demolish(2147483647, 2147483647)` 并稳定得到
+`kind=not_found`；新玩家回合 `e0dcfacc` 在禁止重新启用工具组后看不到 `demolish`，没有
+产生 function 事件。`agent-timeline-f5990708.jsonl` 完整记录两个回合、两次首回合 function
+与各自 `turn.finish`；验收过程中一度看到空文件，但后续同一路径已实时出现完整事件，
+没有形成可复现的 observability 产品故障。该验收城未发生有效实体写入，对应
+`13-August-05-09-28.cok` / `.cid` 已精确移入 Windows 回收站，不再复用。
+
+该轮仍出现一项独立红灯：`Cities2` 私有内存从约 31 GB 持续增至 92.8 GB，系统可用
+物理内存降至约 1.4 GB；向主窗口发出正常关闭后，进程超过 75 秒仍无响应，只能精确
+终止该 `Cities2` PID。此时 CDP 已使用共享单连接 helper，且本轮只做少量、最小返回值
+评估，因此不能直接沿用“旧 CDP helper 泄漏”作为根因。长期自主经营前必须用冷启动
+基线区分空闲模拟、Agent generation、timeline 写入与 CDP 评估各自的内存增量，并保证
+正常退出不再卡死。
 
 #### 本轮排水口排查新增的代码问题
 
