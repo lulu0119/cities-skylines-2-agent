@@ -51,7 +51,7 @@ namespace CitiesSkylines2Agent.Agent
         public static string HotReloadDirectory => Path.Combine(RuntimeDataDirectory, "hot-reload");
 
         public static string HotReloadHandlersFile =>
-            Path.Combine(HotReloadDirectory, "RequestHandlers.dll");
+            Path.Combine(HotReloadDirectory, "RequestHandlers.payload");
 
         public static string HotReloadToolCatalogFile =>
             Path.Combine(HotReloadDirectory, "ToolCatalog.json");

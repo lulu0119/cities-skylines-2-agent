@@ -152,6 +152,17 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 暴露；`Debug548a1a` 已删除；运行数据已迁到 `ModsData`；进程内 bridge 已用
 `Success + BridgeErrorKind` 取代 HTTP 状态码。
 
+2026-08-13 冷启动还发现：游戏会把用户数据树中任意目录下的 hot-reload `.dll`
+递归识别为 code mod，仅把目录改名为 disabled 并不能禁用。handler payload 因此改用
+`RequestHandlers.payload`，继续由 host 通过 `Assembly.Load(byte[])` 显式加载；构建会
+移除新 hot-reload 目录里的旧 `.dll`。历史开发目录由验收机手动移出用户数据树，
+不在产品中增加尚未发布数据的迁移逻辑。
+
+同一机器随后完成生产内置 adapter 冷启动复验：`Modding.log` 只加载
+`CitiesSkylines2Agent-merged-b5311cae…`，`CitiesSkylines2Agent.HotReload` 加载次数
+从 2 降为 0；用户数据树中的 hot-reload `.dll` 数量为 0，正式 override 目录由 host
+重建为空目录。该轮尚停留在 MainMenu，没有载入旧城市。
+
 #### 本轮排水口排查新增的代码问题
 
 截至 2026-08-12，这些问题的修复已由 `2bc07d7` 提交并推送；`Mod` 构建通过。

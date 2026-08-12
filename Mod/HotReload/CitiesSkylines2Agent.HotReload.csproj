@@ -39,12 +39,18 @@
   <Target Name="DeployHotReloadPayload" AfterTargets="Build">
     <PropertyGroup>
       <HotReloadDir>$(UserDataPath)\ModsData\CitiesSkylines2Agent\hot-reload</HotReloadDir>
+      <!-- CS2 recursively discovers .dll files under the user-data tree as code
+           mods. The host loads this payload explicitly from bytes, so keep a
+           non-.dll extension to prevent a second, unintended mod load at boot. -->
+      <HotReloadHandlersPayload>$(HotReloadDir)\RequestHandlers.payload</HotReloadHandlersPayload>
+      <LegacyHotReloadHandlersDll>$(HotReloadDir)\RequestHandlers.dll</LegacyHotReloadHandlersDll>
     </PropertyGroup>
     <ItemGroup>
       <HotReloadSkills Include="..\Agent\Skills\**\SKILL.md" />
     </ItemGroup>
     <MakeDir Directories="$(HotReloadDir);$(HotReloadDir)\Skills" />
-    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(HotReloadDir)\RequestHandlers.dll" />
+    <Delete Files="$(LegacyHotReloadHandlersDll)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(HotReloadHandlersPayload)" />
     <Copy SourceFiles="..\Agent\ToolCatalog.json" DestinationFiles="$(HotReloadDir)\ToolCatalog.json" />
     <Copy
       SourceFiles="@(HotReloadSkills)"
