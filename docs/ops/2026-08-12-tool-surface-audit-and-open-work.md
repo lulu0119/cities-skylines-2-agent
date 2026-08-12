@@ -164,6 +164,57 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
     改为代码强制）：目前仍是 prompt 规则；若 `find_placement` 下线则自然作废。
 17. "先建路再放建筑"是否已日志级根除：skill 已加规则，但无确认证据。
 
+#### 本轮排水口排查新增的代码问题
+
+截至 2026-08-12，这些问题的修复已由 `2bc07d7` 提交并推送；`Mod` 构建通过。
+其中风机低压自动连接已在全新存档完成真机验收，其余放置改动仍按各自清单验收：
+
+- **建造 handler 泄漏了过多实现知识。** `RequestHandlers.Build.cs` 同时承担参数
+  解析、prefab 查找与分类、候选生成、临路/岸线规则、原生验证和错误文案映射，
+  使 `PlaceBuilding`、`FindPlacement`、`FindInfrastructureCandidate` 出现大量重复
+  `if/else`。问题不是条件分支本身，而是同一组放置知识散落在多个调用点。应把
+  seam 收敛到一个内部的“prefab 能力解析 + 放置解析”module，handler 只负责
+  调用并序列化统一结果，避免再拆出一批浅 module。
+- **HTTP 状态码泄漏进了进程内接口。** `BridgeResponse` 的 `400` / `404` / `409` /
+  `500` 来自旧 HTTP bridge；当前 Agent 主路径通过 `BridgeSystem.InvokeAsync` 进程内
+  调用，实际上只判断 `Status == 200` 或失败。内部接口因此携带了无用的传输层知识。
+  后续应先盘点兼容 HTTP 路由的真实调用方，再让内部 module 返回类型化结果，只在
+  HTTP adapter 的 seam 上映射状态码。
+- **建筑放置能力判断重复且有错误。** 当前实现会把 `ServiceUpgradeData` 升级件当作
+  可独立建筑、把所有 `BuildingData` 当作必须临路、以“建筑中心干燥 +
+  `HasWaterBehindBuilding`”近似原生岸线吸附，并把所有 `InWater` 都解释为需要桥梁。
+  这会让污水候选选中升级件，并错误地强迫排水口贴路或把道路修进水里。能力解析应
+  集中读取 `ServiceUpgradeData`、`BuildingFlags.RequireRoad`，岸线建筑统一复用原生
+  `SnapShoreline` / `CheckSurface` 语义；桥梁提示只能用于 `OperationKind.Net`。
+- **自动管线连接从建筑中心起线。** 放置后的连接队列虽然保存了 connector start，
+  实际施工却重新使用建筑中心，导致风机的低压电缆被原生验证判为
+  `OverlapExisting`。本地修改已将自动连接限定为“不要求临路且声明水、污水或低压
+  节点”的 prefab，并从 prefab 原生开放 `SubNet` marker node 起线；高压不在当前
+  自动连接范围内。
+- **风机能力汇总 flag 不完整。** `WindTurbine03` 的 `BuildingFlags` 没有
+  `HasLowVoltageNode`，但 prefab 的开放 `SubNet` 中存在可吸附的低压 marker。只读
+  汇总 flag 会把它误判为没有自动连接能力。能力解析现先读 `BuildingFlags`，仅对
+  `RequireRoad == false` 且汇总 flag 未声明连接的 prefab，再以开放 `SubNet` marker
+  作通用 fallback；水、污水和 `Voltage.Low` 都走同一规范，没有风机名称特例，
+  `Voltage.High` 明确不接受。`RequireRoad == true` 的临路建筑由道路自带网络服务，
+  不生成额外自动连接。
+
+#### 风机低压自动连接真机验收（2026-08-12）
+
+- 环境：关闭旧城市且未保存，从主菜单明确选择“新游戏 → 简单 → 山间航路”；
+  `SceneFlow.log` 记录 `Loading mode Game with purpose NewGame`，未使用继续或载入。
+- 约束：先中断自动恢复的“持续经营城市”任务；验收回合只允许只读选点以及一次
+  `place_building`，禁止 `build_road`、高压、其他建筑、分区、拆除和保存。
+- 操作：`WindTurbine03` 放在 `(-660, 30)`，距既有 Medium Road 约 21m。
+- 结果：`placed: true`、`connected: true`，`connection.prefab` 为
+  `Low-voltage Ground Cable`，终点 `(-666.6, 8.8)`；无 `connectionError`。
+- 写入审计：验收回合唯一写入是一次 `place_building`；17:46:56 的执行日志记录
+  该调用成功，本轮没有 `build_road`，没有补救施工，Agent 也没有调用
+  `save_game`。游戏曾按自身计时器生成 `12-August-17-49-28` 自动存档；退出后已将
+  对应 `.cok` / `.cid` 精确移入 Windows 回收站，因此未保留本次验收存档。
+- 结论：marker fallback 已在真实 prefab、真实原生放置与自动施工链路上通过；
+  风机的低压地缆由 `place_building` 自动排队施工，不是 Agent 手动接线。
+
 ### D. 产品决策未定
 
 18. 提取区最低资源覆盖率阈值。
