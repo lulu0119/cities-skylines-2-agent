@@ -616,7 +616,10 @@ namespace CS2MCP
                 {
                     return BridgeResponse.Error(404,
                         $"no valid placement found inside radius {searchRadius:F0}m around ({x:F0},{z:F0}): " +
-                        lastReason + ". " + PlacementSearchHint(capabilities));
+                        lastReason + ". " + PlacementRetryHint(
+                            capabilities,
+                            searchRadius,
+                            hasRotation));
                 }
             }
             else if (!TryResolvePlacement(
@@ -632,7 +635,7 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(409,
                     $"cannot resolve placement for '{prefab.name}' near ({x:F0},{z:F0}): {resolveReason}. " +
-                    PlacementSearchHint(capabilities));
+                    PlacementRetryHint(capabilities, searchRadius, hasRotation));
             }
             if (searchRadius <= 0f
                 && !IsCandidateBuildable(
@@ -643,7 +646,7 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(409,
                     $"cannot place '{prefab.name}' at ({x:F0},{z:F0}): {exactReason}. " +
-                    PlacementSearchHint(capabilities));
+                    PlacementRetryHint(capabilities, searchRadius, hasRotation));
             }
 
             // Resolve the connector only after radius search and rotation have
@@ -769,7 +772,7 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(404,
                     $"no placement candidate could be resolved within {radius:F0}m: {lastReason}. " +
-                    PlacementSearchHint(capabilities));
+                    PlacementRetryHint(capabilities, radius, hasRotation));
             }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
@@ -1980,21 +1983,45 @@ namespace CS2MCP
             return true;
         }
 
-        private static string PlacementSearchHint(PlacementCapabilities capabilities)
+        private static string PlacementRetryHint(
+            PlacementCapabilities capabilities,
+            float searchRadius,
+            bool hasRotation)
         {
+            string requirement;
             if (capabilities.RequiresRoad && capabilities.RequiresShoreline)
             {
-                return "Search near a shoreline with road frontage.";
+                requirement = "Choose a center near shoreline with road frontage.";
             }
-            if (capabilities.RequiresShoreline)
+            else if (capabilities.RequiresShoreline)
             {
-                return "Search near a wet/dry shoreline transition and within connection range of the city network.";
+                requirement = "Choose a center near a wet/dry shoreline transition and within connection range of the city network.";
             }
-            if (capabilities.RequiresRoad)
+            else if (capabilities.RequiresRoad)
             {
-                return "Search closer to an existing road.";
+                requirement = "Choose a center closer to an existing road.";
             }
-            return "Use a larger radius or a different center.";
+            else
+            {
+                requirement = "Choose a center with enough clear, owned land.";
+            }
+
+            string rotation = hasRotation
+                ? " Remove rotation so the tool can resolve orientation."
+                : " Keep rotation omitted so the tool can resolve orientation.";
+            if (searchRadius <= 0f)
+            {
+                return requirement +
+                    " Retry with a positive radius instead of the same exact pose." +
+                    rotation;
+            }
+            if (searchRadius < 300f)
+            {
+                return requirement +
+                    $" Increase radius above {searchRadius:F0}m (maximum 300m) or move the center." +
+                    rotation;
+            }
+            return requirement + " Move the center or fix the required road/network layout." + rotation;
         }
 
         /// <summary>

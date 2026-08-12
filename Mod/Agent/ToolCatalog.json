@@ -627,7 +627,7 @@
     },
     {
       "name": "place_building",
-      "description": "ONE-STEP placement: give prefab + x/z (and optional radius). With radius>0 the tool searches for one non-overlapping candidate, deriving shoreline snapping and road frontage from the prefab's PlacementFlags.Shoreline and BuildingFlags.RequireRoad values, then asks the game's real tool pipeline to validate and place it. With radius omitted it resolves and preflights the exact seed. Off-road utility nodes receive the required pipe/cable connection; road-fronted nodes use the networks carried by the road. It intentionally sends only one selected candidate to native preview because rejected previews can wedge the game tool. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
+      "description": "ONE-STEP placement: give prefab + x/z. For every agent-chosen site, include radius and omit rotation; the tool searches nearby for one non-overlapping candidate, derives shoreline snapping and road frontage from PlacementFlags.Shoreline and BuildingFlags.RequireRoad, then asks the game's real tool pipeline to validate and place it. Omit radius or set rotation only when the player explicitly requires an exact pose. If exact placement fails, retry with a larger radius and no rotation. Off-road utility nodes receive the required pipe/cable connection; road-fronted nodes use the networks carried by the road. Only one selected candidate enters native preview. Do NOT use this for regular zoned residential/commercial/industrial/office buildings - those grow from zone_area.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -647,11 +647,11 @@
             "type": "number",
             "minimum": 8,
             "maximum": 300,
-            "description": "Search radius in meters (omit to resolve the exact seed). Only one selected candidate enters the game tool; a rejection requires another center or a layout/network fix."
+            "description": "Nearby search radius in meters. Required for agent-chosen sites; omit only for a player-selected exact pose. Increase it after a failed exact or narrow placement."
           },
           "rotation": {
             "type": "number",
-            "description": "Rotation around Y axis in degrees. For RequireRoad prefabs, omit to face the nearest road. Shoreline snapping derives its orientation from the wet/dry boundary."
+            "description": "Exact Y-axis rotation in degrees. Omit for agent-chosen sites so RequireRoad prefabs face the road and shoreline prefabs derive orientation from the wet/dry boundary."
           }
         },
         "required": [
