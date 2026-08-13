@@ -34,8 +34,13 @@ place_building(prefab, x, z, radius?, rotation?)
 - Omitting `radius` remains an exact-placement mode for an explicit player-selected
   site. If exact placement fails, the Agent should retry with a larger radius and
   no explicit rotation rather than repeat the same pose.
-- The implementation selects one heuristic finalist and sends only that finalist
-  through the native preview/apply state machine. There is no multi-candidate pool.
+- The implementation takes one local ECS snapshot, generates a bounded internal
+  candidate set, resolves independent prefab capabilities such as `RequireRoad`
+  and `Shoreline`, preflights the complete rotated footprint against owned land,
+  buildings, roads and water, and ranks valid poses deterministically by distance,
+  frontage and required connector length. It sends only the best finalist through
+  the native preview/apply state machine. There is no model-visible multi-candidate
+  pool and no multi-candidate native probe.
 - `find_placement` and `find_infrastructure_candidate` leave the model-facing
   surface. Their implementation may remain temporarily while compatibility and
   handler cleanup are completed.

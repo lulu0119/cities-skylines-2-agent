@@ -1,7 +1,7 @@
 # Tool surface audit & open-work inventory (2026-08-12)
 
-**Status:** 2026-08-13 implementation reconciliation complete; controlled real-game
-acceptance remains open.
+**Status:** 2026-08-13 implementation reconciliation and bounded placement-planner
+upgrade complete; controlled real-game acceptance remains open.
 **Context:** the Windows verification machine is available again and `main` is clean
 and pushed. The accepted product decisions now live in
 `docs/adr/2026-08-13-agent-tool-surface-and-permissions.md`; they supersede the
@@ -12,7 +12,7 @@ investigation evidence and tracks the remaining live acceptance work.
 
 | 工具 | 语义 | 当前状态 |
 | --- | --- | --- |
-| `place_building(prefab, x, z, radius?)` | 一步搜索+提交：radius>0 时在 mod 侧做启发式网格搜索（归属/重叠/临街/海岸线），选一个候选直接进游戏原生管线验证并建造；radius 省略时精确放置 | 主路径；prompt 与 skill 均推荐 |
+| `place_building(prefab, x, z, radius?)` | 一步搜索+提交：radius>0 时读取一次局部 ECS 快照，按 prefab flags 生成有界候选，做完整 footprint 的归属/旋转碰撞/普通陆地避水/临街/岸线/自动接管预检并稳定排序，只把一个 finalist 送进游戏原生管线验证并建造；radius 省略时精确放置 | 代码与构建已完成；主路径；待全新存档真机验收 |
 | `find_infrastructure_candidate(role, x?, z?, radius?)` | 旧只读规划器：沿现有道路两侧生成候选，最终只把一个位置送原生预览 | 已退出模型面；backend 暂留作兼容/诊断实现，不再是真机产品验收项 |
 | `find_placement(prefab, x, z, attempts=1)` | 旧预览工具：`attempts` 被硬性 clamp 为 1，只对单点做原生 probe，不提交 | 已退出模型面；backend 暂留作兼容/诊断实现；AGENTS.md 已改为通过 `place_building` 的 radius/rotation 恢复 |
 
@@ -47,6 +47,24 @@ Tool 切回默认并禁用 `BridgeToolSystem`，多候选 probe 会卡死状态�
 放置提供期望中心和合理 radius、默认省略 rotation；module 内部负责候选搜索、
 prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/提交状态机。
 `find_placement` 与 `find_infrastructure_candidate` 均退出模型面。
+
+### 2026-08-13 实现结果
+
+- 三条 backend 路径已共用同一个内部 placement planner；外部
+  `place_building(prefab, x, z, radius?, rotation?)` 接口没有增加参数。
+- `Shoreline` 与 `RequireRoad` 作为独立能力组合；岸线候选来自真实水面 wet/dry
+  transition，临街候选沿真实道路曲线和 lot depth 生成，不再把抽水站当名称特例。
+- 普通候选使用自适应网格；内部 seed 上限 1024，位置/旋转去重，所有通过预检的
+  pose 按中心距离、临街间隙和 connector 长度稳定排序。
+- 预检覆盖完整旋转 footprint 的已购地、建筑 SAT 碰撞、道路折线碰撞和普通
+  `OnGround` 水体采样；岸线、漂浮、悬空、水下、水道 prefab 不受普通避水规则误伤。
+- 离路设施从 prefab 的开放连接 marker 判断水、污水或低压需求；先检测端点附近已有
+  同 prefab 网络，否则才规划 150m 内通往道路的 connector。临街 prefab 不额外接管。
+- 搜索失败汇总前三类主要拒绝原因；仍只有唯一 finalist 进入原生 Tool 状态机，避免
+  已知的多候选 preview 卡死。
+- 纯几何回归已覆盖旋转矩形相交/分离、长条 lot 的旧外接圆假阳性、道路折线碰撞和
+  最近点投影；`dotnet build` 通过。抽水站、排水口、风机、水塔、垃圾场和普通临街
+  建筑仍需玩家在全新存档完成真实 prefab/原生验证验收。
 
 ## 3. 全量工具组合/分离审计（2026-08-12）
 
@@ -234,8 +252,9 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 
 #### 本轮排水口排查新增的代码问题
 
-截至 2026-08-12，这些问题的修复已由 `2bc07d7` 提交并推送；`Mod` 构建通过。
-其中风机低压自动连接已在全新存档完成真机验收，其余放置改动仍按各自清单验收：
+截至 2026-08-13，第一轮修复已由 `2bc07d7` 提交并推送；本轮又把候选生成、能力读取、
+完整 footprint 预检、自动接管计划和排序收敛进一个内部 placement planner。风机低压
+自动连接曾在全新存档完成真机验收；本轮算法升级仍需按各自清单复验：
 
 - **建造 handler 泄漏了过多实现知识。** `RequestHandlers.Build.cs` 同时承担参数
   解析、prefab 查找与分类、候选生成、临路/岸线规则、原生验证和错误文案映射，
@@ -373,10 +392,10 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 
 需要把“建筑成功放置”“自动连接施工成功”“建筑最终获得供给”分开判断：
 
-- 排水口有一次成功放置并明确自动修建污水管。地表抽水站的问题则发生在
-  `RequireRoad + Shoreline` 的联合选址阶段，不应误判为自动拉水管失败。当前半径搜索只
-  生成固定网格种子，再逐点做岸线吸附和临路验证；它没有直接求解“岸线 × 可临街道路”的
-  可行走廊，因而在看似合理的中心周围反复耗尽候选。
+- 排水口有一次成功放置并明确自动修建污水管。地表抽水站的问题发生在
+  `RequireRoad + Shoreline` 的联合选址阶段，不应误判为自动拉水管失败。本轮 planner
+  已改为从真实 wet/dry transition 生成岸线候选，并优先保留能到达附近真实道路曲线的
+  pose，再统一验证临街距离；能否消除抽水站反复耗尽仍待全新存档验收。
 - 水塔属于离路设施，两次成功放置都由 `place_building` 自动接水管。初期发电容量存在，
   但 `fulfilledConsumption` 并未立刻完整满足；Agent 后来手工用两次 `build_road` 拉了低压线。
 - 当前能力解析只选择一种 utility（污水→水→低压优先），同一离路设施若声明两种连接需求，

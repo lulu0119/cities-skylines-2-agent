@@ -18,6 +18,10 @@ namespace CS2MCP
     public sealed partial class RequestHandlers
     {
         private const float kFootprintCellSize = 8f;
+        private const float kMapHalfSize = 7168f;
+        private const float kMapTileSize = 623.304347826f;
+        private const float kPlacementWaterDepth = 0.05f;
+        private const int kMaximumPlacementSeeds = 1024;
 
         private EntityQuery m_BuildingPrefabQuery;
         private bool m_BuildingPrefabQueryCreated;
@@ -558,124 +562,92 @@ namespace CS2MCP
             bool hasRotation = request.Query.ContainsKey("rotation");
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
-            WaterSurfaceData<SurfaceWater> waterSurfaceData = default;
-            if (capabilities.RequiresShoreline)
-            {
-                WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-                waterSurfaceData = water.GetSurfaceData(out JobHandle waterDeps);
-                waterDeps.Complete();
-            }
+            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+            WaterSurfaceData<SurfaceWater> waterSurfaceData =
+                water.GetSurfaceData(out JobHandle waterDeps);
+            waterDeps.Complete();
 
             float searchRadius = request.TryGetFloat("radius", out float rawRadius)
                 ? math.clamp(rawRadius, 8f, 300f)
                 : 0f;
-            PlacementPose pose = default;
+            PlacementSearchContext searchContext = CreatePlacementSearchContext(
+                capabilities,
+                requestedPosition.xz,
+                math.max(searchRadius, capabilities.ShorelineRadius));
+            PlacementPlan plan;
             if (searchRadius > 0f)
             {
-                bool found = false;
-                string lastReason = "no candidate positions in radius";
-                foreach (PlacementSeed seed in CreatePlacementSearchSeeds(
-                    capabilities,
-                    requestedPosition.xz,
-                    searchRadius,
-                    8f,
-                    ref waterSurfaceData))
-                {
-                    bool candidateHasRotation = hasRotation || seed.HasExplicitRotation;
-                    float candidateRotation = hasRotation
-                        ? rotationDegrees
-                        : seed.RotationDegrees;
-                    if (!TryResolvePlacement(
-                            capabilities,
-                            seed.Position,
-                            hasExplicitY: false,
-                            candidateHasRotation,
-                            candidateRotation,
-                            ref heightData,
-                            ref waterSurfaceData,
-                            out PlacementPose candidate,
-                            out string resolveReason))
-                    {
-                        lastReason = resolveReason;
-                        continue;
-                    }
-                    if (!IsCandidateBuildable(
-                            capabilities,
-                            candidate,
-                            out _,
-                            out string buildableReason))
-                    {
-                        lastReason = buildableReason;
-                        continue;
-                    }
-                    pose = candidate;
-                    found = true;
-                    break;
-                }
-                if (!found)
+                if (!TryPlanPlacement(
+                        capabilities,
+                        requestedPosition.xz,
+                        searchRadius,
+                        hasRotation,
+                        rotationDegrees,
+                        searchContext,
+                        ref heightData,
+                        ref waterSurfaceData,
+                        out plan,
+                        out string searchFailure))
                 {
                     return BridgeResponse.Error(BridgeErrorKind.NotFound,
                         $"no valid placement found inside radius {searchRadius:F0}m around ({x:F0},{z:F0}): " +
-                        lastReason + ". " + PlacementRetryHint(
+                        searchFailure + ". " + PlacementRetryHint(
                             capabilities,
                             searchRadius,
                             hasRotation));
                 }
             }
-            else if (!TryResolvePlacement(
-                    capabilities,
-                    requestedPosition,
-                    hasY,
-                    hasRotation,
-                    rotationDegrees,
-                    ref heightData,
-                    ref waterSurfaceData,
-                    out pose,
-                    out string resolveReason))
+            else
             {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict,
-                    $"cannot resolve placement for '{prefab.name}' near ({x:F0},{z:F0}): {resolveReason}. " +
-                    PlacementRetryHint(capabilities, searchRadius, hasRotation));
-            }
-            if (searchRadius <= 0f
-                && !IsCandidateBuildable(
-                    capabilities,
-                    pose,
-                    out _,
-                    out string exactReason))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict,
-                    $"cannot place '{prefab.name}' at ({x:F0},{z:F0}): {exactReason}. " +
-                    PlacementRetryHint(capabilities, searchRadius, hasRotation));
-            }
-
-            // Resolve the connector only after radius search and rotation have
-            // chosen the final placement. Otherwise a successful shifted
-            // placement can receive a pipe/cable aimed from the search center.
-            if (!TryResolveAutoConnect(
-                capabilities,
-                pose.Position,
-                pose.Rotation,
-                out Entity connectPrefabEntity,
-                out PrefabBase connectPrefab,
-                out float3 connectStart,
-                out float3 connectEnd,
-                out string connectReason))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict, connectReason);
+                if (!TryResolvePlacement(
+                        capabilities,
+                        requestedPosition,
+                        hasY,
+                        hasRotation,
+                        rotationDegrees,
+                        searchContext,
+                        ref heightData,
+                        ref waterSurfaceData,
+                        out PlacementPose pose,
+                        out string resolveReason))
+                {
+                    return BridgeResponse.Error(BridgeErrorKind.Conflict,
+                        $"cannot resolve placement for '{prefab.name}' near ({x:F0},{z:F0}): {resolveReason}. " +
+                        PlacementRetryHint(capabilities, searchRadius, hasRotation));
+                }
+                if (!TryEvaluatePlacement(
+                        capabilities,
+                        pose,
+                        searchContext,
+                        ref heightData,
+                        ref waterSurfaceData,
+                        out float roadClearance,
+                        out AutoConnectPlan autoConnect,
+                        out string exactReason))
+                {
+                    return BridgeResponse.Error(BridgeErrorKind.Conflict,
+                        $"cannot place '{prefab.name}' at ({x:F0},{z:F0}): {exactReason}. " +
+                        PlacementRetryHint(capabilities, searchRadius, hasRotation));
+                }
+                plan = new PlacementPlan
+                {
+                    Pose = pose,
+                    AutoConnect = autoConnect,
+                    RoadClearance = roadClearance,
+                };
             }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
             if (!tool.TryQueuePlacement(
                 prefabEntity,
                 prefab,
-                pose.Position,
-                pose.Rotation,
+                plan.Pose.Position,
+                plan.Pose.Rotation,
                 request,
-                connectPrefabEntity,
-                connectPrefab,
-                connectStart,
-                connectEnd))
+                plan.AutoConnect.PrefabEntity,
+                plan.AutoConnect.Prefab,
+                plan.AutoConnect.Start,
+                plan.AutoConnect.End))
             {
                 return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
@@ -701,9 +673,6 @@ namespace CS2MCP
             float radius = request.TryGetFloat("radius", out float rawRadius)
                 ? math.clamp(rawRadius, 8f, 300f)
                 : 40f;
-            int maxAttempts = request.TryGetInt("attempts", out int rawAttempts)
-                ? math.clamp(rawAttempts, 1, 1)
-                : 1;
             request.TryGetFloat("rotation", out float rotationDegrees);
 
             if (!TryFindStandaloneObjectPrefab(
@@ -722,61 +691,38 @@ namespace CS2MCP
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
-            WaterSurfaceData<SurfaceWater> waterSurfaceData = default;
-            if (capabilities.RequiresShoreline)
-            {
-                WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-                waterSurfaceData = water.GetSurfaceData(out JobHandle waterDeps);
-                waterDeps.Complete();
-            }
+            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+            WaterSurfaceData<SurfaceWater> waterSurfaceData =
+                water.GetSurfaceData(out JobHandle waterDeps);
+            waterDeps.Complete();
             bool hasRotation = request.Query.ContainsKey("rotation");
-            var candidates = new List<float3>();
-            float resolvedRotation = rotationDegrees;
-            string lastReason = "no candidate positions in radius";
-            foreach (PlacementSeed seed in CreatePlacementSearchSeeds(
-                capabilities,
-                new float2(x, z),
-                radius,
-                8f,
-                ref waterSurfaceData))
-            {
-                bool candidateHasRotation = hasRotation || seed.HasExplicitRotation;
-                float candidateRotation = hasRotation
-                    ? rotationDegrees
-                    : seed.RotationDegrees;
-                if (!TryResolvePlacement(
-                        capabilities,
-                        seed.Position,
-                        hasExplicitY: false,
-                        candidateHasRotation,
-                        candidateRotation,
-                        ref heightData,
-                        ref waterSurfaceData,
-                        out PlacementPose candidate,
-                        out lastReason))
-                {
-                    continue;
-                }
-                if (!IsCandidateBuildable(capabilities, candidate, out _, out lastReason))
-                {
-                    continue;
-                }
-                candidates.Add(candidate.Position);
-                resolvedRotation = candidate.RotationDegrees;
-                if (candidates.Count >= maxAttempts)
-                {
-                    break;
-                }
-            }
-            if (candidates.Count == 0)
+            float2 center = new float2(x, z);
+            PlacementSearchContext searchContext =
+                CreatePlacementSearchContext(capabilities, center, radius);
+            if (!TryPlanPlacement(
+                    capabilities,
+                    center,
+                    radius,
+                    hasRotation,
+                    rotationDegrees,
+                    searchContext,
+                    ref heightData,
+                    ref waterSurfaceData,
+                    out PlacementPlan plan,
+                    out string failure))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                    $"no placement candidate could be resolved within {radius:F0}m: {lastReason}. " +
+                    $"no placement candidate could be resolved within {radius:F0}m: {failure}. " +
                     PlacementRetryHint(capabilities, radius, hasRotation));
             }
 
             BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueueProbe(prefabEntity, prefab, candidates, resolvedRotation, request))
+            if (!tool.TryQueueProbe(
+                    prefabEntity,
+                    prefab,
+                    new[] { plan.Pose.Position },
+                    plan.Pose.RotationDegrees,
+                    request))
             {
                 return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
@@ -802,6 +748,85 @@ namespace CS2MCP
             public float3 Position;
             public bool HasExplicitRotation;
             public float RotationDegrees;
+            public bool PrioritizeForRoad;
+        }
+
+        private struct PlacementSeedKey : IEquatable<PlacementSeedKey>
+        {
+            public int X;
+            public int Z;
+            public int Rotation;
+
+            public bool Equals(PlacementSeedKey other)
+            {
+                return X == other.X && Z == other.Z && Rotation == other.Rotation;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return obj is PlacementSeedKey other && Equals(other);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int hash = X;
+                    hash = (hash * 397) ^ Z;
+                    return (hash * 397) ^ Rotation;
+                }
+            }
+        }
+
+        private sealed class PlacementPath
+        {
+            public Entity PrefabEntity;
+            public float HalfWidth;
+            public float3[] Points;
+        }
+
+        private struct PlacementFootprint
+        {
+            public float2 Center;
+            public float2 HalfExtents;
+            public float2 Right;
+            public float2 Forward;
+            public float Radius;
+        }
+
+        private sealed class PlacementSearchContext
+        {
+            public readonly List<PlacementPath> Roads = new List<PlacementPath>();
+            public readonly List<PlacementPath> Networks = new List<PlacementPath>();
+            public readonly List<PlacementFootprint> Buildings = new List<PlacementFootprint>();
+            public readonly HashSet<long> OwnedTiles = new HashSet<long>();
+            public ConnectorPrefab Connector;
+        }
+
+        private sealed class ConnectorPrefab
+        {
+            public Entity Entity;
+            public PrefabBase Prefab;
+            public string Error;
+        }
+
+        private struct AutoConnectPlan
+        {
+            public Entity PrefabEntity;
+            public PrefabBase Prefab;
+            public float3 Start;
+            public float3 End;
+            public float Distance;
+        }
+
+        private sealed class PlacementPlan
+        {
+            public PlacementPose Pose;
+            public AutoConnectPlan AutoConnect;
+            public float DistanceFromCenter;
+            public float RoadClearance;
+            public int GeneratedCandidates;
+            public int PreflightRejected;
         }
 
         /// <summary>
@@ -885,14 +910,10 @@ namespace CS2MCP
                     : string.Compare(a.prefab.name, b.prefab.name, StringComparison.Ordinal);
             });
 
-            bool needsWater = prefabs.Exists(item => item.capabilities.RequiresShoreline);
-            WaterSurfaceData<SurfaceWater> waterSurfaceData = default;
-            if (needsWater)
-            {
-                WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-                waterSurfaceData = water.GetSurfaceData(out JobHandle waterDependencies);
-                waterDependencies.Complete();
-            }
+            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+            WaterSurfaceData<SurfaceWater> waterSurfaceData =
+                water.GetSurfaceData(out JobHandle waterDependencies);
+            waterDependencies.Complete();
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
             var candidates = new List<InfrastructureCandidate>();
@@ -974,51 +995,36 @@ namespace CS2MCP
             ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
             out InfrastructureCandidate candidate)
         {
-            List<PlacementSeed> seeds = CreatePlacementSearchSeeds(
-                capabilities,
-                center,
-                radius,
-                32f,
-                ref waterSurfaceData);
-            int rejected = 0;
-            foreach (PlacementSeed seed in seeds)
+            PlacementSearchContext context =
+                CreatePlacementSearchContext(capabilities, center, radius);
+            if (!TryPlanPlacement(
+                    capabilities,
+                    center,
+                    radius,
+                    hasRotation: false,
+                    rotationDegrees: 0f,
+                    context,
+                    ref heightData,
+                    ref waterSurfaceData,
+                    out PlacementPlan plan,
+                    out _))
             {
-                if (!TryResolvePlacement(
-                        capabilities,
-                        seed.Position,
-                        hasExplicitY: false,
-                        seed.HasExplicitRotation,
-                        seed.RotationDegrees,
-                        ref heightData,
-                        ref waterSurfaceData,
-                        out PlacementPose pose,
-                        out _)
-                    || math.distance(pose.Position.xz, center) > radius
-                    || !IsCandidateBuildable(
-                        capabilities,
-                        pose,
-                        out float roadClearance,
-                        out _))
-                {
-                    rejected++;
-                    continue;
-                }
-                candidate = new InfrastructureCandidate
-                {
-                    PrefabEntity = capabilities.PrefabEntity,
-                    Prefab = prefab,
-                    Position = pose.Position,
-                    RotationDegrees = pose.RotationDegrees,
-                    ConstructionCost = constructionCost,
-                    DistanceFromCenter = math.distance(pose.Position.xz, center),
-                    RoadClearance = roadClearance,
-                    GeneratedCandidates = seeds.Count,
-                    PreflightRejected = rejected,
-                };
-                return true;
+                candidate = null;
+                return false;
             }
-            candidate = null;
-            return false;
+            candidate = new InfrastructureCandidate
+            {
+                PrefabEntity = capabilities.PrefabEntity,
+                Prefab = prefab,
+                Position = plan.Pose.Position,
+                RotationDegrees = plan.Pose.RotationDegrees,
+                ConstructionCost = constructionCost,
+                DistanceFromCenter = plan.DistanceFromCenter,
+                RoadClearance = plan.RoadClearance,
+                GeneratedCandidates = plan.GeneratedCandidates,
+                PreflightRejected = plan.PreflightRejected,
+            };
+            return true;
         }
 
         private List<PlacementSeed> CreatePlacementSearchSeeds(
@@ -1026,23 +1032,76 @@ namespace CS2MCP
             float2 center,
             float radius,
             float gridStep,
+            PlacementSearchContext context,
             ref WaterSurfaceData<SurfaceWater> waterSurfaceData)
         {
+            var result = new List<PlacementSeed>();
             if (capabilities.RequiresShoreline)
             {
-                return CreateShorelineSearchSeeds(center, radius, ref waterSurfaceData);
+                result.AddRange(CreateShorelineSearchSeeds(
+                    center,
+                    radius,
+                    ref waterSurfaceData));
             }
-            if (capabilities.RequiresRoad)
+            if (capabilities.RequiresRoad && !capabilities.RequiresShoreline)
             {
-                return CreateRoadsideSearchSeeds(capabilities.Building, center, radius);
+                result.AddRange(CreateRoadsideSearchSeeds(
+                    capabilities.Building,
+                    center,
+                    radius,
+                    context.Roads));
+            }
+            if (!capabilities.RequiresRoad && !capabilities.RequiresShoreline)
+            {
+                float boundedStep = math.max(
+                    gridStep,
+                    radius * math.sqrt(math.PI / (kMaximumPlacementSeeds * 0.9f)));
+                foreach (float3 position in CreateGridSearchSeeds(center, radius, boundedStep))
+                {
+                    result.Add(new PlacementSeed { Position = position });
+                }
             }
 
-            var result = new List<PlacementSeed>();
-            foreach (float3 position in CreateGridSearchSeeds(center, radius, gridStep))
+            if (capabilities.RequiresRoad && capabilities.RequiresShoreline)
             {
-                result.Add(new PlacementSeed { Position = position });
+                float maximumRoadDistance = capabilities.Building.m_LotSize.y * 4f
+                    + Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE
+                    + capabilities.ShorelineRadius
+                    + 32f;
+                for (int i = 0; i < result.Count; i++)
+                {
+                    PlacementSeed seed = result[i];
+                    if (TryFindNearestRoadPoint(
+                            context,
+                            seed.Position,
+                            maximumRoadDistance,
+                            out _,
+                            out _))
+                    {
+                        seed.PrioritizeForRoad = true;
+                        result[i] = seed;
+                    }
+                }
             }
-            return result;
+
+            var deduplicated = new List<PlacementSeed>();
+            var seen = new HashSet<PlacementSeedKey>();
+            foreach (PlacementSeed seed in result)
+            {
+                PlacementSeedKey key = CreatePlacementSeedKey(seed);
+                if (seen.Add(key))
+                {
+                    deduplicated.Add(seed);
+                }
+            }
+            SortPlacementSeeds(deduplicated, center);
+            if (deduplicated.Count > kMaximumPlacementSeeds)
+            {
+                deduplicated.RemoveRange(
+                    kMaximumPlacementSeeds,
+                    deduplicated.Count - kMaximumPlacementSeeds);
+            }
+            return deduplicated;
         }
 
         private static List<PlacementSeed> CreateShorelineSearchSeeds(
@@ -1132,59 +1191,399 @@ namespace CS2MCP
         private List<PlacementSeed> CreateRoadsideSearchSeeds(
             BuildingData building,
             float2 center,
-            float radius)
+            float radius,
+            IReadOnlyList<PlacementPath> roads)
         {
             var result = new List<PlacementSeed>();
-            using (NativeArray<Entity> roads = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            foreach (PlacementPath road in roads)
             {
-                foreach (Entity road in roads)
+                for (int pointIndex = 0; pointIndex < road.Points.Length; pointIndex++)
                 {
-                    PrefabRef roadPrefab = EntityManager.GetComponentData<PrefabRef>(road);
-                    if (!EntityManager.HasComponent<RoadData>(roadPrefab.m_Prefab))
+                    float3 roadPoint = road.Points[pointIndex];
+                    float3 before = road.Points[math.max(0, pointIndex - 1)];
+                    float3 after = road.Points[math.min(road.Points.Length - 1, pointIndex + 1)];
+                    float2 tangent = math.normalizesafe(after.xz - before.xz);
+                    if (math.lengthsq(tangent) < 0.5f)
                     {
                         continue;
                     }
-                    float roadHalfWidth = EntityManager.HasComponent<NetGeometryData>(roadPrefab.m_Prefab)
-                        ? EntityManager.GetComponentData<NetGeometryData>(roadPrefab.m_Prefab).m_DefaultWidth * 0.5f
-                        : 4f;
-                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(road);
-                    int samples = math.clamp((int)math.ceil(curve.m_Length / 32f), 1, 32);
-                    for (int sampleIndex = 0; sampleIndex < samples; sampleIndex++)
+                    float2 normal = new float2(-tangent.y, tangent.x);
+                    float offset = road.HalfWidth + building.m_LotSize.y * 4f + 1f;
+                    for (int side = -1; side <= 1; side += 2)
                     {
-                        float t = (sampleIndex + 0.5f) / samples;
-                        float3 roadPoint = BezierPoint(curve.m_Bezier, t);
-                        float3 before = BezierPoint(curve.m_Bezier, math.max(0f, t - 0.02f));
-                        float3 after = BezierPoint(curve.m_Bezier, math.min(1f, t + 0.02f));
-                        float2 tangent = math.normalizesafe(after.xz - before.xz);
-                        if (math.lengthsq(tangent) < 0.5f)
+                        float2 outward = normal * side;
+                        float2 position = roadPoint.xz + outward * offset;
+                        if (math.distance(position, center) > radius)
                         {
                             continue;
                         }
-                        float2 normal = new float2(-tangent.y, tangent.x);
-                        float offset = roadHalfWidth + building.m_LotSize.y * 4f + 2f;
-                        for (int side = -1; side <= 1; side += 2)
+                        float2 forward = -outward;
+                        result.Add(new PlacementSeed
                         {
-                            float2 outward = normal * side;
-                            float2 position = roadPoint.xz + outward * offset;
-                            if (math.distance(position, center) > radius)
-                            {
-                                continue;
-                            }
-                            float2 forward = -outward;
-                            result.Add(new PlacementSeed
-                            {
-                                Position = new float3(position.x, 0f, position.y),
-                                HasExplicitRotation = true,
-                                RotationDegrees = math.degrees(math.atan2(forward.x, forward.y)),
-                            });
-                        }
+                            Position = new float3(position.x, 0f, position.y),
+                            HasExplicitRotation = true,
+                            RotationDegrees = math.degrees(math.atan2(forward.x, forward.y)),
+                            PrioritizeForRoad = true,
+                        });
                     }
                 }
             }
-            result.Sort((a, b) =>
-                math.lengthsq(a.Position.xz - center)
-                    .CompareTo(math.lengthsq(b.Position.xz - center)));
+            SortPlacementSeeds(result, center);
             return result;
+        }
+
+        private static PlacementSeedKey CreatePlacementSeedKey(PlacementSeed seed)
+        {
+            return new PlacementSeedKey
+            {
+                X = (int)math.round(seed.Position.x * 0.5f),
+                Z = (int)math.round(seed.Position.z * 0.5f),
+                Rotation = seed.HasExplicitRotation
+                    ? (int)math.round(NormalizeDegrees(seed.RotationDegrees) * 10f)
+                    : -1,
+            };
+        }
+
+        private static void SortPlacementSeeds(List<PlacementSeed> seeds, float2 center)
+        {
+            seeds.Sort((first, second) =>
+            {
+                int byRoadPriority = second.PrioritizeForRoad.CompareTo(first.PrioritizeForRoad);
+                if (byRoadPriority != 0)
+                {
+                    return byRoadPriority;
+                }
+                int byDistance = math.lengthsq(first.Position.xz - center)
+                    .CompareTo(math.lengthsq(second.Position.xz - center));
+                if (byDistance != 0)
+                {
+                    return byDistance;
+                }
+                int byX = first.Position.x.CompareTo(second.Position.x);
+                if (byX != 0)
+                {
+                    return byX;
+                }
+                int byZ = first.Position.z.CompareTo(second.Position.z);
+                return byZ != 0
+                    ? byZ
+                    : first.RotationDegrees.CompareTo(second.RotationDegrees);
+            });
+        }
+
+        /// <summary>
+        /// Takes one ECS snapshot for a placement request. Candidate evaluation
+        /// then uses stable in-memory geometry instead of repeatedly allocating
+        /// and scanning every entity for every seed.
+        /// </summary>
+        private PlacementSearchContext CreatePlacementSearchContext(
+            PlacementCapabilities capabilities,
+            float2 center,
+            float radius)
+        {
+            var context = new PlacementSearchContext();
+            float contextRadius = radius
+                + math.max(capabilities.ShorelineRadius, BuildingRadius(capabilities.Building))
+                + 180f;
+            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                    float maximumDistance = contextRadius + curve.m_Length;
+                    if (math.distancesq(CurveCenter(curve.m_Bezier).xz, center)
+                        > maximumDistance * maximumDistance)
+                    {
+                        continue;
+                    }
+                    float halfWidth = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab)
+                            .m_DefaultWidth * 0.5f
+                        : 0f;
+                    var path = new PlacementPath
+                    {
+                        PrefabEntity = prefabRef.m_Prefab,
+                        HalfWidth = halfWidth,
+                        Points = SamplePlacementPath(curve),
+                    };
+                    context.Networks.Add(path);
+                    if (EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
+                    {
+                        context.Roads.Add(path);
+                    }
+                }
+            }
+
+            using (NativeArray<Entity> entities = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (!EntityManager.HasComponent<BuildingData>(prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
+                    Transform transform = EntityManager.GetComponentData<Transform>(entity);
+                    PlacementFootprint footprint = CreatePlacementFootprint(
+                        EntityManager.GetComponentData<BuildingData>(prefabRef.m_Prefab),
+                        transform.m_Position,
+                        transform.m_Rotation);
+                    float maximumDistance = contextRadius + footprint.Radius;
+                    if (math.distancesq(footprint.Center, center)
+                        <= maximumDistance * maximumDistance)
+                    {
+                        context.Buildings.Add(footprint);
+                    }
+                }
+            }
+
+            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (EntityManager.HasComponent<Game.Common.Native>(entity))
+                    {
+                        continue;
+                    }
+                    context.OwnedTiles.Add(MapTileKey(
+                        EntityManager.GetComponentData<Game.Areas.Geometry>(entity)
+                            .m_CenterPosition.xz));
+                }
+            }
+
+            if (!capabilities.RequiresRoad
+                && capabilities.UtilityConnection != UtilityConnectionKind.None)
+            {
+                context.Connector = ResolveConnectorPrefab(capabilities.UtilityConnection);
+            }
+            return context;
+        }
+
+        private static float3[] SamplePlacementPath(Game.Net.Curve curve)
+        {
+            int segments = math.clamp((int)math.ceil(curve.m_Length / 8f), 1, 192);
+            var points = new float3[segments + 1];
+            for (int i = 0; i <= segments; i++)
+            {
+                points[i] = BezierPoint(curve.m_Bezier, i / (float)segments);
+            }
+            return points;
+        }
+
+        private ConnectorPrefab ResolveConnectorPrefab(UtilityConnectionKind kind)
+        {
+            string name = ConnectorPrefabName(kind);
+            if (name == null)
+            {
+                return new ConnectorPrefab
+                {
+                    Error = $"unsupported automatic connector kind '{kind}'",
+                };
+            }
+            if (!TryFindPrefabByName(NetPrefabQuery, name, out Entity entity, out PrefabBase prefab))
+            {
+                return new ConnectorPrefab
+                {
+                    Error = $"required connector prefab '{name}' is unavailable",
+                };
+            }
+            return new ConnectorPrefab
+            {
+                Entity = entity,
+                Prefab = prefab,
+            };
+        }
+
+        private static string ConnectorPrefabName(UtilityConnectionKind kind)
+        {
+            switch (kind)
+            {
+                case UtilityConnectionKind.Sewage:
+                    return "Small Sewage Pipe";
+                case UtilityConnectionKind.Water:
+                    return "Small Water Pipe";
+                case UtilityConnectionKind.LowVoltage:
+                    return "Low-voltage Ground Cable";
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Resolves, preflights and ranks every bounded internal candidate, but
+        /// returns one finalist. Native validation remains a single transaction.
+        /// </summary>
+        private bool TryPlanPlacement(
+            PlacementCapabilities capabilities,
+            float2 center,
+            float radius,
+            bool hasRotation,
+            float rotationDegrees,
+            PlacementSearchContext context,
+            ref TerrainHeightData heightData,
+            ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
+            out PlacementPlan selected,
+            out string failure)
+        {
+            List<PlacementSeed> seeds = CreatePlacementSearchSeeds(
+                capabilities,
+                center,
+                radius,
+                8f,
+                context,
+                ref waterSurfaceData);
+            var candidates = new List<PlacementPlan>();
+            var rejectedReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+            var resolved = new HashSet<PlacementSeedKey>();
+            int rejected = 0;
+            foreach (PlacementSeed seed in seeds)
+            {
+                bool candidateHasRotation = hasRotation || seed.HasExplicitRotation;
+                float candidateRotation = hasRotation
+                    ? rotationDegrees
+                    : seed.RotationDegrees;
+                if (!TryResolvePlacement(
+                        capabilities,
+                        seed.Position,
+                        hasExplicitY: false,
+                        candidateHasRotation,
+                        candidateRotation,
+                        context,
+                        ref heightData,
+                        ref waterSurfaceData,
+                        out PlacementPose pose,
+                        out string reason))
+                {
+                    rejected++;
+                    AddPlacementRejection(rejectedReasons, reason);
+                    continue;
+                }
+                if (math.distance(pose.Position.xz, center) > radius + 0.5f)
+                {
+                    rejected++;
+                    AddPlacementRejection(
+                        rejectedReasons,
+                        "shoreline snapping moved the resolved footprint outside the requested radius");
+                    continue;
+                }
+                var resolvedSeed = new PlacementSeed
+                {
+                    Position = pose.Position,
+                    HasExplicitRotation = true,
+                    RotationDegrees = pose.RotationDegrees,
+                };
+                if (!resolved.Add(CreatePlacementSeedKey(resolvedSeed)))
+                {
+                    continue;
+                }
+                if (!TryEvaluatePlacement(
+                        capabilities,
+                        pose,
+                        context,
+                        ref heightData,
+                        ref waterSurfaceData,
+                        out float roadClearance,
+                        out AutoConnectPlan autoConnect,
+                        out reason))
+                {
+                    rejected++;
+                    AddPlacementRejection(rejectedReasons, reason);
+                    continue;
+                }
+
+                float distance = math.distance(pose.Position.xz, center);
+                candidates.Add(new PlacementPlan
+                {
+                    Pose = pose,
+                    AutoConnect = autoConnect,
+                    DistanceFromCenter = distance,
+                    RoadClearance = roadClearance,
+                });
+            }
+
+            if (candidates.Count == 0)
+            {
+                selected = null;
+                failure = FormatPlacementRejections(seeds.Count, resolved.Count, rejectedReasons);
+                return false;
+            }
+            candidates.Sort(ComparePlacementPlans);
+            selected = candidates[0];
+            selected.GeneratedCandidates = seeds.Count;
+            selected.PreflightRejected = rejected;
+            failure = null;
+            return true;
+        }
+
+        private static int ComparePlacementPlans(PlacementPlan first, PlacementPlan second)
+        {
+            float firstScore = first.DistanceFromCenter
+                + first.RoadClearance * 2f
+                + first.AutoConnect.Distance * 0.25f;
+            float secondScore = second.DistanceFromCenter
+                + second.RoadClearance * 2f
+                + second.AutoConnect.Distance * 0.25f;
+            int byScore = firstScore.CompareTo(secondScore);
+            if (byScore != 0)
+            {
+                return byScore;
+            }
+            int byDistance = first.DistanceFromCenter.CompareTo(second.DistanceFromCenter);
+            if (byDistance != 0)
+            {
+                return byDistance;
+            }
+            int byX = first.Pose.Position.x.CompareTo(second.Pose.Position.x);
+            if (byX != 0)
+            {
+                return byX;
+            }
+            int byZ = first.Pose.Position.z.CompareTo(second.Pose.Position.z);
+            return byZ != 0
+                ? byZ
+                : first.Pose.RotationDegrees.CompareTo(second.Pose.RotationDegrees);
+        }
+
+        private static void AddPlacementRejection(
+            Dictionary<string, int> reasons,
+            string reason)
+        {
+            reason = string.IsNullOrWhiteSpace(reason)
+                ? "candidate failed preflight for an unspecified reason"
+                : reason.Trim();
+            reasons.TryGetValue(reason, out int count);
+            reasons[reason] = count + 1;
+        }
+
+        private static string FormatPlacementRejections(
+            int generated,
+            int resolved,
+            Dictionary<string, int> reasons)
+        {
+            if (generated == 0)
+            {
+                return "generated 0 candidates for the prefab's placement requirements";
+            }
+            var ranked = new List<KeyValuePair<string, int>>(reasons);
+            ranked.Sort((first, second) =>
+            {
+                int byCount = second.Value.CompareTo(first.Value);
+                return byCount != 0
+                    ? byCount
+                    : string.Compare(first.Key, second.Key, StringComparison.Ordinal);
+            });
+            int count = math.min(3, ranked.Count);
+            var summaries = new List<string>(count);
+            for (int i = 0; i < count; i++)
+            {
+                summaries.Add($"{ranked[i].Value}x {ranked[i].Key}");
+            }
+            string reasonSummary = summaries.Count > 0
+                ? string.Join("; ", summaries)
+                : "all resolved candidates were duplicates";
+            return $"generated {generated} seeds and {resolved} distinct resolved poses; " +
+                $"leading rejections: {reasonSummary}";
         }
 
         private static readonly HashSet<string> kInfrastructureCandidateRoles =
@@ -1730,6 +2129,9 @@ namespace CS2MCP
             public BuildingData Building;
             public bool RequiresRoad;
             public bool RequiresShoreline;
+            public bool RejectsWater;
+            public bool AllowsObjectOverlap;
+            public bool AllowsRoadOverlap;
             public float ShorelineRadius;
             public float3 PlacementOffset;
             public UtilityConnectionKind UtilityConnection;
@@ -1763,6 +2165,8 @@ namespace CS2MCP
                     result.Building.m_LotSize.y)) * 4f;
                 BuildingFlags flags = result.Building.m_Flags;
                 result.RequiresRoad = (flags & BuildingFlags.RequireRoad) != 0;
+                result.AllowsRoadOverlap =
+                    (flags & (BuildingFlags.CanBeOnRoad | BuildingFlags.CanBeOnRoadArea)) != 0;
                 if ((flags & BuildingFlags.HasSewageNode) != 0)
                 {
                     result.UtilityConnection = UtilityConnectionKind.Sewage;
@@ -1780,8 +2184,20 @@ namespace CS2MCP
             {
                 PlaceableObjectData placeable =
                     EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity);
+                Game.Objects.PlacementFlags flags = placeable.m_Flags;
                 result.RequiresShoreline =
-                    (placeable.m_Flags & Game.Objects.PlacementFlags.Shoreline) != 0;
+                    (flags & Game.Objects.PlacementFlags.Shoreline) != 0;
+                result.AllowsObjectOverlap =
+                    (flags & Game.Objects.PlacementFlags.CanOverlap) != 0;
+                Game.Objects.PlacementFlags waterPlacement =
+                    Game.Objects.PlacementFlags.Shoreline
+                    | Game.Objects.PlacementFlags.Floating
+                    | Game.Objects.PlacementFlags.Hovering
+                    | Game.Objects.PlacementFlags.Underwater
+                    | Game.Objects.PlacementFlags.Waterway;
+                result.RejectsWater =
+                    (flags & Game.Objects.PlacementFlags.OnGround) != 0
+                    && (flags & waterPlacement) == 0;
                 result.PlacementOffset = placeable.m_PlacementOffset;
             }
             if (!result.RequiresRoad && result.UtilityConnection != UtilityConnectionKind.None)
@@ -1831,7 +2247,7 @@ namespace CS2MCP
             float radius,
             float step)
         {
-            int halfSteps = math.max(1, (int)math.floor(radius / step));
+            int halfSteps = math.max(1, (int)math.ceil(radius / step));
             float radiusSquared = radius * radius;
             var seeds = new List<float3>();
             for (int dz = -halfSteps; dz <= halfSteps; dz++)
@@ -1856,6 +2272,7 @@ namespace CS2MCP
             bool hasExplicitY,
             bool hasExplicitRotation,
             float rotationDegrees,
+            PlacementSearchContext context,
             ref TerrainHeightData heightData,
             ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
             out PlacementPose pose,
@@ -1881,7 +2298,7 @@ namespace CS2MCP
             if (!hasExplicitRotation)
             {
                 resolvedRotation = capabilities.RequiresRoad
-                    ? AutoRotationTowardsRoad(position)
+                    ? AutoRotationTowardsRoad(context, position)
                     : 0f;
             }
             pose = new PlacementPose
@@ -2023,100 +2440,6 @@ namespace CS2MCP
         }
 
         /// <summary>
-        /// Resolves the utility connector declared by prefab flags or an open
-        /// utility marker. Roadside nodes use the networks carried by the road;
-        /// off-road nodes get an explicit connector to that network.
-        /// </summary>
-        private bool TryResolveAutoConnect(
-            PlacementCapabilities capabilities,
-            float3 buildingPosition,
-            quaternion buildingRotation,
-            out Entity netPrefabEntity,
-            out PrefabBase netPrefab,
-            out float3 connectStart,
-            out float3 connectEnd,
-            out string reason)
-        {
-            netPrefabEntity = Entity.Null;
-            netPrefab = null;
-            connectStart = buildingPosition;
-            connectEnd = buildingPosition;
-            reason = null;
-
-            if (capabilities.RequiresRoad
-                || capabilities.UtilityConnection == UtilityConnectionKind.None)
-            {
-                return true;
-            }
-
-            string netName = null;
-            switch (capabilities.UtilityConnection)
-            {
-                case UtilityConnectionKind.Sewage:
-                    netName = "Small Sewage Pipe";
-                    break;
-                case UtilityConnectionKind.Water:
-                    netName = "Small Water Pipe";
-                    break;
-                case UtilityConnectionKind.LowVoltage:
-                    netName = "Low-voltage Ground Cable";
-                    break;
-            }
-
-            if (!TryFindPrefabByName(NetPrefabQuery, netName, out netPrefabEntity, out netPrefab))
-            {
-                netPrefabEntity = Entity.Null;
-                netPrefab = null;
-                reason = $"required connector prefab '{netName}' is unavailable";
-                return false;
-            }
-            if (!TryChooseUtilityConnectionPoint(
-                    capabilities,
-                    buildingPosition,
-                    buildingRotation,
-                    out connectStart))
-            {
-                netPrefabEntity = Entity.Null;
-                netPrefab = null;
-                reason = $"prefab declares {capabilities.UtilityConnection} but has no open matching SubNet connection node";
-                return false;
-            }
-            if (HasNetNearby(netPrefabEntity, connectStart, 14f))
-            {
-                // Already connected to this network type nearby; no stub needed.
-                netPrefabEntity = Entity.Null;
-                netPrefab = null;
-                return true;
-            }
-            if (!TryFindNearestRoadPoint(connectStart, 150f, out connectEnd))
-            {
-                netPrefabEntity = Entity.Null;
-                netPrefab = null;
-                reason = $"required {netName} cannot reach the city network: no road is within 150m";
-                return false;
-            }
-
-            // build_road rejects segments shorter than 8m; extend the stub
-            // toward the road if the building sits almost on it.
-            float2 delta = connectEnd.xz - connectStart.xz;
-            float length = math.length(delta);
-            if (length < 8f)
-            {
-                if (length < 0.5f)
-                {
-                    netPrefabEntity = Entity.Null;
-                    netPrefab = null;
-                    return true;
-                }
-                connectEnd = connectStart + new float3(math.normalizesafe(delta) * 8f, 0f);
-            }
-            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
-            TerrainHeightData heightData = terrain.GetHeightData();
-            connectEnd.y = TerrainUtils.SampleHeight(ref heightData, connectEnd);
-            return true;
-        }
-
-        /// <summary>
         /// Returns the prefab-local endpoints that the native object initializer
         /// marked as open for network snapping. Marker data is also the fallback
         /// connection declaration when BuildingFlags omits its summary flag.
@@ -2178,112 +2501,6 @@ namespace CS2MCP
             }
         }
 
-        private bool TryChooseUtilityConnectionPoint(
-            PlacementCapabilities capabilities,
-            float3 buildingPosition,
-            quaternion buildingRotation,
-            out float3 connectionPoint)
-        {
-            connectionPoint = buildingPosition;
-            if (capabilities.UtilityConnectionPoints == null
-                || capabilities.UtilityConnectionPoints.Count == 0)
-            {
-                return false;
-            }
-
-            float bestDistance = float.MaxValue;
-            foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
-            {
-                float3 worldPoint = buildingPosition + math.mul(buildingRotation, localPoint);
-                if (!TryFindNearestRoadPoint(worldPoint, 150f, out float3 roadPoint))
-                {
-                    continue;
-                }
-                float distance = math.distancesq(worldPoint.xz, roadPoint.xz);
-                if (distance < bestDistance)
-                {
-                    bestDistance = distance;
-                    connectionPoint = worldPoint;
-                }
-            }
-            return bestDistance < float.MaxValue;
-        }
-
-        private bool HasNetNearby(Entity netPrefabEntity, float3 position, float radius)
-        {
-            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    if (!EntityManager.HasComponent<PrefabRef>(entity))
-                    {
-                        continue;
-                    }
-                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
-                    if (prefabRef.m_Prefab != netPrefabEntity)
-                    {
-                        continue;
-                    }
-                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
-                    float2 mid = (curve.m_Bezier.a.xz + curve.m_Bezier.d.xz) * 0.5f;
-                    if (math.distance(mid, position.xz) <= radius)
-                    {
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        private bool TryFindNearestRoadPoint(float3 from, float maxDistance, out float3 nearest)
-        {
-            return TryFindNearestRoadPoint(from, maxDistance, out nearest, out _);
-        }
-
-        private bool TryFindNearestRoadPoint(
-            float3 from,
-            float maxDistance,
-            out float3 nearest,
-            out float roadHalfWidth)
-        {
-            nearest = from;
-            roadHalfWidth = 0f;
-            float bestClearance = maxDistance;
-            bool found = false;
-            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    if (!EntityManager.HasComponent<PrefabRef>(entity))
-                    {
-                        continue;
-                    }
-                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
-                    if (!EntityManager.HasComponent<Game.Prefabs.RoadData>(prefabRef.m_Prefab))
-                    {
-                        continue;
-                    }
-                    float halfWidth = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
-                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f
-                        : 0f;
-                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
-                    for (int i = 0; i <= 16; i++)
-                    {
-                        float3 p = BezierPoint(curve.m_Bezier, i / 16f);
-                        float clearance = math.distance(p.xz, from.xz) - halfWidth;
-                        if (clearance < bestClearance)
-                        {
-                            bestClearance = clearance;
-                            nearest = p;
-                            roadHalfWidth = halfWidth;
-                            found = true;
-                        }
-                    }
-                }
-            }
-            return found;
-        }
-
         private static float3 BezierPoint(Bezier4x3 bezier, float t)
         {
             float3 ab = math.lerp(bezier.a, bezier.b, t);
@@ -2294,13 +2511,123 @@ namespace CS2MCP
             return math.lerp(abc, bcd, t);
         }
 
-        /// <summary>
-        /// Buildings face +Z at rotation 0 in CS2, so point the front at the
-        /// nearest road point.
-        /// </summary>
-        private float AutoRotationTowardsRoad(float3 position)
+        private static float3 CurveCenter(Bezier4x3 bezier)
         {
-            if (TryFindNearestRoadPoint(position, 200f, out float3 roadPoint))
+            return BezierPoint(bezier, 0.5f);
+        }
+
+        private static float NormalizeDegrees(float degrees)
+        {
+            degrees %= 360f;
+            return degrees < 0f ? degrees + 360f : degrees;
+        }
+
+        private static long MapTileKey(float2 position)
+        {
+            int x = (int)Math.Floor((position.x + kMapHalfSize) / kMapTileSize);
+            int z = (int)Math.Floor((position.y + kMapHalfSize) / kMapTileSize);
+            return ((long)x << 32) | (uint)z;
+        }
+
+        private static float BuildingRadius(BuildingData building)
+        {
+            return math.length(new float2(building.m_LotSize)) * 4f;
+        }
+
+        private float BuildingRadius(Entity prefabEntity)
+        {
+            return EntityManager.HasComponent<BuildingData>(prefabEntity)
+                ? BuildingRadius(EntityManager.GetComponentData<BuildingData>(prefabEntity))
+                : 0f;
+        }
+
+        private bool IsOnOwnedTile(float3 position)
+        {
+            long key = MapTileKey(position.xz);
+            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (MapTileKey(EntityManager.GetComponentData<Game.Areas.Geometry>(entity)
+                            .m_CenterPosition.xz) == key)
+                    {
+                        return !EntityManager.HasComponent<Game.Common.Native>(entity);
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static PlacementFootprint CreatePlacementFootprint(
+            BuildingData building,
+            float3 position,
+            quaternion rotation)
+        {
+            float3 right3 = math.mul(rotation, new float3(1f, 0f, 0f));
+            float3 forward3 = math.forward(rotation);
+            float2 right = math.normalizesafe(right3.xz, new float2(1f, 0f));
+            float2 forward = math.normalizesafe(forward3.xz, new float2(0f, 1f));
+            float2 halfExtents = new float2(building.m_LotSize) * 4f;
+            return new PlacementFootprint
+            {
+                Center = position.xz,
+                HalfExtents = halfExtents,
+                Right = right,
+                Forward = forward,
+                Radius = math.length(halfExtents),
+            };
+        }
+
+        private static bool TryFindNearestRoadPoint(
+            PlacementSearchContext context,
+            float3 from,
+            float maxDistance,
+            out float3 nearest,
+            out float roadHalfWidth)
+        {
+            nearest = from;
+            roadHalfWidth = 0f;
+            if (context == null)
+            {
+                return false;
+            }
+            float bestClearance = maxDistance;
+            bool found = false;
+            foreach (PlacementPath road in context.Roads)
+            {
+                for (int i = 1; i < road.Points.Length; i++)
+                {
+                    float amount = PlacementSearchMath.ClosestPointAmount(
+                        from.xz,
+                        road.Points[i - 1].xz,
+                        road.Points[i].xz);
+                    float3 closest = math.lerp(
+                        road.Points[i - 1],
+                        road.Points[i],
+                        amount);
+                    float clearance = math.distance(closest.xz, from.xz) - road.HalfWidth;
+                    if (clearance < bestClearance)
+                    {
+                        bestClearance = clearance;
+                        nearest = closest;
+                        roadHalfWidth = road.HalfWidth;
+                        found = true;
+                    }
+                }
+            }
+            return found;
+        }
+
+        private float AutoRotationTowardsRoad(
+            PlacementSearchContext context,
+            float3 position)
+        {
+            if (TryFindNearestRoadPoint(
+                    context,
+                    position,
+                    200f,
+                    out float3 roadPoint,
+                    out _))
             {
                 float2 delta = roadPoint.xz - position.xz;
                 if (math.lengthsq(delta) > 0.25f)
@@ -2311,154 +2638,142 @@ namespace CS2MCP
             return 0f;
         }
 
-        private bool IsCandidateBuildable(
+        private bool TryEvaluatePlacement(
             PlacementCapabilities capabilities,
             PlacementPose pose,
+            PlacementSearchContext context,
+            ref TerrainHeightData heightData,
+            ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
             out float roadClearance,
+            out AutoConnectPlan autoConnect,
             out string reason)
         {
-            Entity prefabEntity = capabilities.PrefabEntity;
-            float3 position = pose.Position;
-            quaternion rotation = pose.Rotation;
             roadClearance = 0f;
-            if (!IsOnOwnedTile(position))
+            autoConnect = default;
+            PlacementFootprint footprint = CreatePlacementFootprint(
+                capabilities.Building,
+                pose.Position,
+                pose.Rotation);
+            if (!IsFootprintOnOwnedTiles(context, footprint))
             {
-                reason = "outside owned map tiles (buy a tile first)";
+                reason = "building footprint crosses outside owned map tiles (buy a tile first)";
                 return false;
             }
-            if (OverlapsExistingBuilding(prefabEntity, position))
+            if (!capabilities.AllowsObjectOverlap
+                && OverlapsExistingBuilding(context, footprint))
             {
-                reason = "overlaps an existing building";
+                reason = "building footprint overlaps an existing building";
                 return false;
             }
-            if (OverlapsExistingRoad(prefabEntity, position, rotation))
+            if (!capabilities.AllowsRoadOverlap
+                && OverlapsExistingRoad(context, footprint))
             {
                 reason = "building footprint overlaps an existing road";
                 return false;
             }
-            if (capabilities.RequiresRoad)
+            if (capabilities.RejectsWater
+                && FootprintTouchesWater(footprint, ref waterSurfaceData))
             {
-                BuildingData building = capabilities.Building;
-                float3 front = position + math.forward(rotation) * (building.m_LotSize.y * 4f);
-                if (!TryFindNearestRoadPoint(
-                        front,
-                        Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE,
-                        out float3 roadPoint,
-                        out float roadHalfWidth))
-                {
-                    reason = $"building frontage is more than {Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE:F1}m from a road (build a road to the site first)";
-                    return false;
-                }
-                float centerlineDistance = math.distance(front.xz, roadPoint.xz);
-                float allowed = Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE + roadHalfWidth;
-                roadClearance = math.max(0f, centerlineDistance - roadHalfWidth);
-                if (centerlineDistance < roadHalfWidth - 2f)
-                {
-                    reason = "building footprint overlaps the road (move its center away from the road)";
-                    return false;
-                }
-                if (centerlineDistance > allowed)
-                {
-                    reason = $"building frontage is more than {Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE:F1}m from a road (build a road to the site first)";
-                    return false;
-                }
+                reason = "ordinary ground building footprint intersects water";
+                return false;
             }
-            if (!TryResolveAutoConnect(
+            if (capabilities.RequiresRoad
+                && !TryValidateRoadFrontage(
                     capabilities,
-                    position,
-                    rotation,
-                    out _,
-                    out _,
-                    out _,
-                    out _,
+                    pose,
+                    context,
+                    out roadClearance,
                     out reason))
             {
                 return false;
             }
-            reason = null;
+            return TryPlanAutoConnect(
+                capabilities,
+                pose,
+                context,
+                ref heightData,
+                out autoConnect,
+                out reason);
+        }
+
+        private static bool IsFootprintOnOwnedTiles(
+            PlacementSearchContext context,
+            PlacementFootprint footprint)
+        {
+            float2 right = footprint.Right * footprint.HalfExtents.x;
+            float2 forward = footprint.Forward * footprint.HalfExtents.y;
+            float2[] corners =
+            {
+                footprint.Center + right + forward,
+                footprint.Center + right - forward,
+                footprint.Center - right + forward,
+                footprint.Center - right - forward,
+            };
+            if (!context.OwnedTiles.Contains(MapTileKey(footprint.Center)))
+            {
+                return false;
+            }
+            foreach (float2 corner in corners)
+            {
+                if (!context.OwnedTiles.Contains(MapTileKey(corner)))
+                {
+                    return false;
+                }
+                if (!context.OwnedTiles.Contains(MapTileKey(math.lerp(
+                        footprint.Center,
+                        corner,
+                        0.5f))))
+                {
+                    return false;
+                }
+            }
             return true;
         }
 
-        private bool OverlapsExistingRoad(
-            Entity prefabEntity,
-            float3 position,
-            quaternion rotation)
+        private static bool OverlapsExistingBuilding(
+            PlacementSearchContext context,
+            PlacementFootprint candidate)
         {
-            if (!EntityManager.HasComponent<BuildingData>(prefabEntity))
+            foreach (PlacementFootprint existing in context.Buildings)
             {
-                return false;
-            }
-            int2 lot = EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize;
-            float halfWidth = lot.x * 4f;
-            float halfDepth = lot.y * 4f;
-            quaternion inverseRotation = math.inverse(rotation);
-            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
+                float maximumDistance = candidate.Radius + existing.Radius;
+                if (math.distancesq(candidate.Center, existing.Center)
+                    >= maximumDistance * maximumDistance)
                 {
-                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
-                    if (!EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
-                    {
-                        continue;
-                    }
-                    float roadHalfWidth = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
-                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f
-                        : 0f;
-                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
-                    for (int i = 0; i <= 16; i++)
-                    {
-                        float3 roadPoint = BezierPoint(curve.m_Bezier, i / 16f);
-                        float3 local = math.mul(inverseRotation, roadPoint - position);
-                        if (math.abs(local.x) < halfWidth + roadHalfWidth - 1f
-                            && math.abs(local.z) < halfDepth + roadHalfWidth - 1f)
-                        {
-                            return true;
-                        }
-                    }
+                    continue;
+                }
+                if (PlacementSearchMath.OrientedBoxesOverlap(
+                    candidate.Center,
+                    candidate.HalfExtents,
+                    candidate.Right,
+                    candidate.Forward,
+                    existing.Center,
+                    existing.HalfExtents,
+                    existing.Right,
+                    existing.Forward))
+                {
+                    return true;
                 }
             }
             return false;
         }
 
-        private bool IsOnOwnedTile(float3 position)
+        private static bool OverlapsExistingRoad(
+            PlacementSearchContext context,
+            PlacementFootprint footprint)
         {
-            const float kMapHalfSize = 7168f;
-            const float kMapTileSize = 623.304347826f;
-            int gridX = (int)Math.Floor((position.x + kMapHalfSize) / kMapTileSize);
-            int gridZ = (int)Math.Floor((position.z + kMapHalfSize) / kMapTileSize);
-            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            foreach (PlacementPath road in context.Roads)
             {
-                foreach (Entity entity in entities)
+                for (int i = 1; i < road.Points.Length; i++)
                 {
-                    Game.Areas.Geometry geometry =
-                        EntityManager.GetComponentData<Game.Areas.Geometry>(entity);
-                    int x = (int)Math.Floor((geometry.m_CenterPosition.x + kMapHalfSize) / kMapTileSize);
-                    int z = (int)Math.Floor((geometry.m_CenterPosition.z + kMapHalfSize) / kMapTileSize);
-                    if (x == gridX && z == gridZ)
-                    {
-                        return !EntityManager.HasComponent<Game.Common.Native>(entity);
-                    }
-                }
-            }
-            return false;
-        }
-
-        private bool OverlapsExistingBuilding(Entity prefabEntity, float3 position)
-        {
-            float candidateRadius = BuildingRadius(prefabEntity);
-            if (candidateRadius <= 0f)
-            {
-                return false;
-            }
-            using (NativeArray<Entity> entities = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    Transform transform = EntityManager.GetComponentData<Transform>(entity);
-                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
-                    float otherRadius = BuildingRadius(prefabRef.m_Prefab);
-                    if (otherRadius > 0f
-                        && math.distance(transform.m_Position.xz, position.xz) < candidateRadius + otherRadius)
+                    if (PlacementSearchMath.SegmentIntersectsExpandedBox(
+                            road.Points[i - 1].xz,
+                            road.Points[i].xz,
+                            footprint.Center,
+                            footprint.HalfExtents,
+                            footprint.Right,
+                            footprint.Forward,
+                            road.HalfWidth))
                     {
                         return true;
                     }
@@ -2467,14 +2782,247 @@ namespace CS2MCP
             return false;
         }
 
-        private float BuildingRadius(Entity prefabEntity)
+        private static bool FootprintTouchesWater(
+            PlacementFootprint footprint,
+            ref WaterSurfaceData<SurfaceWater> waterSurfaceData)
         {
-            if (!EntityManager.HasComponent<BuildingData>(prefabEntity))
+            int columns = math.clamp(
+                (int)math.ceil(footprint.HalfExtents.x * 2f / kFootprintCellSize),
+                1,
+                32);
+            int rows = math.clamp(
+                (int)math.ceil(footprint.HalfExtents.y * 2f / kFootprintCellSize),
+                1,
+                32);
+            for (int row = 0; row <= rows; row++)
             {
-                return 0f;
+                float forwardOffset = math.lerp(
+                    -footprint.HalfExtents.y,
+                    footprint.HalfExtents.y,
+                    row / (float)rows);
+                for (int column = 0; column <= columns; column++)
+                {
+                    float rightOffset = math.lerp(
+                        -footprint.HalfExtents.x,
+                        footprint.HalfExtents.x,
+                        column / (float)columns);
+                    float2 position = footprint.Center
+                        + footprint.Right * rightOffset
+                        + footprint.Forward * forwardOffset;
+                    if (IsPlacementWater(position, ref waterSurfaceData))
+                    {
+                        return true;
+                    }
+                }
             }
-            int2 lot = EntityManager.GetComponentData<BuildingData>(prefabEntity).m_LotSize;
-            return math.length(new float2(lot.x, lot.y)) * 4f;
+            return false;
+        }
+
+        private static bool IsPlacementWater(
+            float2 position,
+            ref WaterSurfaceData<SurfaceWater> waterSurfaceData)
+        {
+            return WaterUtils.SampleDepth(
+                ref waterSurfaceData,
+                new float3(position.x, 0f, position.y)) > kPlacementWaterDepth;
+        }
+
+        private static bool TryValidateRoadFrontage(
+            PlacementCapabilities capabilities,
+            PlacementPose pose,
+            PlacementSearchContext context,
+            out float roadClearance,
+            out string reason)
+        {
+            float3 front = pose.Position
+                + math.forward(pose.Rotation) * (capabilities.Building.m_LotSize.y * 4f);
+            float maximumDistance = Game.Buildings.BuildingUtils.MAX_ROAD_CONNECTION_DISTANCE;
+            if (!TryFindNearestRoadPoint(
+                    context,
+                    front,
+                    maximumDistance,
+                    out float3 roadPoint,
+                    out float roadHalfWidth))
+            {
+                roadClearance = 0f;
+                reason = $"building frontage is more than {maximumDistance:F1}m from a road (build a road to the site first)";
+                return false;
+            }
+            float centerlineDistance = math.distance(front.xz, roadPoint.xz);
+            roadClearance = math.max(0f, centerlineDistance - roadHalfWidth);
+            if (centerlineDistance < roadHalfWidth - 2f)
+            {
+                reason = "building frontage overlaps the road center area";
+                return false;
+            }
+            if (roadClearance > maximumDistance)
+            {
+                reason = $"building frontage is more than {maximumDistance:F1}m from a road (build a road to the site first)";
+                return false;
+            }
+            reason = null;
+            return true;
+        }
+
+        private bool TryPlanAutoConnect(
+            PlacementCapabilities capabilities,
+            PlacementPose pose,
+            PlacementSearchContext context,
+            ref TerrainHeightData heightData,
+            out AutoConnectPlan plan,
+            out string reason)
+        {
+            plan = default;
+            reason = null;
+            if (capabilities.RequiresRoad
+                || capabilities.UtilityConnection == UtilityConnectionKind.None)
+            {
+                return true;
+            }
+            ConnectorPrefab connector = context.Connector;
+            if (connector == null)
+            {
+                reason = $"required connector metadata for {capabilities.UtilityConnection} is unavailable";
+                return false;
+            }
+            if (!string.IsNullOrEmpty(connector.Error))
+            {
+                reason = connector.Error;
+                return false;
+            }
+            if (HasMatchingNetAtAnyConnectionPoint(
+                    capabilities,
+                    pose.Position,
+                    pose.Rotation,
+                    context,
+                    connector.Entity,
+                    14f))
+            {
+                return true;
+            }
+            if (!TryChooseUtilityConnectionPoint(
+                    capabilities,
+                    pose.Position,
+                    pose.Rotation,
+                    context,
+                    out float3 start,
+                    out float3 roadPoint))
+            {
+                reason = $"prefab declares {capabilities.UtilityConnection} but no open matching connection node can reach a road within 150m";
+                return false;
+            }
+            float3 end = roadPoint;
+            float2 delta = end.xz - start.xz;
+            float length = math.length(delta);
+            if (length < 0.5f)
+            {
+                return true;
+            }
+            if (length < 8f)
+            {
+                end = start + new float3(math.normalizesafe(delta) * 8f, 0f);
+                length = 8f;
+            }
+            end.y = TerrainUtils.SampleHeight(ref heightData, end);
+            plan = new AutoConnectPlan
+            {
+                PrefabEntity = connector.Entity,
+                Prefab = connector.Prefab,
+                Start = start,
+                End = end,
+                Distance = length,
+            };
+            return true;
+        }
+
+        private static bool TryChooseUtilityConnectionPoint(
+            PlacementCapabilities capabilities,
+            float3 buildingPosition,
+            quaternion buildingRotation,
+            PlacementSearchContext context,
+            out float3 connectionPoint,
+            out float3 roadPoint)
+        {
+            connectionPoint = buildingPosition;
+            roadPoint = buildingPosition;
+            if (capabilities.UtilityConnectionPoints == null
+                || capabilities.UtilityConnectionPoints.Count == 0)
+            {
+                return false;
+            }
+            float bestDistanceSquared = float.MaxValue;
+            foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
+            {
+                float3 worldPoint = buildingPosition + math.mul(buildingRotation, localPoint);
+                if (!TryFindNearestRoadPoint(
+                        context,
+                        worldPoint,
+                        150f,
+                        out float3 candidateRoadPoint,
+                        out _))
+                {
+                    continue;
+                }
+                float distanceSquared = math.distancesq(worldPoint.xz, candidateRoadPoint.xz);
+                if (distanceSquared < bestDistanceSquared)
+                {
+                    bestDistanceSquared = distanceSquared;
+                    connectionPoint = worldPoint;
+                    roadPoint = candidateRoadPoint;
+                }
+            }
+            return bestDistanceSquared < float.MaxValue;
+        }
+
+        private static bool HasMatchingNetAtAnyConnectionPoint(
+            PlacementCapabilities capabilities,
+            float3 buildingPosition,
+            quaternion buildingRotation,
+            PlacementSearchContext context,
+            Entity prefabEntity,
+            float radius)
+        {
+            if (capabilities.UtilityConnectionPoints == null)
+            {
+                return false;
+            }
+            foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
+            {
+                float3 worldPoint = buildingPosition + math.mul(buildingRotation, localPoint);
+                if (HasNetNearby(context, prefabEntity, worldPoint, radius))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool HasNetNearby(
+            PlacementSearchContext context,
+            Entity prefabEntity,
+            float3 position,
+            float radius)
+        {
+            float radiusSquared = radius * radius;
+            foreach (PlacementPath path in context.Networks)
+            {
+                if (path.PrefabEntity != prefabEntity)
+                {
+                    continue;
+                }
+                for (int i = 1; i < path.Points.Length; i++)
+                {
+                    float2 nearest = PlacementSearchMath.ClosestPointOnSegment(
+                        position.xz,
+                        path.Points[i - 1].xz,
+                        path.Points[i].xz);
+                    if (math.distancesq(position.xz, nearest) <= radiusSquared)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         /// <summary>
