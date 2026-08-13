@@ -27,6 +27,7 @@ Dated notes under `guide/` / `research/` / `ops/`; accepted product and architec
 | [2026-08-11-tool-deepening-next-seams.md](./research/2026-08-11-tool-deepening-next-seams.md) | ECS prefab roles, road features vs replacement, and owner-linked operational-area seams |
 | [2026-08-11-cs2-map-image-mod.md](./research/2026-08-11-cs2-map-image-mod.md) | CS2MapView / Carto map-image mods; open-source status and agent integration options |
 | [2026-08-12-cs2-sewage-outlet-placement-rules.md](./research/2026-08-12-cs2-sewage-outlet-placement-rules.md) | Official evidence for shoreline, road, and pipe requirements of water pumps and sewage outlets |
+| [2026-08-13-cities-skylines1-agent-skill-road-planning.md](./research/2026-08-13-cities-skylines1-agent-skill-road-planning.md) | CS1 Agent Skill road-topology QA, geometry/planning limits, and transferable CS2 route-planning ideas |
 
 ## Ops
 
