@@ -72,6 +72,14 @@ namespace CS2MCP
             };
         }
 
+        public static BridgeResponse Text(string payload)
+        {
+            return new BridgeResponse
+            {
+                Body = Encoding.UTF8.GetBytes(payload ?? string.Empty),
+            };
+        }
+
         public static BridgeResponse Error(BridgeErrorKind kind, string message)
         {
             return new BridgeResponse

@@ -14,7 +14,7 @@ namespace CitiesSkylines2Agent.Agent
     public sealed class ToolInvocationResult
     {
         public bool Success;
-        public string Text;       // JSON text or error message
+        public string Text;       // JSON or deterministic plain-text tool result
         public string ImagePath;  // screenshot path when the tool returned PNG
     }
 

@@ -133,6 +133,12 @@ namespace CS2MCP
                 return boundsError;
             }
 
+            request.Query.TryGetValue("format", out string format);
+            if (!string.Equals(format, "samples", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetCompactTerrain(request, xMin, zMin, xMax, zMax);
+            }
+
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
             WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
@@ -197,6 +203,225 @@ namespace CS2MCP
                 note = "fixed 8x8 uniform samples inside bounds (row-major, z varies slowest); no full heightmap arrays",
                 samples,
             });
+        }
+
+        private BridgeResponse GetCompactTerrain(
+            BridgeRequest request,
+            float xMin,
+            float zMin,
+            float xMax,
+            float zMax)
+        {
+            const int maximumCellsPerAxis = 96;
+            const int defaultCharacterBudget = 16000;
+            float width = xMax - xMin;
+            float depth = zMax - zMin;
+            float quantum = math.max(4f, math.max(width, depth) / maximumCellsPerAxis);
+            int columns = math.clamp((int)math.ceil(width / quantum), 1, maximumCellsPerAxis);
+            int rows = math.clamp((int)math.ceil(depth / quantum), 1, maximumCellsPerAxis);
+            quantum = math.max(4f, math.max(width / columns, depth / rows));
+            columns = math.clamp((int)math.ceil(width / quantum), 1, maximumCellsPerAxis);
+            rows = math.clamp((int)math.ceil(depth / quantum), 1, maximumCellsPerAxis);
+
+            float representedWidth = columns * quantum;
+            float representedDepth = rows * quantum;
+            float representedMinX = math.clamp(
+                (xMin + xMax - representedWidth) * 0.5f,
+                -kWorldHalfSize,
+                kWorldHalfSize - representedWidth);
+            float representedMinZ = math.clamp(
+                (zMin + zMax - representedDepth) * 0.5f,
+                -kWorldHalfSize,
+                kWorldHalfSize - representedDepth);
+            float focusX = request.TryGetFloat("x", out float requestedX)
+                ? math.clamp(requestedX, representedMinX, representedMinX + representedWidth)
+                : (xMin + xMax) * 0.5f;
+            float focusZ = request.TryGetFloat("z", out float requestedZ)
+                ? math.clamp(requestedZ, representedMinZ, representedMinZ + representedDepth)
+                : (zMin + zMax) * 0.5f;
+            float originX = representedMinX
+                + math.round((focusX - representedMinX) / quantum) * quantum;
+            float originZ = representedMinZ
+                + math.round((focusZ - representedMinZ) / quantum) * quantum;
+
+            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
+            TerrainHeightData heightData = terrain.GetHeightData();
+            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
+            WaterSurfaceData<SurfaceWater> surfaceData = water.GetSurfaceData(out JobHandle waterDeps);
+            waterDeps.Complete();
+
+            int count = columns * rows;
+            var snapshot = new LocalMapSnapshot
+            {
+                Revision = World.GetOrCreateSystemManaged<SimulationSystem>().frameIndex.ToString(),
+                MinX = representedMinX,
+                MinZ = representedMinZ,
+                OriginX = originX,
+                OriginZ = originZ,
+                FocusX = focusX,
+                FocusZ = focusZ,
+                Quantum = quantum,
+                Columns = columns,
+                Rows = rows,
+                Heights = new float[count],
+                Water = new bool[count],
+                Owned = new bool[count],
+            };
+
+            List<OwnedMapBounds> ownedBounds = ReadOwnedMapBounds();
+            for (int row = 0; row < rows; row++)
+            {
+                float worldZ = representedMinZ + (row + 0.5f) * quantum;
+                for (int col = 0; col < columns; col++)
+                {
+                    float worldX = representedMinX + (col + 0.5f) * quantum;
+                    var position = new float3(worldX, 0f, worldZ);
+                    int index = row * columns + col;
+                    snapshot.Heights[index] = TerrainUtils.SampleHeight(ref heightData, position);
+                    snapshot.Water[index] = WaterUtils.SampleDepth(ref surfaceData, position) > 0.05f;
+                    snapshot.Owned[index] = IsInsideOwnedMapBounds(worldX, worldZ, ownedBounds);
+                }
+            }
+
+            ReadLocalRoads(snapshot, representedMinX, representedMinZ,
+                representedMinX + representedWidth, representedMinZ + representedDepth);
+            try
+            {
+                return BridgeResponse.Text(CompactLocalMap.Serialize(snapshot, defaultCharacterBudget));
+            }
+            catch (Exception e)
+            {
+                return BridgeResponse.Error(
+                    BridgeErrorKind.Internal,
+                    $"compact terrain serialization failed: {e.GetType().Name}: {e.Message}");
+            }
+        }
+
+        private struct OwnedMapBounds
+        {
+            public float MinX;
+            public float MinZ;
+            public float MaxX;
+            public float MaxZ;
+        }
+
+        private List<OwnedMapBounds> ReadOwnedMapBounds()
+        {
+            var result = new List<OwnedMapBounds>();
+            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    if (EntityManager.HasComponent<Game.Common.Native>(entity)
+                        || EntityManager.HasComponent<Game.Tools.Temp>(entity)
+                        || EntityManager.HasComponent<Game.Common.Deleted>(entity)
+                        || !EntityManager.HasComponent<Game.Areas.Geometry>(entity))
+                    {
+                        continue;
+                    }
+                    Game.Areas.Geometry geometry = EntityManager.GetComponentData<Game.Areas.Geometry>(entity);
+                    result.Add(new OwnedMapBounds
+                    {
+                        MinX = geometry.m_Bounds.min.x,
+                        MinZ = geometry.m_Bounds.min.z,
+                        MaxX = geometry.m_Bounds.max.x,
+                        MaxZ = geometry.m_Bounds.max.z,
+                    });
+                }
+            }
+            return result;
+        }
+
+        private static bool IsInsideOwnedMapBounds(float x, float z, List<OwnedMapBounds> bounds)
+        {
+            foreach (OwnedMapBounds item in bounds)
+            {
+                if (x >= item.MinX && x <= item.MaxX && z >= item.MinZ && z <= item.MaxZ)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void ReadLocalRoads(
+            LocalMapSnapshot snapshot,
+            float xMin,
+            float zMin,
+            float xMax,
+            float zMax)
+        {
+            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
+            {
+                foreach (Entity entity in entities)
+                {
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
+                    if (!EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
+                    float minCurveX = math.min(math.min(curve.m_Bezier.a.x, curve.m_Bezier.b.x), math.min(curve.m_Bezier.c.x, curve.m_Bezier.d.x));
+                    float maxCurveX = math.max(math.max(curve.m_Bezier.a.x, curve.m_Bezier.b.x), math.max(curve.m_Bezier.c.x, curve.m_Bezier.d.x));
+                    float minCurveZ = math.min(math.min(curve.m_Bezier.a.z, curve.m_Bezier.b.z), math.min(curve.m_Bezier.c.z, curve.m_Bezier.d.z));
+                    float maxCurveZ = math.max(math.max(curve.m_Bezier.a.z, curve.m_Bezier.b.z), math.max(curve.m_Bezier.c.z, curve.m_Bezier.d.z));
+                    if (maxCurveX < xMin || minCurveX > xMax || maxCurveZ < zMin || minCurveZ > zMax)
+                    {
+                        continue;
+                    }
+
+                    Game.Net.Edge edge = EntityManager.GetComponentData<Game.Net.Edge>(entity);
+                    PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabRef.m_Prefab);
+                    var road = new LocalMapRoad
+                    {
+                        EntityIndex = entity.Index,
+                        EntityVersion = entity.Version,
+                        StartNodeIndex = edge.m_Start.Index,
+                        StartNodeVersion = edge.m_Start.Version,
+                        EndNodeIndex = edge.m_End.Index,
+                        EndNodeVersion = edge.m_End.Version,
+                        StartDegree = RoadConnectedEdgeCount(edge.m_Start),
+                        EndDegree = RoadConnectedEdgeCount(edge.m_End),
+                        Prefab = prefab != null ? prefab.name : "unknown_road",
+                    };
+                    int samples = math.clamp((int)math.ceil(curve.m_Length / math.max(snapshot.Quantum * 2f, 8f)), 1, 32);
+                    for (int i = 0; i <= samples; i++)
+                    {
+                        float3 point = BezierPoint(curve.m_Bezier, i / (float)samples);
+                        road.Points.Add(new LocalMapPoint(point.x, point.z));
+                    }
+                    snapshot.Roads.Add(road);
+                }
+            }
+        }
+
+        private int RoadConnectedEdgeCount(Entity node)
+        {
+            if (!EntityManager.Exists(node) || !EntityManager.HasBuffer<Game.Net.ConnectedEdge>(node))
+            {
+                return 0;
+            }
+            int count = 0;
+            DynamicBuffer<Game.Net.ConnectedEdge> edges =
+                EntityManager.GetBuffer<Game.Net.ConnectedEdge>(node, isReadOnly: true);
+            for (int i = 0; i < edges.Length; i++)
+            {
+                Entity edge = edges[i].m_Edge;
+                if (!EntityManager.Exists(edge)
+                    || EntityManager.HasComponent<Game.Tools.Temp>(edge)
+                    || EntityManager.HasComponent<Game.Common.Deleted>(edge)
+                    || !EntityManager.HasComponent<PrefabRef>(edge))
+                {
+                    continue;
+                }
+                Entity prefab = EntityManager.GetComponentData<PrefabRef>(edge).m_Prefab;
+                if (EntityManager.HasComponent<RoadData>(prefab))
+                {
+                    count++;
+                }
+            }
+            return count;
         }
 
         private BridgeResponse GetGridMap(BridgeRequest request)

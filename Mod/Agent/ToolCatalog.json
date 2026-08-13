@@ -1413,7 +1413,7 @@
     },
     {
       "name": "terrain",
-      "description": "Compact terrain probe: height and water coverage for a map range. Returns a fixed 8x8 sample grid. Use to find water for sewage outlets and pumping stations, or to check terrain height before building. Requires x+z+radius or xMin+zMin+xMax+zMax bounds.",
+      "description": "Budgeted semantic-vector LOCAL_MAP v1 for a map range. Returns a local coordinate frame, elevation/slope/water/owned/buildable summaries, connected water/steep/buildable/owned regions, real road nodes and edges, directional sectors, and explicit omitted metadata. Use it before choosing an expansion direction or placing shoreline/terrain-sensitive infrastructure. Coordinates in region and network geometry are quantized units relative to frame.origin_world; multiply by quantum_m to recover meter offsets. This is spatial evidence, not native construction validation. Requires x+z+radius or xMin+zMin+xMax+zMax bounds.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1489,7 +1489,7 @@
           "arg": "zMax"
         }
       ],
-      "response": "json"
+      "response": "text"
     },
     {
       "name": "gridmap",

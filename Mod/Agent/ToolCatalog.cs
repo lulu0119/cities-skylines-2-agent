@@ -24,7 +24,7 @@ namespace CitiesSkylines2Agent.Agent
         public JsonElement Parameters;
         public string Route;
         public List<ToolQuerySpec> Query = new List<ToolQuerySpec>();
-        public string Response = "json"; // "json" | "png"
+        public string Response = "json"; // "json" | "text" | "png"
     }
 
     /// <summary>

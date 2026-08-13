@@ -32,7 +32,7 @@ description: How to grow a city from empty land through early, mid and late phas
 
 ## Phases (adapt to the city, not a fixed recipe)
 
-- Empty land: connect a road from the highway, then choose unlocked power, water and sewage prefabs with find_prefabs and place them with x/z/radius. Use terrain and gridmap when resource or shoreline evidence is relevant.
+- Empty land: connect a road from the highway, then choose unlocked power, water and sewage prefabs with find_prefabs and place them with x/z/radius. Use terrain before choosing an expansion direction or when shoreline/slope evidence matters; its LOCAL_MAP frame, regions, sectors and road topology are compact spatial evidence, while the write tools remain responsible for native validation.
 - Small city: add education and medical care, fix access and utility problems as they appear.
 - Growing city: add garbage service, police/fire, medium-density housing and more utility capacity.
 - Larger city: hospitals, universities, offices, cargo/industry upgrades — only as demand and problems require.

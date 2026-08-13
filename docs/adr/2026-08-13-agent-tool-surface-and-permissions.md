@@ -92,6 +92,24 @@ place_building(prefab, x, z, radius?, rotation?)
   shallow `build_bridge` pass-through until those invariants can be hidden inside a
   deep module.
 
+### Spatial perception
+
+- `terrain` returns a budgeted `LOCAL_MAP v1` semantic-vector view by default rather
+  than a fixed 8x8 raw sample matrix. High-resolution height and water sampling,
+  slope derivation, connected-region tracing, ownership classification, road
+  topology, coordinate quantization, deterministic ordering, and output budgeting
+  remain inside the perception module.
+- The model-facing text contains a local coordinate frame, summary and directional
+  sectors, connected water/steep/buildable/owned regions, real road nodes and edges,
+  and explicit omission metadata. A temporary internal `format=samples`
+  compatibility path retains the old 8x8 JSON response; it is not exposed in the
+  Agent Tool interface.
+- The compact map is spatial evidence, not construction approval. Native write-tool
+  validation remains authoritative, and `candidate_buildable` only means owned,
+  dry, and no steeper than the declared static slope band.
+- Automatic shoreline/contour route generation, `alignment`, `local_fit`, inferred
+  road endpoints, and hidden route recovery are not product capabilities.
+
 ### Model configuration and visual tools
 
 - Remove the Provider selector. Runtime configuration consists of Endpoint, API
