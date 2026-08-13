@@ -121,14 +121,18 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 1. **专门工业/资源提取闭环**：`expand_operational_area` 已支持提取器+资源打分
    （耕地/矿石/石油/渔业）+ 森林实体扫描，但"建 hub → 画提取区 → 真出车出产"
    整条链路从未在游戏里跑通。（backlog §6）
-2. **科技树正向购买**：只验过"没点数时拒绝"；未验"攒够点数真买一个节点"。
-   （backlog §2）
-3. **道路分级**：`list_roads` 交通量/拥堵排序未与游戏 infoview 对比。
+2. **科技树正向购买冷重载**：佩恩顿长期经营中已成功购买 `CrematoriumNode`、
+   `HospitalNode`、`IncineratorPlantNode`，三次均真实扣除点数且同会话解锁生效；保存重载后
+   仍需用 `get_progression` 复查持久化。（backlog §2）
+3. **道路分级**：佩恩顿长期经营日志已证实 Agent 看见严重拥堵却没有升级道路或形成
+   治理闭环；`list_roads` 的交通量/拥堵数据仍未与游戏 infoview 做精确对比。
    （backlog §4）
 4. **道路替换**：只验过独立无主路段；交叉口/连续路/保存重载未验。该工具只在
    开发/验收模式暴露，且永远只支持 road-to-road。
    （backlog §3）
-5. **填埋场扇形扩容冷启动重载**：未验收；非空填埋场+卡车运转未验。
+5. **填埋场扩容冷启动重载**：佩恩顿中已把非空、运行中的填埋场从 3,264 m² 扩至
+   12,000 m²，再扩至 30,000 m²，容量与已有垃圾量均随之更新；保存重载仍需复查。
+   当前约 110° 扇形并非最终产品目标，目标是尽可能覆盖“圆形最大范围减去其他障碍物”。
    （backlog §7）
 6. **风车/污水连接端点埋深 −10m**：未做实体级验证。
    （placement-utilities handoff §4.3）
@@ -140,6 +144,11 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 8. **`place_specialized_industry` 组合接口**（hub+提取区一步）：设计建议后续做，
    无代码。（research/2026-08-11-tool-deepening-next-seams.md §3）
 9. **UI 自动滚动 / Gameface CDP 打包为 MCP**：08-07 handoff 的可选项，未做。
+
+**新增观测缺口：generation usage / KV cache。** timeline 当前没有记录
+`UsageDetails.CachedInputTokenCount` 或 provider 的 cache hit/miss 计数，因而不能从累计
+input tokens 推算实际成本或延迟。框架类型已经提供 cached-input 字段，但仍需验证各
+provider/adapter 是否填充，并决定如何把标准字段与 `AdditionalCounts` 稳定写入 timeline。
 
 ### C. 遗留未清理
 
@@ -282,7 +291,157 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 15. 道路工具统一命名与介绍是后续整理项；当前保留 `set_road_features`。
 16. 地图图片能力与可选 Python/Carto adapter 均为长期工作，不阻塞本轮验收。
 
-### E. 已解除的机器/环境阻塞
+### E. 2026-08-13 长期自主经营日志审计（佩恩顿）
+
+本节审计活跃日志
+`C:\Users\super\AppData\LocalLow\Colossal Order\Cities Skylines II\ModsData\CitiesSkylines2Agent\logs\agent-timeline-25e2ef2e.jsonl`。
+为避免一边审计、一边继续经营导致统计口径漂移，以下数量统一冻结在本地时间
+2026-08-13 15:55:08（`seq=1553`）：1,553 个事件、872 次 function、433 次 generation、
+70 次 error；最近一次城市快照人口 17,169，此前峰值 18,728，峰值后曾回落约 9%。
+这张城随后仍在继续运行，故本文是该冻结点的审计，不声称是文件终态。
+
+#### 长时间运行与网络中断
+
+- 游戏连续运行数小时后，`Cities2` 工作集约 5.82 GB；该现场证据不支持“游戏或 mod
+  存在持续内存泄漏”的结论。约 11.59 GB 的 Private Bytes 也不能直接解释为物理常驻
+  内存。上文短时验收曾出现的 31→92.8 GB 私有内存异常仍保留为历史事实，但长期自主
+  经营证据已推翻它作为当前产品阻塞项的判断；RDP、断开连接或锁屏是否影响该异常也未
+  证实，无需再做 Steam 文件完整性修复。
+- 12:14:55 出现一次 `Expecting chunk trailer`。13:07:03–13:29:49 又有 69 次
+  TLS/网络失败，形成 68 个“0 generation / 0 function”的空回合，约每 20 秒重试一次，
+  没有修改城市。日志只记录模型名 `deepseek-v4-flash`，不能据此确定 API 服务商切换时刻。
+- 截至冻结点，433 次 generation 的逻辑 input tokens 累计约 105,769,482，中位数约
+  237k，单次最大 435,167。这只能证明上下文持续膨胀以及模型需要在更长历史中维持注意力，
+  不能直接推导实际费用或首 token 延迟：两者还取决于服务商的 KV/prompt cache 命中率、
+  命中/未命中的计价和实现。当前 timeline 的每条 `usage` 都只有 `input/output/total`，而
+  `AgentLoop.EmitGeneration` 也只序列化这三个字段，因此本次日志无法计算 cache hit/miss
+  tokens。补齐该可观测性后才能评价真实成本；长期目标、人口下跌和交通治理被近期建设
+  噪声淹没，则仍是从行为结果可直接观察到的自主性缺口。
+
+#### 工具调用总数与失败分布
+
+872 次调用中 722 次成功、150 次失败。失败中 29 次只是当前回合没有启用对应工具组；
+扣除后有 121 次参数、选址或游戏原生验证失败。该区分很重要：前者暴露工具面使用问题，
+但不应计作建造算法本身失败。
+
+| 工具 | 总数 | 成功 | 失败 | 未启用 | 实际失败 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `build_road` | 137 | 102 | 35 | 2 | 33 |
+| `place_building` | 118 | 31 | 87 | 5 | 82 |
+| `zone_rectangle` | 97 | 92 | 5 | 3 | 2 |
+| `notifications` | 50 | 50 | 0 | 0 | 0 |
+| `city_overview` | 49 | 49 | 0 | 0 | 0 |
+| `wait_simulation` | 48 | 48 | 0 | 0 | 0 |
+| `demolish` | 38 | 30 | 8 | 4 | 4 |
+| `budget` | 37 | 37 | 0 | 0 | 0 |
+| `demand` | 37 | 37 | 0 | 0 | 0 |
+| `city_services` | 33 | 33 | 0 | 0 | 0 |
+| `find_prefabs` | 25 | 21 | 4 | 4 | 0 |
+| `list_buildings` | 23 | 23 | 0 | 0 | 0 |
+| `agent_enable_tool_group` | 23 | 23 | 0 | 0 | 0 |
+| `terrain` | 23 | 23 | 0 | 0 | 0 |
+| `buy_tiles` | 21 | 19 | 2 | 2 | 0 |
+| `list_roads` | 20 | 20 | 0 | 0 | 0 |
+| `zoning` | 19 | 17 | 2 | 2 | 0 |
+| `labor` | 13 | 13 | 0 | 0 | 0 |
+| `set_service_budget` | 8 | 7 | 1 | 1 | 0 |
+| `set_tax` | 7 | 6 | 1 | 1 | 0 |
+| `list_zones` | 6 | 4 | 2 | 2 | 0 |
+| `list_tiles` | 5 | 4 | 1 | 1 | 0 |
+| `inspect` | 4 | 4 | 0 | 0 | 0 |
+| `get_progression` | 3 | 2 | 1 | 1 | 0 |
+| `set_fee` | 3 | 3 | 0 | 0 | 0 |
+| `expand_operational_area` | 3 | 2 | 1 | 1 | 0 |
+| `purchase_development_node` | 3 | 3 | 0 | 0 | 0 |
+| `get_operational_area` | 3 | 3 | 0 | 0 | 0 |
+| `statistics` | 2 | 2 | 0 | 0 | 0 |
+| `zone_area` | 2 | 2 | 0 | 0 | 0 |
+| `get_taxes` | 2 | 2 | 0 | 0 | 0 |
+| `agent_read_skill` | 2 | 2 | 0 | 0 | 0 |
+| `service_budgets` | 2 | 2 | 0 | 0 | 0 |
+| 其余 6 个只读工具 | 各 1 | 各 1 | 0 | 0 | 0 |
+
+高频反复失败集中在少数基础设施：`WaterPumpingStation01` 19 次尝试仅 1 次成功；
+`WindTurbine01` 26 次中 5 次成功、18 次实际失败、3 次未启用；`Landfill01` 16 次中
+2 次成功、13 次实际失败、1 次未启用；`IncinerationPlant01` 10 次中没有成功，9 次实际
+失败、1 次未启用。其中一个回合连续 13 次尝试抽水站且全部失败。`place_building` 的实际
+失败是 63 次搜索耗尽、16 次碰撞和 3 次越界；`build_road` 是 26 次碰撞、2 次明确
+`InWater`、3 次越界和 2 次 `InvalidShape`。这里不只是正常探索成本：失败响应没有转化为
+新的空间约束，Agent 会在相邻点重复同一种策略。
+
+#### 水电接入：施工成功不等于最终供给
+
+需要把“建筑成功放置”“自动连接施工成功”“建筑最终获得供给”分开判断：
+
+- 排水口有一次成功放置并明确自动修建污水管。地表抽水站的问题则发生在
+  `RequireRoad + Shoreline` 的联合选址阶段，不应误判为自动拉水管失败。当前半径搜索只
+  生成固定网格种子，再逐点做岸线吸附和临路验证；它没有直接求解“岸线 × 可临街道路”的
+  可行走廊，因而在看似合理的中心周围反复耗尽候选。
+- 水塔属于离路设施，两次成功放置都由 `place_building` 自动接水管。初期发电容量存在，
+  但 `fulfilledConsumption` 并未立刻完整满足；Agent 后来手工用两次 `build_road` 拉了低压线。
+- 当前能力解析只选择一种 utility（污水→水→低压优先），同一离路设施若声明两种连接需求，
+  可能遗漏第二种。`RequireRoad == true` 的建筑则跳过显式自动连接，依赖临街道路自带网络。
+- 城市后来恢复到约 93k 水容量对 27.7k 消耗，电力和污水也已满足。这说明初期接入故障
+  最终得到补救，但不能据此把放置/连接链路判定为可靠。
+
+#### 遗留水管、电缆缺少可观察和可清理接口
+
+Agent 曾尝试拆除两条孤立低压线，但 `demolish` 只接受建筑和道路，`list_roads` 也不列出
+水管或电缆；当前工具面既不能完整查询这些网络，也不能拆除它们。模型随后长期把 5 个
+警告称为 “harmless legacy”，直到 17k 人口仍存在。后续设计需要同时决定通用网络查询/
+拆除能力，以及自动连接链路部分成功时是否事务回滚，不能只靠 prompt 要求 Agent 记得清理。
+
+#### 交通：看见拥堵，却没有治理闭环或道路分级
+
+- 约 5k 人口时已有拥堵；12:30 的 `list_roads` 读到主干流速约 20%、
+  `congestionIndex≈269`。15:16 已有 15 个交通瓶颈，模型也明确把交通称为 “main concern”，
+  却继续买地和分区。人口从 18,728 一度降至 17,018，Agent 也没有认真诊断下降原因。
+- 20 次 `list_roads` 没有一次按 `congestion` 或 `traffic_volume` 排序；137 次
+  `build_road` 中 131 次使用 `Small Road`，没有中型或大型道路，0 次曲线道路，131 次为
+  轴对齐直线，6 次斜直线主要是管线；23 段道路超过工具建议的 250m。
+- 0 次 `set_road_features`、0 次 `replace_road_type`。因此根因不仅是没有地图全局视野，
+  也是策略层没有形成“发现瓶颈 → 选择治理手段 → 施工 → 重新测量”的闭环。
+
+#### 地图缺口与单向扩张
+
+- 19 次成功购地中，12 块形成 `gridX=13→18`、`gridZ=10/11` 的连续同向成对推进；
+  Agent 只有 5 次 `list_tiles`，却调用 21 次 `buy_tiles`。道路从初始区域一直向
+  `x≈3200` 延伸，符合玩家观察到的城市长期朝一个方向生长。
+- 空间观测总计 23 次 `terrain`、1 次 `gridmap`、0 次截图。普通道路多次修入水中，也没有
+  沿河岸建立平行道路。给模型直接增加整张栅格或截图未必能解决上下文和路线规划问题；
+  待决策方案应区分“战略层的压缩全局地图摘要”和“道路 module 内部的避水、岸线切线与
+  路线评分”。
+
+#### 公交是能力缺口，不只是模型遗漏
+
+当前 Agent 只能搜索和放置 `transport` 类建筑，没有创建站点、线路或车辆路线的写工具。
+因此它没有用公交缓解拥堵，主要是工具能力缺口；在补齐线路能力前，不能把这项行为完全
+归咎于模型策略。
+
+#### 填埋场扩容证据与剩余几何问题
+
+佩恩顿中的填埋场初始面积 3,264 m²、容量 51,000、已有垃圾 28,618；第一次扩至
+12,000 m² 后容量为 187,501，第二次扩至 30,000 m² 后容量为 468,751、已有垃圾
+129,155。由此可以补签“非空且运行中的 operational area 扩容”，但冷重载仍未验。
+当前实现固定 `halfAngle=55°`（总角约 110°），skew 只有 `0, ±15, ±30`，所以天然只能
+生成扇形。已接受的产品目标是尽可能接近圆形最大可扩展范围并扣除障碍；实现前仍需查清
+原生区域是否支持凹多边形、孔洞，以及 16 节点限制下怎样优雅退化。
+
+#### 这张存档能补签和不能补签的验收
+
+当前自动存档为
+`C:\Users\super\AppData\LocalLow\Colossal Order\Cities Skylines II\Saves\76561198152466558\13-August-15-42-04.cok`。
+
+- 可补签：三项科技节点真实购买并在同会话生效；非空运行中填埋场扩容；
+  `zone_rectangle` 基本路径有大量真实成功。
+- 可继续只读/冷重载复查：科技树持久化、填埋场区域持久化，以及 `list_roads` 与拥堵
+  infoview 的精确对比。
+- 不能补签：专门工业完整闭环、道路替换、风机/排水口端点 y=−10、权限矩阵、
+  `list_objects` 半径过滤；`zone_rectangle` 的边界与误覆盖也未系统验收。
+- 该存档可作为本轮问题证据和冷重载复查材料，但正式修复后的最终验收仍必须使用全新
+  存档；不能拿它替代用户已经要求的修复后新存档验收。
+
+### F. 已解除的机器/环境阻塞
 
 显示链路已经恢复；2026-08-13 已确认 Windows 工作区干净并与 `origin/main` 同步。
 若显示驱动再次出现 `0x133 DPC_WATCHDOG_VIOLATION`，该轮不能计为完成真机验收。
@@ -306,4 +465,5 @@ resolver，在调用 `Exists` 前按原生分块存储上限拒绝非法索引�
 - Mod/CS2MCP/BridgeToolSystem.cs（`TryQueueProbe` /
   `TryQueueInfrastructureCandidate`）
 - Mod/Agent/AgentToolSurface.cs（construction 组 / core tools）
+- Mod/Agent/AgentLoop.cs（generation usage / timeline 序列化）
 - Mod/Agent/ToolCatalog.json（工具 schema 与描述）
