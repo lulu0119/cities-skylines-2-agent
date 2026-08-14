@@ -1,9 +1,11 @@
 # Tool surface audit & open-work inventory (2026-08-12)
 
-**Status:** 2026-08-13 implementation reconciliation and bounded placement-planner
-upgrade complete; controlled real-game acceptance remains open.
-**Context:** the Windows verification machine is available again and `main` is clean
-and pushed. The accepted product decisions now live in
+**Status:** Live inventory. The compact local map and bounded building-placement
+planner are implemented, built and pushed, but they are only two completed slices;
+controlled real-game acceptance and several accepted runtime/road/network items
+remain open. The 2026-08-14 long-run audit below must not be read as final acceptance.
+**Context:** the Windows verification machine is available again. The accepted
+product decisions through the first tool-surface review live in
 `docs/adr/2026-08-13-agent-tool-surface-and-permissions.md`; they supersede the
 alternatives captured during the original 2026-08-12 audit. This note retains the
 investigation evidence and tracks the remaining live acceptance work.
@@ -165,8 +167,9 @@ prefab 能力解析、排序，并且只把唯一 finalist 送进原生验证/�
 
 **新增观测缺口：generation usage / KV cache。** timeline 当前没有记录
 `UsageDetails.CachedInputTokenCount` 或 provider 的 cache hit/miss 计数，因而不能从累计
-input tokens 推算实际成本或延迟。框架类型已经提供 cached-input 字段，但仍需验证各
-provider/adapter 是否填充，并决定如何把标准字段与 `AdditionalCounts` 稳定写入 timeline。
+input tokens 推算实际未缓存计算量、成本或延迟。框架类型已经提供 cached-input 字段，
+但仍需把标准字段与 `AdditionalCounts` 稳定写入 timeline，并验证各 provider/adapter
+是否真正填充。缺失字段表示“未知”，绝不能解释为缓存命中率 0%。
 
 ### C. 遗留未清理
 
@@ -460,7 +463,132 @@ Agent 曾尝试拆除两条孤立低压线，但 `demolish` 只接受建筑和�
 - 该存档可作为本轮问题证据和冷重载复查材料，但正式修复后的最终验收仍必须使用全新
   存档；不能拿它替代用户已经要求的修复后新存档验收。
 
-### F. 已解除的机器/环境阻塞
+### F. 2026-08-14 新代码长跑冻结审计（`e0dee7c7`）
+
+本节审计：
+`C:\Users\super\AppData\LocalLow\Colossal Order\Cities Skylines II\ModsData\CitiesSkylines2Agent\logs\agent-timeline-e0dee7c7.jsonl`。
+`LOCAL_MAP v1` (`5932310`) 和新的 building placement planner (`e305176`)
+都在该 session 开始前提交，因此这是当前新 Mod 代码的运行证据，不是旧版本日志。
+但游戏和连续任务在写文档时仍在运行；以下数字固定在 `seq=2670`、本地时间
+2026-08-14 12:05:07，后续追加事件不改变本节口径，也不把本节称为完整终态。
+
+冻结点共 2,670 个事件，覆盖 14.58 小时墙钟时间：35 次 `turn.start`、
+34 次 `turn.finish`、882 次 generation、1,717 次 function、0 次 error、
+0 次 compact。最近一次城市快照为人口 19,448、资金 82,312,152、游戏时间
+2030-01-01 19:09。158 次 `wait_simulation` 共推进 1,043 游戏小时，工具返回的
+等待时间累计约 12.22 小时；长墙钟停顿主要来自模拟等待，不是 API 错误。
+generation 延迟中位数约 4.08 秒、P95 约 12.24 秒，最大 105.79 秒。
+
+#### KV cache：逻辑输入量很大，但命中率仍然未知
+
+882 次 generation 的逻辑 input tokens 累计 379,489,158，中位数 435,676，
+单次最大 754,006；output 累计 234,486。所有 882 条 `usage` 的字段仍然只有
+`input`、`output`、`total`，cached-input 指标覆盖率为 **0/882**。因此：
+
+- 这些数只描述请求中报告的逻辑输入规模，不描述 provider 实际重新计算的 token；
+- 本次 KV/prompt cache 命中率是 **unknown**，不能估算，也不能记成 0%；
+- 用户运行中切换过 API 服务商，但 timeline 没有 provider/config 分段证据；不同服务商
+  不共享 KV cache，所以即使未来有缓存字段，也必须按配置段和 provider 分别统计；
+- 实现后，命中率只对 provider 真正返回 cached-input 的 generation 计算：
+  `sum(cached_input) / sum(input)`，同时必须报告指标覆盖率，不能把缺失字段补零；
+- timeline 最小补齐标准是记录 `CachedInputTokenCount`、`ReasoningTokenCount` 和稳定
+  序列化的 `AdditionalCounts`；`turn.finish` 同时汇总整轮 usage。没有必要记录完整 raw
+  provider response。
+
+#### 工具总量、失败和重复失败
+
+1,717 次调用中 1,561 次成功、156 次失败；其中 47 次只是当前回合未启用工具组，
+扣除后有 109 次真实执行失败。高频工具如下：
+
+| 工具 | 总数 | 成功 | 失败 | 未启用 | 实际失败 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `zone_rectangle` | 267 | 260 | 7 | 7 | 0 |
+| `build_road` | 189 | 127 | 62 | 11 | 51 |
+| `city_overview` | 163 | 163 | 0 | 0 | 0 |
+| `notifications` | 160 | 160 | 0 | 0 | 0 |
+| `wait_simulation` | 158 | 158 | 0 | 0 | 0 |
+| `demand` | 147 | 147 | 0 | 0 | 0 |
+| `budget` | 131 | 131 | 0 | 0 | 0 |
+| `city_services` | 102 | 102 | 0 | 0 | 0 |
+| `place_building` | 92 | 30 | 62 | 7 | 55 |
+| `zoning` | 52 | 47 | 5 | 5 | 0 |
+| `agent_enable_tool_group` | 48 | 48 | 0 | 0 | 0 |
+| `buy_tiles` | 26 | 26 | 0 | 0 | 0 |
+| `list_roads` | 17 | 16 | 1 | 1 | 0 |
+| `terrain` | 6 | 6 | 0 | 0 | 0 |
+| `expand_operational_area` | 2 | 0 | 2 | 0 | 2 |
+
+反复失败不是主要数量来源，但确实存在：15 组相同失败参数被再次调用，同一路段最多
+原样失败 3 次。`build_road` 的 51 次真实失败主要是越界、碰撞和无效形状，另有明确
+`InWater` 和一次 `SteepSlope`；`place_building` 的 55 次真实失败主要来自已建满中心附近
+的建筑/道路碰撞、越界和随后原生 `OverlapExisting`。新版 planner 能产生结构化的 leading
+rejections，但 Agent 仍经常选择已密集开发或贴近未购边界的中心，并在相邻坐标重复策略。
+`expand_operational_area` 两次都因固定扇形碰撞建筑而失败，证明近圆形减障碍目标尚未实现。
+
+#### 道路、地图消费和交通治理仍未形成闭环
+
+- 189 次 `build_road` 全部使用 `Medium Road`，全部为 X/Z 轴对齐直线；0 次控制点曲线、
+  0 次 elevation、0 次 `set_road_features`。当前行为没有道路分级，也没有桥梁或地下道路。
+- 只有 6 次 `terrain`，0 次 `gridmap`，0 次 screenshot。`LOCAL_MAP v1` 已真实返回水体、
+  坡度和道路拓扑，但 Agent 没有把它变成持续的路线/扩张策略。
+- 26 次 `buy_tiles` 只配合 6 次 `list_tiles`；绝大多数购买和施工沿狭长走廊推进。缺少的
+  不只是局部地形数据，也包括跨轮保持的战略空间摘要和“扩张方向为何合理”的决策闭环。
+- Agent 在开局读取了 `city-building` 和 `utility-networks` 两个 skill，此后没有重读。
+  它共查询 `notifications` 160 次，确实看见交通问题；冻结点仍有 5 个
+  `Traffic Bottleneck Notification`，同时存在 15 个 Ground Pollution、1 个
+  MissingUneducatedWorkers、1 条未连接高压线等问题。它却继续把城市总结为“所有关键
+  指标优秀”并扩区。这是优先级/退出条件问题，不是“没有看通知”。
+- 当前 system prompt 和 skill 是被动指令；没有后台问题 observer、未解决问题 ledger、
+  首次出现/持续时间/趋势或 `new -> escalated/reminder -> resolved` 生命周期。Continuous
+  只会排入通用继续提示。因此“主动提醒 Agent”尚未实现，现状是模型反复主动轮询。
+- 公交站点/线路/车辆路线写工具不存在。此次没用公交主要是产品能力缺口，不能只归咎
+  于模型策略；在能力补齐前，长期验收也不能把“是否使用公交”列为可通过项目。
+
+#### 自动接线与孤立 network 的实现缺口
+
+日志中风机和水塔的电缆/水管来自 `place_building` 自动连接，不是 Agent 手动画线。
+当前自动连接终点只取 150m 内最近道路几何，不验证该位置是否具有 prefab 所需的
+`WaterPipe`、`SewagePipe` 或 `LowVoltageLine`。因此风机可被接到没有匹配低压网络的高速
+走廊，解释了开局“看起来接了线但仍未接入”的现象。正确约束是匹配管线类型，不是按
+高速/普通道路名称判断，也不要求该网络已经供能，否则空城开局会死锁。
+
+此外，`demolish` 仍明确拒绝道路之外的 network，当前也没有统一 network 拓扑查询；
+Agent 无法可靠发现或清理孤立水管、电缆。修复 seam 应让 placement snapshot 读取真实
+utility lane 类型并只选择兼容目标，同时让查询、自动连接和清理共用同一份 typed network
+知识，不能各自复制网络分类规则。
+
+#### 本轮新增、尚未实现的可验收切片
+
+1. 上下文预算设置：`Auto` 按模型名称预设，`Custom` 覆盖已知和未知模型的本地
+   window/compact budget；设置持久化且 UI 明确不声称改变服务端模型上限。
+2. generation/turn usage：记录真实 cached-input/reasoning/additional counts 及指标覆盖率。
+3. 主动问题跟踪：规范化权威问题快照，低频观察、去重、冷却，只对新出现或升级的关键
+   问题唤醒闲置 Agent；解决后记录 resolved，切换城市清空。
+4. 道路模式：普通地面道路做全段避水和坡度预检；桥梁/高架与地下道路使用显式的
+   grade-separated 意图，不由普通道路失败偷偷升级。沿河岸/等高线自动路线已在后续
+   讨论中撤回，不是当前产品 TODO。
+5. 道路真实拓扑 QA：吸收 CS1 参考项目的 near-miss、意外短桩、孤立组件、无节点交叉、
+   重叠和施工后复测；合法尽端路不自动算错误。
+6. 自动连接只接入具有对应 utility 类型的目标；`RequireRoad=false` 的 prefab 连接其声明的
+   水、污水和低压需求，高压仍不在当前自动范围。
+7. 通用 network 查询/清理 seam、近圆形 operational area，以及公交站点/线路能力仍需
+   继续设计或实现；它们不能由这张长跑存档补签。
+
+#### 建议的受控真机验收
+
+- 上下文预算：`Auto + deepseek-v4-flash` 记录 1,000,000；切换 `Custom 200000` 后
+  timeline 记录 200,000，约 164,000 触发压缩；重启游戏后值仍保留，切回 Auto 恢复预设。
+- KV cache：至少用一个会返回 cached-input 的 provider 运行稳定前缀多轮，timeline 同时
+  显示 cached 值和 100% 指标覆盖率；不返回指标的 provider 显示 unknown，不显示 0%。
+- 主动问题：关闭 Continuous、让 Agent idle，自然产生断水/断电；新 critical 只唤醒一次，
+  未变化时不刷屏，修复后出现 resolved；非行动型图标不触发，切换新城市后清空 tracker。
+- 道路/拓扑：全新存档分别验证地面道路绕水/拒绝陡坡、显式立体道路跨越、near-miss 与
+  交叉无节点诊断；不得把普通失败隐式改成桥。
+- 自动接线：在附近同时存在高速几何与匹配 utility network 的位置放风机/水塔/排水口，
+  连接必须选择对应低压/清水/污水目标；只有错误类型或超出范围时应结构化失败。
+- 以上受控清单通过后，再开另一张全新长期存档；不能继续用佩恩顿替代修复后的最终验收。
+
+### G. 已解除的机器/环境阻塞
 
 显示链路已经恢复；2026-08-13 已确认 Windows 工作区干净并与 `origin/main` 同步。
 若显示驱动再次出现 `0x133 DPC_WATCHDOG_VIOLATION`，该轮不能计为完成真机验收。
