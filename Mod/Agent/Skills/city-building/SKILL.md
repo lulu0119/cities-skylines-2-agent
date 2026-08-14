@@ -22,6 +22,8 @@ description: How to grow a city from empty land through early, mid and late phas
 
 ## Road hierarchy
 
+- For ordinary roads, omit mode and e1/e2: build_road defaults to ground and samples the route at roughly 4m or finer intervals for water and local grade, rejecting detected water crossings or grades above 10% (or a stricter selected-prefab limit). If ground placement rejects the route, move or reshape it; do not disguise the same route with arbitrary elevation.
+- Use mode=grade-separated only when you intentionally need a bridge, elevated road or tunnel. Always provide both e1 and e2, with at least one nonzero. This mode expresses the intended crossing; native placement validation still decides whether the segment is legal.
 - Build a connected hierarchy instead of making every zoned street carry through traffic: highway/outside connection -> arterial -> collector -> local street.
 - Highways carry outside and long-distance traffic. Connect them to a small number of arterials through ramps; do not zone highway frontage.
 - Arterials carry high-volume trips across districts. Use medium or large roads, keep junctions less frequent than on neighborhood streets, and avoid making them the only entrance to every building or local block.

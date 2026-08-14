@@ -687,7 +687,7 @@
     },
     {
       "name": "build_road",
-      "description": "Build a network segment between two world coordinates. SHORT segments (50-250m) on OWNED map tiles, connecting near EXISTING road nodes. Use list_roads first to find existing road positions. Pipes and Ground Cables are UNDERGROUND by default (auto -10m buried); omit e1/e2 for roads and High-voltage Lines (ground level). If the call fails: try shorter segments or move closer to existing roads. Do NOT repeat the same coordinates that just failed.",
+      "description": "Build a road or utility-network segment between two world coordinates. Use SHORT segments (50-250m) on OWNED map tiles and connect roads near EXISTING road nodes. For ROAD prefabs, omitting mode selects ground: the route is sampled at roughly 4m or finer intervals for water and local grade, rejecting detected water crossings or grades above 10% (or a stricter prefab limit) instead of silently becoming a bridge or tunnel. Use mode=grade-separated only for an intentional bridge, elevated road or tunnel; provide both e1 and e2, with at least one nonzero. Do not pass mode for pipes, cables or other non-road networks. Pipes and Ground Cables remain UNDERGROUND by default (auto -10m buried), so omit e1/e2 to accept that burial. If the call fails, change the route or use shorter segments; do NOT repeat the same coordinates.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -713,23 +713,31 @@
           },
           "cx": {
             "type": "number",
-            "description": "Curve control point X (with cz: builds a curve through it)"
+            "description": "Curve control point X. Provide together with cz to build a curve through that point; omit both for a straight segment."
           },
           "cz": {
             "type": "number",
-            "description": "Curve control point Z"
+            "description": "Curve control point Z. Provide together with cx to build a curve through that point; omit both for a straight segment."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "ground",
+              "grade-separated"
+            ],
+            "description": "Road prefabs only. Omit to select ground, which samples at roughly 4m or finer intervals and rejects detected water crossings or local grades above 10% (or a stricter prefab limit). Use grade-separated only for an intentional bridge/elevated/tunnel segment; provide both e1 and e2, with at least one nonzero. Never pass mode for utility-network prefabs."
           },
           "e1": {
             "type": "number",
             "minimum": -30,
             "maximum": 60,
-            "description": "Elevation at start in meters relative to terrain (-30..60). Bridges typically 5-20. Not an entity id. Omit for ground level."
+            "description": "Elevation at start in meters relative to terrain (-30..60). Required together with e2 for a grade-separated road, where at least one endpoint must be nonzero; positive values are elevated and negative values are underground. Not an entity id. Omit for a ground road or automatic utility burial."
           },
           "e2": {
             "type": "number",
             "minimum": -30,
             "maximum": 60,
-            "description": "Elevation at end in meters relative to terrain (-30..60). Not an entity id. Omit for ground level."
+            "description": "Elevation at end in meters relative to terrain (-30..60). Required together with e1 for a grade-separated road, where at least one endpoint must be nonzero. Not an entity id. Omit for a ground road or automatic utility burial."
           }
         },
         "required": [
@@ -769,6 +777,10 @@
         {
           "key": "cz",
           "arg": "cz"
+        },
+        {
+          "key": "mode",
+          "arg": "mode"
         },
         {
           "key": "e1",

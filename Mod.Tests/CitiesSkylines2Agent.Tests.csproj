@@ -19,7 +19,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\Mod\CS2MCP\NetworkBuildArguments.cs" Link="Production\NetworkBuildArguments.cs" />
     <Compile Include="..\Mod\CS2MCP\PlacementSearchMath.cs" Link="Production\PlacementSearchMath.cs" />
+    <Compile Include="..\Mod\CS2MCP\RoadGroundPreflight.cs" Link="Production\RoadGroundPreflight.cs" />
     <Reference Include="Unity.Entities" HintPath="$(GameManagedPath)\Unity.Entities.dll" />
     <Reference Include="Unity.Mathematics" HintPath="$(GameManagedPath)\Unity.Mathematics.dll" />
   </ItemGroup>

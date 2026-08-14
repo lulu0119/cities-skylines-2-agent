@@ -89,6 +89,20 @@ place_building(prefab, x, z, radius?, rotation?)
 
 - `build_road` is the correct name for constructing a linear network from endpoints;
   `place_building` is the correct name for placing a discrete prefab and pose.
+- Road prefabs accept `ground` and `grade-separated` modes. Omitting `mode`
+  selects `ground`; non-road networks do not accept a road mode. `alignment`,
+  `local_fit`, inferred endpoints, and hidden route recovery are not part of the
+  interface.
+- `ground` validates the final terrain-adjusted course with longitudinal samples
+  spaced at most about 4 m, including water samples across the full road width and
+  local centerline grades between adjacent samples. It rejects detected water
+  crossings and grades above 10%, or above a stricter nonzero prefab slope limit.
+  It never silently changes the route, moves its endpoints, or promotes the request
+  to a bridge or tunnel. Native placement validation remains authoritative after
+  this preflight.
+- `grade-separated` is the explicit combined intent for bridges, elevated roads,
+  and underground roads. It requires both endpoint elevations, with at least one
+  nonzero; the native pipeline decides whether the requested segment is legal.
 - The current road interface can construct ordinary straight or single-control-point
   curved elevated segments. It is not a reliable landmark-bridge planner: approach
   grades, multiple spans/piers, navigation clearance, symmetry, and whole-bridge

@@ -67,6 +67,8 @@ namespace CS2MCP
         private float3 m_PendingEnd;
         private float3 m_PendingMid;
         private bool m_PendingHasMid;
+        private RoadBuildMode? m_PendingRoadMode;
+        private RoadPath m_PendingRoadPath;
         private CompositionFlags m_PendingUpgradeFlags;
         private float3[] m_PendingAreaNodes;
         private Game.Areas.Node[] m_PendingOperationalAreaNodes;
@@ -334,7 +336,17 @@ namespace CS2MCP
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
-        public bool TryQueueRoad(Entity prefabEntity, PrefabBase prefab, float3 start, float3 end, float3 mid, bool hasMid, float2 elevations, BridgeRequest request)
+        internal bool TryQueueRoad(
+            Entity prefabEntity,
+            PrefabBase prefab,
+            float3 start,
+            float3 end,
+            float3 mid,
+            bool hasMid,
+            float2 elevations,
+            RoadBuildMode? roadMode,
+            RoadPath roadPath,
+            BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
             {
@@ -348,6 +360,8 @@ namespace CS2MCP
             m_PendingMid = mid;
             m_PendingHasMid = hasMid;
             m_PendingElevations = elevations;
+            m_PendingRoadMode = roadMode;
+            m_PendingRoadPath = roadPath;
             m_PendingRotation = quaternion.identity;
             m_PendingRequest = request;
             ClearAutoConnect();
@@ -630,6 +644,8 @@ namespace CS2MCP
                                 // The connector prefabs selected by the placement
                                 // module are underground pipes or ground cables.
                                 m_PendingElevations = new float2(-10f, -10f);
+                                m_PendingRoadMode = null;
+                                m_PendingRoadPath = default;
                             }
                             else
                             {
@@ -969,6 +985,14 @@ namespace CS2MCP
                         prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
                         start = new { x = m_PendingPosition.x, z = m_PendingPosition.z },
                         end = new { x = m_PendingEnd.x, z = m_PendingEnd.z },
+                        mode = DescribeRoadMode(m_PendingRoadMode),
+                        elevation = !m_PendingRoadMode.HasValue
+                            ? null
+                            : new
+                            {
+                                startM = (float?)m_PendingElevations.x,
+                                endM = (float?)m_PendingElevations.y,
+                            },
                         widthM,
                         note = "committed this frame; verify via /city/roads or /screenshot",
                     });
@@ -1038,6 +1062,19 @@ namespace CS2MCP
                         note = "committed this frame; verify via /city/buildings or /screenshot",
                     });
             }
+        }
+
+        private static string DescribeRoadMode(RoadBuildMode? mode)
+        {
+            if (mode == RoadBuildMode.Ground)
+            {
+                return "ground";
+            }
+            if (mode == RoadBuildMode.GradeSeparated)
+            {
+                return "grade-separated";
+            }
+            return null;
         }
 
         private BridgeResponse BuildProbeSuccess()
@@ -1183,9 +1220,24 @@ namespace CS2MCP
                 float length = math.distance(
                     new float2(m_PendingPosition.x, m_PendingPosition.z),
                     new float2(m_PendingEnd.x, m_PendingEnd.z));
-                message.Append(
-                    $". hint: prefer short segments on owned land near existing roads (this attempt ~{length:F0}m); " +
-                    "e1/e2 are elevation meters (-30..60), not entity indexes; omit them for ground-level roads");
+                if (m_PendingRoadMode == RoadBuildMode.Ground)
+                {
+                    message.Append(
+                        $". hint: this was a mode=ground road (~{length:F0}m); change the route if it crosses water or is too steep, " +
+                        "or explicitly use mode=grade-separated with both e1/e2 for an intentional bridge, elevated road or tunnel");
+                }
+                else if (m_PendingRoadMode == RoadBuildMode.GradeSeparated)
+                {
+                    message.Append(
+                        $". hint: this was a mode=grade-separated road (~{length:F0}m); adjust both e1/e2 or change the route; " +
+                        "e1/e2 are elevation meters (-30..60), not entity indexes");
+                }
+                else
+                {
+                    message.Append(
+                        $". hint: prefer short utility-network segments on owned land (this attempt ~{length:F0}m); " +
+                        "e1/e2 are elevation meters (-30..60), not entity indexes");
+                }
             }
             else
             {
@@ -1301,6 +1353,8 @@ namespace CS2MCP
             m_ProbeConstructionCost = 0;
             m_ProbeDistanceFromCenter = 0f;
             m_ProbeRoadClearance = 0f;
+            m_PendingRoadMode = null;
+            m_PendingRoadPath = default;
             m_AutoConnectQueued = false;
             m_AutoConnectPrefabEntity = Entity.Null;
             m_AutoConnectPrefab = null;
@@ -1490,21 +1544,36 @@ namespace CS2MCP
         {
             TerrainHeightData terrainHeight = m_TerrainSystem.GetHeightData();
 
-            Curve rawCurve = default;
-            if (m_PendingHasMid)
+            RoadPath path;
+            if (m_PendingRoadMode.HasValue)
             {
-                // Quadratic bezier through the mid control point, elevated to cubic.
-                float3 a = m_PendingPosition;
-                float3 d = m_PendingEnd;
-                float3 m = m_PendingMid;
-                rawCurve.m_Bezier = new Bezier4x3(a, a + (m - a) * (2f / 3f), d + (m - d) * (2f / 3f), d);
+                path = m_PendingRoadPath;
             }
             else
             {
-                rawCurve.m_Bezier = NetUtils.StraightCurve(m_PendingPosition, m_PendingEnd);
+                RoadPath requestedPath = m_PendingHasMid
+                    ? RoadPath.WithControlPoint(
+                        m_PendingPosition,
+                        m_PendingMid,
+                        m_PendingEnd)
+                    : RoadPath.Straight(m_PendingPosition, m_PendingEnd);
+                Curve rawCurve = new Curve
+                {
+                    m_Bezier = new Bezier4x3(
+                        requestedPath.A,
+                        requestedPath.B,
+                        requestedPath.C,
+                        requestedPath.D),
+                };
+                Bezier4x3 adjusted = NetUtils.AdjustPosition(
+                    rawCurve,
+                    fixedStart: false,
+                    linearMiddle: false,
+                    fixedEnd: false,
+                    ref terrainHeight).m_Bezier;
+                path = new RoadPath(adjusted.a, adjusted.b, adjusted.c, adjusted.d);
             }
-            Bezier4x3 adjusted = NetUtils.AdjustPosition(
-                rawCurve, fixedStart: false, linearMiddle: false, fixedEnd: false, ref terrainHeight).m_Bezier;
+            Bezier4x3 courseCurve = new Bezier4x3(path.A, path.B, path.C, path.D);
 
             float e1 = m_PendingElevations.x;
             float e2 = m_PendingElevations.y;
@@ -1513,14 +1582,14 @@ namespace CS2MCP
                 // Lift the terrain-following curve by linearly interpolated
                 // elevation; the pipeline turns nonzero course elevations into
                 // bridge/elevated segments with pillars.
-                adjusted.a.y += e1;
-                adjusted.b.y += math.lerp(e1, e2, 1f / 3f);
-                adjusted.c.y += math.lerp(e1, e2, 2f / 3f);
-                adjusted.d.y += e2;
+                courseCurve.a.y += e1;
+                courseCurve.b.y += math.lerp(e1, e2, 1f / 3f);
+                courseCurve.c.y += math.lerp(e1, e2, 2f / 3f);
+                courseCurve.d.y += e2;
             }
 
             NetCourse course = default;
-            course.m_Curve = adjusted;
+            course.m_Curve = courseCurve;
             course.m_Elevation = new float2(math.min(e1, e2), math.max(e1, e2));
             course.m_StartPosition.m_Position = course.m_Curve.a;
             course.m_StartPosition.m_Rotation = NetUtils.GetNodeRotation(MathUtils.StartTangent(course.m_Curve));

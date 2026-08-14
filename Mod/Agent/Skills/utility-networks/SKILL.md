@@ -30,7 +30,8 @@ description: How electricity, water and sewage networks work in CS2.
 
 ## Burying underground networks
 - Underground pipes/cables need NEGATIVE elevation: e1=e2=-10 to -20m.
-- build_road now defaults Pipes and Ground Cables to -10m (buried) automatically; only pass explicit e1/e2 when you need something different.
+- build_road mode is only for road prefabs. Never pass mode for pipes, cables, High-voltage Lines or other utility-network prefabs.
+- build_road defaults Pipes and Ground Cables to -10m (buried) automatically; omit e1/e2 to accept that burial, and only pass explicit e1/e2 when you need a different utility elevation.
 - Positive values = elevated/bridge segments (wrong for buried).
 
 ## Sewage is critical
