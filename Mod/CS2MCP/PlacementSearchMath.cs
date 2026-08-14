@@ -1,7 +1,61 @@
+using System;
+using System.Collections.Generic;
+using Unity.Entities;
 using Unity.Mathematics;
 
 namespace CS2MCP
 {
+    [Flags]
+    internal enum UtilityNetworkKinds : byte
+    {
+        None = 0,
+        Water = 1,
+        Sewage = 2,
+        LowVoltage = 4,
+    }
+
+    /// <summary>
+    /// A stable placement snapshot of one connectable utility lane. It carries
+    /// the owning edge solely as the native split anchor; road prefab identity
+    /// and simulated flow state are deliberately absent.
+    /// </summary>
+    internal readonly struct PlacementUtilityPath
+    {
+        public PlacementUtilityPath(
+            UtilityNetworkKinds kinds,
+            Entity parentEdge,
+            float2 edgeDelta,
+            float3[] points)
+        {
+            Kinds = kinds;
+            ParentEdge = parentEdge;
+            EdgeDelta = edgeDelta;
+            Points = points;
+        }
+
+        public UtilityNetworkKinds Kinds { get; }
+        public Entity ParentEdge { get; }
+        public float2 EdgeDelta { get; }
+        public float3[] Points { get; }
+    }
+
+    internal readonly struct UtilityConnectionTarget
+    {
+        public UtilityConnectionTarget(
+            float3 position,
+            Entity parentEdge,
+            float parentSplit)
+        {
+            Position = position;
+            ParentEdge = parentEdge;
+            ParentSplit = parentSplit;
+        }
+
+        public float3 Position { get; }
+        public Entity ParentEdge { get; }
+        public float ParentSplit { get; }
+    }
+
     /// <summary>
     /// Pure geometry used by building-placement preflight. Keeping these
     /// calculations free of ECS state makes the placement seam deterministic
@@ -117,6 +171,80 @@ namespace CS2MCP
             return math.distancesq(
                 point,
                 ClosestPointOnSegment(point, segmentStart, segmentEnd));
+        }
+
+        public static bool TryFindNearestUtilityPoint(
+            IReadOnlyList<PlacementUtilityPath> paths,
+            UtilityNetworkKinds required,
+            float3 from,
+            float maxDistance,
+            out UtilityConnectionTarget nearest)
+        {
+            nearest = default;
+            if (paths == null
+                || required == UtilityNetworkKinds.None
+                || maxDistance < 0f)
+            {
+                return false;
+            }
+
+            float bestDistanceSquared = maxDistance * maxDistance;
+            bool found = false;
+            foreach (PlacementUtilityPath path in paths)
+            {
+                if ((path.Kinds & required) != required
+                    || path.Points == null
+                    || path.Points.Length < 2)
+                {
+                    continue;
+                }
+
+                for (int i = 1; i < path.Points.Length; i++)
+                {
+                    float amount = ClosestPointAmount(
+                        from.xz,
+                        path.Points[i - 1].xz,
+                        path.Points[i].xz);
+                    float3 candidate = math.lerp(
+                        path.Points[i - 1],
+                        path.Points[i],
+                        amount);
+                    float distanceSquared = math.distancesq(from.xz, candidate.xz);
+                    if (distanceSquared <= bestDistanceSquared
+                        && (!found || distanceSquared < bestDistanceSquared))
+                    {
+                        float childAmount = (i - 1 + amount) / (path.Points.Length - 1f);
+                        bestDistanceSquared = distanceSquared;
+                        nearest = new UtilityConnectionTarget(
+                            candidate,
+                            path.ParentEdge,
+                            math.lerp(path.EdgeDelta.x, path.EdgeDelta.y, childAmount));
+                        found = true;
+                    }
+                }
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// Mirrors NetToolSystem.GetCoursePos: an endpoint at either end of an
+        /// edge attaches to that edge's node; an interior endpoint splits the
+        /// edge at the mapped parameter.
+        /// </summary>
+        public static void ResolveConnectionAnchor(
+            Entity edge,
+            Entity startNode,
+            Entity endNode,
+            float split,
+            out Entity anchor,
+            out float anchorSplit)
+        {
+            anchorSplit = math.saturate(split);
+            anchor = anchorSplit <= 0f
+                ? startNode
+                : anchorSplit >= 1f
+                    ? endNode
+                    : edge;
         }
 
         public static bool SegmentIntersectsCircle(

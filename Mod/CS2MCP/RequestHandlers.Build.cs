@@ -647,7 +647,9 @@ namespace CS2MCP
                 plan.AutoConnect.PrefabEntity,
                 plan.AutoConnect.Prefab,
                 plan.AutoConnect.Start,
-                plan.AutoConnect.End))
+                plan.AutoConnect.End,
+                plan.AutoConnect.TargetEdge,
+                plan.AutoConnect.TargetSplit))
             {
                 return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
             }
@@ -797,7 +799,7 @@ namespace CS2MCP
         private sealed class PlacementSearchContext
         {
             public readonly List<PlacementPath> Roads = new List<PlacementPath>();
-            public readonly List<PlacementPath> Networks = new List<PlacementPath>();
+            public readonly List<PlacementUtilityPath> UtilityPaths = new List<PlacementUtilityPath>();
             public readonly List<PlacementFootprint> Buildings = new List<PlacementFootprint>();
             public readonly HashSet<long> OwnedTiles = new HashSet<long>();
             public ConnectorPrefab Connector;
@@ -816,6 +818,8 @@ namespace CS2MCP
             public PrefabBase Prefab;
             public float3 Start;
             public float3 End;
+            public Entity TargetEdge;
+            public float TargetSplit;
             public float Distance;
         }
 
@@ -1282,6 +1286,11 @@ namespace CS2MCP
             float radius)
         {
             var context = new PlacementSearchContext();
+            if (!capabilities.RequiresRoad
+                && capabilities.UtilityConnection != UtilityConnectionKind.None)
+            {
+                context.Connector = ResolveConnectorPrefab(capabilities.UtilityConnection);
+            }
             float contextRadius = radius
                 + math.max(capabilities.ShorelineRadius, BuildingRadius(capabilities.Building))
                 + 180f;
@@ -1307,10 +1316,70 @@ namespace CS2MCP
                         HalfWidth = halfWidth,
                         Points = SamplePlacementPath(curve),
                     };
-                    context.Networks.Add(path);
                     if (EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
                     {
                         context.Roads.Add(path);
+                    }
+
+                    // A top-level net edge owns the longitudinal lanes that can
+                    // actually be split by the native net tool. Starting here
+                    // excludes object-local and node/vertical connection lanes.
+                    if (context.Connector == null
+                        || context.Connector.Entity == Entity.Null
+                        || !EntityManager.HasBuffer<Game.Net.SubLane>(entity))
+                    {
+                        continue;
+                    }
+                    DynamicBuffer<Game.Net.SubLane> subLanes =
+                        EntityManager.GetBuffer<Game.Net.SubLane>(entity, isReadOnly: true);
+                    foreach (Game.Net.SubLane subLane in subLanes)
+                    {
+                        Entity lane = subLane.m_SubLane;
+                        if (!EntityManager.Exists(lane)
+                            || !EntityManager.HasComponent<Game.Net.UtilityLane>(lane)
+                            || !EntityManager.HasComponent<Game.Common.Owner>(lane)
+                            || !EntityManager.HasComponent<Game.Net.EdgeLane>(lane)
+                            || !EntityManager.HasComponent<Game.Net.Curve>(lane)
+                            || !EntityManager.HasComponent<PrefabRef>(lane)
+                            || EntityManager.HasComponent<Game.Tools.Temp>(lane)
+                            || EntityManager.HasComponent<Game.Common.Deleted>(lane))
+                        {
+                            continue;
+                        }
+                        Game.Net.UtilityLane utilityLane =
+                            EntityManager.GetComponentData<Game.Net.UtilityLane>(lane);
+                        if (EntityManager.GetComponentData<Game.Common.Owner>(lane).m_Owner
+                                != entity
+                            || (utilityLane.m_Flags
+                                & Game.Net.UtilityLaneFlags.VerticalConnection) != 0)
+                        {
+                            continue;
+                        }
+                        PrefabRef lanePrefab = EntityManager.GetComponentData<PrefabRef>(lane);
+                        // Utility kind belongs to the child lane prefab; native
+                        // connect-layer compatibility belongs to the parent net
+                        // prefab, matching NetToolSystem's edge-snap check.
+                        if (!EntityManager.HasComponent<UtilityLaneData>(lanePrefab.m_Prefab)
+                            || !CanConnectUtilityPrefab(
+                                context.Connector,
+                                prefabRef.m_Prefab))
+                        {
+                            continue;
+                        }
+                        UtilityNetworkKinds kinds = ToUtilityNetworkKinds(
+                            EntityManager.GetComponentData<UtilityLaneData>(lanePrefab.m_Prefab)
+                                .m_UtilityTypes);
+                        if (kinds == UtilityNetworkKinds.None)
+                        {
+                            continue;
+                        }
+                        Game.Net.Curve laneCurve =
+                            EntityManager.GetComponentData<Game.Net.Curve>(lane);
+                        context.UtilityPaths.Add(new PlacementUtilityPath(
+                            kinds,
+                            entity,
+                            EntityManager.GetComponentData<Game.Net.EdgeLane>(lane).m_EdgeDelta,
+                            SamplePlacementPath(laneCurve)));
                     }
                 }
             }
@@ -1352,12 +1421,23 @@ namespace CS2MCP
                 }
             }
 
-            if (!capabilities.RequiresRoad
-                && capabilities.UtilityConnection != UtilityConnectionKind.None)
-            {
-                context.Connector = ResolveConnectorPrefab(capabilities.UtilityConnection);
-            }
             return context;
+        }
+
+        private bool CanConnectUtilityPrefab(
+            ConnectorPrefab connector,
+            Entity targetNetPrefab)
+        {
+            if (connector == null
+                || connector.Entity == Entity.Null
+                || !EntityManager.HasComponent<NetData>(connector.Entity)
+                || !EntityManager.HasComponent<NetData>(targetNetPrefab))
+            {
+                return false;
+            }
+            return Game.Net.NetUtils.CanConnect(
+                EntityManager.GetComponentData<NetData>(connector.Entity),
+                EntityManager.GetComponentData<NetData>(targetNetPrefab));
         }
 
         private static float3[] SamplePlacementPath(Game.Net.Curve curve)
@@ -1407,6 +1487,41 @@ namespace CS2MCP
                     return "Low-voltage Ground Cable";
                 default:
                     return null;
+            }
+        }
+
+        private static UtilityNetworkKinds ToUtilityNetworkKinds(
+            Game.Net.UtilityTypes utilityTypes)
+        {
+            UtilityNetworkKinds result = UtilityNetworkKinds.None;
+            if ((utilityTypes & Game.Net.UtilityTypes.WaterPipe) != 0)
+            {
+                result |= UtilityNetworkKinds.Water;
+            }
+            if ((utilityTypes & Game.Net.UtilityTypes.SewagePipe) != 0)
+            {
+                result |= UtilityNetworkKinds.Sewage;
+            }
+            if ((utilityTypes & Game.Net.UtilityTypes.LowVoltageLine) != 0)
+            {
+                result |= UtilityNetworkKinds.LowVoltage;
+            }
+            return result;
+        }
+
+        private static UtilityNetworkKinds ToUtilityNetworkKinds(
+            UtilityConnectionKind kind)
+        {
+            switch (kind)
+            {
+                case UtilityConnectionKind.Water:
+                    return UtilityNetworkKinds.Water;
+                case UtilityConnectionKind.Sewage:
+                    return UtilityNetworkKinds.Sewage;
+                case UtilityConnectionKind.LowVoltage:
+                    return UtilityNetworkKinds.LowVoltage;
+                default:
+                    return UtilityNetworkKinds.None;
             }
         }
 
@@ -2895,7 +3010,6 @@ namespace CS2MCP
                     pose.Position,
                     pose.Rotation,
                     context,
-                    connector.Entity,
                     14f))
             {
                 return true;
@@ -2906,30 +3020,29 @@ namespace CS2MCP
                     pose.Rotation,
                     context,
                     out float3 start,
-                    out float3 roadPoint))
+                    out UtilityConnectionTarget target))
             {
-                reason = $"prefab declares {capabilities.UtilityConnection} but no open matching connection node can reach a road within 150m";
+                reason = $"prefab declares {capabilities.UtilityConnection} but no open matching connection node can reach the corresponding utility network within 150m";
                 return false;
             }
-            float3 end = roadPoint;
+            Game.Net.Curve parentCurve =
+                EntityManager.GetComponentData<Game.Net.Curve>(target.ParentEdge);
+            float3 end = BezierPoint(parentCurve.m_Bezier, target.ParentSplit);
             float2 delta = end.xz - start.xz;
-            float length = math.length(delta);
-            if (length < 0.5f)
+            if (math.length(delta) < 0.5f)
             {
                 return true;
             }
-            if (length < 8f)
-            {
-                end = start + new float3(math.normalizesafe(delta) * 8f, 0f);
-                length = 8f;
-            }
             end.y = TerrainUtils.SampleHeight(ref heightData, end);
+            float length = math.distance(start.xz, end.xz);
             plan = new AutoConnectPlan
             {
                 PrefabEntity = connector.Entity,
                 Prefab = connector.Prefab,
                 Start = start,
                 End = end,
+                TargetEdge = target.ParentEdge,
+                TargetSplit = target.ParentSplit,
                 Distance = length,
             };
             return true;
@@ -2941,34 +3054,38 @@ namespace CS2MCP
             quaternion buildingRotation,
             PlacementSearchContext context,
             out float3 connectionPoint,
-            out float3 roadPoint)
+            out UtilityConnectionTarget target)
         {
             connectionPoint = buildingPosition;
-            roadPoint = buildingPosition;
+            target = default;
             if (capabilities.UtilityConnectionPoints == null
                 || capabilities.UtilityConnectionPoints.Count == 0)
             {
                 return false;
             }
+            UtilityNetworkKinds required = ToUtilityNetworkKinds(
+                capabilities.UtilityConnection);
             float bestDistanceSquared = float.MaxValue;
             foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
             {
                 float3 worldPoint = buildingPosition + math.mul(buildingRotation, localPoint);
-                if (!TryFindNearestRoadPoint(
-                        context,
+                if (!PlacementSearchMath.TryFindNearestUtilityPoint(
+                        context.UtilityPaths,
+                        required,
                         worldPoint,
                         150f,
-                        out float3 candidateRoadPoint,
-                        out _))
+                        out UtilityConnectionTarget candidate))
                 {
                     continue;
                 }
-                float distanceSquared = math.distancesq(worldPoint.xz, candidateRoadPoint.xz);
+                float distanceSquared = math.distancesq(
+                    worldPoint.xz,
+                    candidate.Position.xz);
                 if (distanceSquared < bestDistanceSquared)
                 {
                     bestDistanceSquared = distanceSquared;
                     connectionPoint = worldPoint;
-                    roadPoint = candidateRoadPoint;
+                    target = candidate;
                 }
             }
             return bestDistanceSquared < float.MaxValue;
@@ -2979,47 +3096,25 @@ namespace CS2MCP
             float3 buildingPosition,
             quaternion buildingRotation,
             PlacementSearchContext context,
-            Entity prefabEntity,
             float radius)
         {
             if (capabilities.UtilityConnectionPoints == null)
             {
                 return false;
             }
+            UtilityNetworkKinds required = ToUtilityNetworkKinds(
+                capabilities.UtilityConnection);
             foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
             {
                 float3 worldPoint = buildingPosition + math.mul(buildingRotation, localPoint);
-                if (HasNetNearby(context, prefabEntity, worldPoint, radius))
+                if (PlacementSearchMath.TryFindNearestUtilityPoint(
+                    context.UtilityPaths,
+                    required,
+                    worldPoint,
+                    radius,
+                    out _))
                 {
                     return true;
-                }
-            }
-            return false;
-        }
-
-        private static bool HasNetNearby(
-            PlacementSearchContext context,
-            Entity prefabEntity,
-            float3 position,
-            float radius)
-        {
-            float radiusSquared = radius * radius;
-            foreach (PlacementPath path in context.Networks)
-            {
-                if (path.PrefabEntity != prefabEntity)
-                {
-                    continue;
-                }
-                for (int i = 1; i < path.Points.Length; i++)
-                {
-                    float2 nearest = PlacementSearchMath.ClosestPointOnSegment(
-                        position.xz,
-                        path.Points[i - 1].xz,
-                        path.Points[i].xz);
-                    if (math.distancesq(position.xz, nearest) <= radiusSquared)
-                    {
-                        return true;
-                    }
                 }
             }
             return false;

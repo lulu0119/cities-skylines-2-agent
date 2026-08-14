@@ -108,6 +108,8 @@ namespace CS2MCP
         private PrefabBase m_AutoConnectPrefab;
         private float3 m_AutoConnectStart;
         private float3 m_AutoConnectEnd;
+        private Entity m_AutoConnectTargetEdge;
+        private float m_AutoConnectTargetSplit;
         private string m_PlacedBuildingName;
         private float3 m_PlacedBuildingPosition;
 
@@ -163,7 +165,9 @@ namespace CS2MCP
             Entity autoConnectPrefabEntity = default,
             PrefabBase autoConnectPrefab = null,
             float3 autoConnectStart = default,
-            float3 autoConnectEnd = default)
+            float3 autoConnectEnd = default,
+            Entity autoConnectTargetEdge = default,
+            float autoConnectTargetSplit = 0f)
         {
             if (m_Stage != Stage.Idle)
             {
@@ -175,7 +179,13 @@ namespace CS2MCP
             m_PendingPosition = position;
             m_PendingRotation = rotation;
             m_PendingRequest = request;
-            SetAutoConnect(autoConnectPrefabEntity, autoConnectPrefab, autoConnectStart, autoConnectEnd);
+            SetAutoConnect(
+                autoConnectPrefabEntity,
+                autoConnectPrefab,
+                autoConnectStart,
+                autoConnectEnd,
+                autoConnectTargetEdge,
+                autoConnectTargetSplit);
             Activate();
             return true;
         }
@@ -271,11 +281,7 @@ namespace CS2MCP
             PrefabBase prefab,
             IReadOnlyList<float3> positions,
             IReadOnlyList<float> rotations,
-            BridgeRequest request,
-            Entity autoConnectPrefabEntity = default,
-            PrefabBase autoConnectPrefab = null,
-            float3 autoConnectStart = default,
-            float3 autoConnectEnd = default)
+            BridgeRequest request)
         {
             if (m_Stage != Stage.Idle)
             {
@@ -296,7 +302,9 @@ namespace CS2MCP
             m_ProbeTried = 0;
             m_ProbeLastError = "";
             m_PendingRequest = request;
-            SetAutoConnect(autoConnectPrefabEntity, autoConnectPrefab, autoConnectStart, autoConnectEnd);
+            // This legacy multi-candidate seam has no candidate-specific
+            // topology plan. Do not queue a coordinate-only connector.
+            ClearAutoConnect();
             Activate();
             return true;
         }
@@ -305,13 +313,24 @@ namespace CS2MCP
             Entity prefabEntity,
             PrefabBase prefab,
             float3 start,
-            float3 end)
+            float3 end,
+            Entity targetEdge,
+            float targetSplit)
         {
-            m_AutoConnectQueued = prefabEntity != Entity.Null && prefab != null;
+            m_AutoConnectQueued = prefabEntity != Entity.Null
+                && prefab != null
+                && targetEdge != Entity.Null;
             m_AutoConnectPrefabEntity = prefabEntity;
             m_AutoConnectPrefab = prefab;
             m_AutoConnectStart = start;
             m_AutoConnectEnd = end;
+            m_AutoConnectTargetEdge = targetEdge;
+            m_AutoConnectTargetSplit = targetSplit;
+        }
+
+        private void ClearAutoConnect()
+        {
+            SetAutoConnect(default, null, default, default, default, 0f);
         }
 
         /// <summary>Must be called on the simulation thread.</summary>
@@ -331,6 +350,7 @@ namespace CS2MCP
             m_PendingElevations = elevations;
             m_PendingRotation = quaternion.identity;
             m_PendingRequest = request;
+            ClearAutoConnect();
             Activate();
             return true;
         }
@@ -528,6 +548,14 @@ namespace CS2MCP
                                 CreatePlacementDefinitions();
                                 break;
                             case OperationKind.Net:
+                                if (m_AutoConnectQueued && !TryRefreshAutoConnectTarget())
+                                {
+                                    CompletePending(BuildAutoConnectFailedResponse(
+                                        "the selected utility network changed before the connector could be built"));
+                                    m_AutoConnectQueued = false;
+                                    m_Stage = Stage.Finish;
+                                    break;
+                                }
                                 CreateRoadDefinitions();
                                 break;
                             case OperationKind.Probe:
@@ -561,12 +589,15 @@ namespace CS2MCP
                                 ApplyZoneCells();
                                 break;
                         }
-                        m_Stage = m_PendingKind == OperationKind.Zone
-                            ? Stage.Finish
-                            : m_PendingKind == OperationKind.Probe
-                            || m_PendingKind == OperationKind.SearchPlace
-                            ? Stage.ProbeValidate
-                            : Stage.Apply;
+                        if (m_Stage != Stage.Finish)
+                        {
+                            m_Stage = m_PendingKind == OperationKind.Zone
+                                ? Stage.Finish
+                                : m_PendingKind == OperationKind.Probe
+                                || m_PendingKind == OperationKind.SearchPlace
+                                ? Stage.ProbeValidate
+                                : Stage.Apply;
+                        }
                         break;
 
                     case Stage.Apply:
@@ -581,7 +612,7 @@ namespace CS2MCP
                             else if (m_AutoConnectQueued)
                             {
                                 // Building committed. Chain the utility connector
-                                // (pipe/cable to the nearest road) in the same
+                                // (pipe/cable to the matching utility lane) in the same
                                 // operation so the model does not have to place
                                 // it manually.
                                 m_PlacedBuildingName = m_PendingPrefab != null
@@ -596,16 +627,9 @@ namespace CS2MCP
                                 m_PendingEnd = m_AutoConnectEnd;
                                 m_PendingMid = default;
                                 m_PendingHasMid = false;
-                                // Auto-connect currently owns only pipes and
-                                // low-voltage ground cables, all underground.
-                                string netName = m_AutoConnectPrefab != null
-                                    ? m_AutoConnectPrefab.name
-                                    : "";
-                                m_PendingElevations =
-                                    netName.IndexOf("Pipe", StringComparison.OrdinalIgnoreCase) >= 0
-                                    || netName.IndexOf("Ground Cable", StringComparison.OrdinalIgnoreCase) >= 0
-                                        ? new float2(-10f, -10f)
-                                        : default;
+                                // The connector prefabs selected by the placement
+                                // module are underground pipes or ground cables.
+                                m_PendingElevations = new float2(-10f, -10f);
                             }
                             else
                             {
@@ -719,6 +743,30 @@ namespace CS2MCP
                 ? m_ProbeRotations[m_ProbeIndex]
                 : m_ProbeRotationDegrees;
             m_PendingRotation = quaternion.RotateY(math.radians(degrees));
+        }
+
+        private bool TryRefreshAutoConnectTarget()
+        {
+            if (m_AutoConnectTargetEdge == Entity.Null
+                || !EntityManager.Exists(m_AutoConnectTargetEdge)
+                || !EntityManager.HasComponent<Game.Net.Edge>(m_AutoConnectTargetEdge)
+                || !EntityManager.HasComponent<Game.Net.Curve>(m_AutoConnectTargetEdge)
+                || EntityManager.HasComponent<Deleted>(m_AutoConnectTargetEdge))
+            {
+                return false;
+            }
+
+            Game.Net.Curve curve =
+                EntityManager.GetComponentData<Game.Net.Curve>(m_AutoConnectTargetEdge);
+            m_AutoConnectTargetSplit = math.saturate(m_AutoConnectTargetSplit);
+            // NetToolSystem derives both the control point and the split anchor
+            // from the top-level edge. Refresh both from the live edge so the
+            // queued connector cannot combine stale geometry with a valid anchor.
+            m_PendingEnd = MathUtils.Position(
+                curve.m_Bezier,
+                m_AutoConnectTargetSplit);
+            m_AutoConnectEnd = m_PendingEnd;
+            return true;
         }
 
         private void ApplyZoneCells()
@@ -854,11 +902,11 @@ namespace CS2MCP
                     start = new { x = m_AutoConnectStart.x, z = m_AutoConnectStart.z },
                     end = new { x = m_AutoConnectEnd.x, z = m_AutoConnectEnd.z },
                 },
-                note = "building placed; utility connector (pipe/cable) auto-built to the nearest road network",
+                note = "building placed; utility connector (pipe/cable) auto-built to the corresponding utility network",
             });
         }
 
-        private BridgeResponse BuildAutoConnectFailedResponse()
+        private BridgeResponse BuildAutoConnectFailedResponse(string connectionError = null)
         {
             return BridgeResponse.Json(new
             {
@@ -871,7 +919,7 @@ namespace CS2MCP
                     z = m_PlacedBuildingPosition.z,
                 },
                 connected = false,
-                connectionError = DescribeValidationBlock(),
+                connectionError = connectionError ?? DescribeValidationBlock(),
                 note = "building placed, but the automatic utility connector was rejected by the game; connect it manually with build_road",
             });
         }
@@ -1256,6 +1304,10 @@ namespace CS2MCP
             m_AutoConnectQueued = false;
             m_AutoConnectPrefabEntity = Entity.Null;
             m_AutoConnectPrefab = null;
+            m_AutoConnectStart = default;
+            m_AutoConnectEnd = default;
+            m_AutoConnectTargetEdge = Entity.Null;
+            m_AutoConnectTargetSplit = 0f;
             m_PlacedBuildingName = null;
             if (m_ToolSystem.activeTool == this)
             {
@@ -1482,6 +1534,18 @@ namespace CS2MCP
             course.m_EndPosition.m_ParentMesh = -1;
             course.m_EndPosition.m_Elevation = e2;
             course.m_EndPosition.m_Flags = CoursePosFlags.IsLast | CoursePosFlags.FreeHeight;
+            if (m_AutoConnectQueued)
+            {
+                Game.Net.Edge targetEdge =
+                    EntityManager.GetComponentData<Game.Net.Edge>(m_AutoConnectTargetEdge);
+                PlacementSearchMath.ResolveConnectionAnchor(
+                    m_AutoConnectTargetEdge,
+                    targetEdge.m_Start,
+                    targetEdge.m_End,
+                    m_AutoConnectTargetSplit,
+                    out course.m_EndPosition.m_Entity,
+                    out course.m_EndPosition.m_SplitPosition);
+            }
             course.m_Length = MathUtils.Length(course.m_Curve);
             course.m_FixedIndex = -1;
 
