@@ -155,22 +155,23 @@ namespace CS2MCP
 
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
+            List<OperationalAreaObstacle> obstacles = CollectOperationalAreaObstacles(building);
             Node[] expandedNodeArray = null;
             OperationalResourceScore selectedResourceScore = default;
             int candidatesTested = 0;
             string lastRejection = null;
-            float[] skews = { 0f, -15f, 15f, -30f, 30f };
-            foreach (float skewDegrees in skews)
+            foreach (float tangentShift in OperationalAreaPlanningMath.CenterShifts(lockedLength))
             {
                 candidatesTested++;
-                if (!TryPlanOperationalAreaFan(
+                if (!TryPlanOperationalAreaExpansion(
                         currentNodes,
                         lockedStart,
                         lockedEnd,
                         tangent,
                         normal,
                         targetArea,
-                        skewDegrees,
+                        tangentShift,
+                        obstacles,
                         ref heightData,
                         out Node[] candidateNodes,
                         out _,
@@ -214,7 +215,7 @@ namespace CS2MCP
             if (expandedNodeArray == null)
             {
                 return BridgeResponse.Error(BridgeErrorKind.Conflict,
-                    $"no clear expansion fan could reach {targetArea:F1} m2 after {candidatesTested} candidates: {lastRejection ?? "no valid geometry"}");
+                    $"no clear expansion could reach {targetArea:F1} m2 after {candidatesTested} candidates: {lastRejection ?? "no valid geometry"}");
             }
 
             Geometry geometry = EntityManager.GetComponentData<Geometry>(area);
@@ -356,26 +357,15 @@ namespace CS2MCP
             return math.abs(area) * 0.5f;
         }
 
-        private static float CalculatePolygonArea(List<float2> nodes)
-        {
-            float area = 0f;
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                float2 current = nodes[i];
-                float2 next = nodes[(i + 1) % nodes.Count];
-                area += current.x * next.y - next.x * current.y;
-            }
-            return math.abs(area) * 0.5f;
-        }
-
-        private bool TryPlanOperationalAreaFan(
+        private bool TryPlanOperationalAreaExpansion(
             DynamicBuffer<Node> nodes,
             float2 lockedStart,
             float2 lockedEnd,
             float2 tangent,
             float2 normal,
             float targetArea,
-            float skewDegrees,
+            float tangentShift,
+            IReadOnlyList<OperationalAreaObstacle> obstacles,
             ref TerrainHeightData heightData,
             out Node[] result,
             out float resultArea,
@@ -384,60 +374,28 @@ namespace CS2MCP
             result = null;
             resultArea = 0f;
             error = null;
-            const int arcSegments = 6;
-            float halfAngle = math.radians(55f);
-            float skew = math.radians(skewDegrees);
-            float2 center = (lockedStart + lockedEnd) * 0.5f;
             var existing = new List<float2>(nodes.Length);
             for (int i = 0; i < nodes.Length; i++)
             {
                 existing.Add(nodes[i].m_Position.xz);
             }
 
-            List<float2> bestHull = null;
-            float lowRadius = 0f;
-            float highRadius = math.max(8f, math.distance(lockedStart, lockedEnd) * 0.5f);
-            while (highRadius <= 512f)
+            if (!OperationalAreaPlanningMath.TryPlanExpansion(
+                    existing,
+                    lockedStart,
+                    lockedEnd,
+                    tangent,
+                    normal,
+                    targetArea,
+                    tangentShift,
+                    obstacles,
+                    out List<float2> oriented,
+                    out _,
+                    out error))
             {
-                bestHull = BuildOperationalAreaFanHull(
-                    existing, center, tangent, normal, highRadius, skew, halfAngle, arcSegments);
-                if (bestHull != null && CalculatePolygonArea(bestHull) >= targetArea)
-                {
-                    break;
-                }
-                highRadius *= 1.5f;
-            }
-            if (bestHull == null || CalculatePolygonArea(bestHull) < targetArea)
-            {
-                error = "target area requires a fan radius beyond the 512 m planning limit";
                 return false;
-            }
-            for (int iteration = 0; iteration < 18; iteration++)
-            {
-                float radius = (lowRadius + highRadius) * 0.5f;
-                List<float2> hull = BuildOperationalAreaFanHull(
-                    existing, center, tangent, normal, radius, skew, halfAngle, arcSegments);
-                if (hull != null && CalculatePolygonArea(hull) >= targetArea)
-                {
-                    highRadius = radius;
-                    bestHull = hull;
-                }
-                else
-                {
-                    lowRadius = radius;
-                }
             }
 
-            if (!TryOrientOperationalAreaHull(bestHull, lockedStart, lockedEnd, out List<float2> oriented))
-            {
-                error = "planned fan did not preserve the locked building edge";
-                return false;
-            }
-            if (oriented.Count > 16)
-            {
-                error = $"planned fan needs {oriented.Count} nodes, above the 16-node safety limit";
-                return false;
-            }
             result = new Node[oriented.Count];
             for (int i = 0; i < oriented.Count; i++)
             {
@@ -445,15 +403,17 @@ namespace CS2MCP
                 result[i] = CreateOperationalAreaNode(template, oriented[i], ref heightData);
             }
             resultArea = CalculatePolygonArea(result);
-            if (!HasMinimumOperationalAreaSpacing(result, 4f))
+            if (!HasMinimumOperationalAreaSpacing(
+                    result,
+                    OperationalAreaPlanningMath.MinNodeDistance))
             {
-                error = "planned fan places adjacent nodes closer than the native 4 m limit";
+                error = "planned expansion places adjacent nodes closer than the native 4 m limit";
                 result = null;
                 return false;
             }
             if (resultArea < targetArea - 1f)
             {
-                error = "planned fan fell below the requested area after terrain projection";
+                error = "planned expansion fell below the requested area after terrain projection";
                 result = null;
                 return false;
             }
@@ -656,7 +616,7 @@ namespace CS2MCP
                 : 0f;
             if (extractorData.m_RequireNaturalResource && score.RemainingAmount <= 0.01f)
             {
-                error = $"planned {feature} extractor fan has no remaining resource coverage";
+                error = $"planned {feature} extractor expansion has no remaining resource coverage";
                 return false;
             }
             return true;
@@ -713,7 +673,7 @@ namespace CS2MCP
 
             if (requireNaturalResource && score.RemainingAmount <= 0.01f)
             {
-                error = "planned Forest extractor fan contains no productive tree resources";
+                error = "planned Forest extractor expansion contains no productive tree resources";
                 return false;
             }
             return true;
@@ -738,101 +698,44 @@ namespace CS2MCP
             }
         }
 
-        private static List<float2> BuildOperationalAreaFanHull(
-            List<float2> existing,
-            float2 center,
-            float2 tangent,
-            float2 normal,
-            float radius,
-            float skew,
-            float halfAngle,
-            int arcSegments)
+        private List<OperationalAreaObstacle> CollectOperationalAreaObstacles(Entity building)
         {
-            var points = new List<float2>(existing.Count + arcSegments + 1);
-            points.AddRange(existing);
-            for (int i = 0; i <= arcSegments; i++)
+            var obstacles = new List<OperationalAreaObstacle>();
+            using (NativeArray<Entity> buildings = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
             {
-                float angle = skew + halfAngle - 2f * halfAngle * i / arcSegments;
-                float2 direction = normal * math.cos(angle) + tangent * math.sin(angle);
-                points.Add(center + direction * radius);
-            }
-            return ConvexHull(points);
-        }
-
-        private static List<float2> ConvexHull(List<float2> points)
-        {
-            points.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
-            var unique = new List<float2>(points.Count);
-            foreach (float2 point in points)
-            {
-                if (unique.Count == 0 || math.distancesq(unique[unique.Count - 1], point) > 0.01f)
+                foreach (Entity other in buildings)
                 {
-                    unique.Add(point);
+                    if (other == building || IsAreaOwnedBy(other, building))
+                    {
+                        continue;
+                    }
+                    Transform transform = EntityManager.GetComponentData<Transform>(other);
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(other);
+                    float clearance = BuildingRadius(prefabRef.m_Prefab) + 2f;
+                    if (clearance > 2f)
+                    {
+                        obstacles.Add(new OperationalAreaObstacle(transform.m_Position.xz, clearance));
+                    }
                 }
             }
-            if (unique.Count < 3)
+            using (NativeArray<Entity> roads = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
             {
-                return null;
-            }
-            var hull = new List<float2>(unique.Count * 2);
-            foreach (float2 point in unique)
-            {
-                while (hull.Count >= 2
-                    && Cross(hull[hull.Count - 1] - hull[hull.Count - 2], point - hull[hull.Count - 1]) <= 0f)
+                foreach (Entity road in roads)
                 {
-                    hull.RemoveAt(hull.Count - 1);
+                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(road);
+                    float clearance = EntityManager.HasComponent<NetGeometryData>(prefabRef.m_Prefab)
+                        ? EntityManager.GetComponentData<NetGeometryData>(prefabRef.m_Prefab).m_DefaultWidth * 0.5f + 2f
+                        : 2f;
+                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(road);
+                    for (int i = 0; i <= 24; i++)
+                    {
+                        obstacles.Add(new OperationalAreaObstacle(
+                            BezierPoint(curve.m_Bezier, i / 24f).xz,
+                            clearance));
+                    }
                 }
-                hull.Add(point);
             }
-            int lowerCount = hull.Count;
-            for (int i = unique.Count - 2; i >= 0; i--)
-            {
-                float2 point = unique[i];
-                while (hull.Count > lowerCount
-                    && Cross(hull[hull.Count - 1] - hull[hull.Count - 2], point - hull[hull.Count - 1]) <= 0f)
-                {
-                    hull.RemoveAt(hull.Count - 1);
-                }
-                hull.Add(point);
-            }
-            hull.RemoveAt(hull.Count - 1);
-            return hull;
-        }
-
-        private static float Cross(float2 a, float2 b) => a.x * b.y - a.y * b.x;
-
-        private static bool TryOrientOperationalAreaHull(
-            List<float2> hull,
-            float2 lockedStart,
-            float2 lockedEnd,
-            out List<float2> oriented)
-        {
-            oriented = null;
-            if (hull == null)
-            {
-                return false;
-            }
-            int start = hull.FindIndex(point => math.distancesq(point, lockedStart) < 0.01f);
-            int end = hull.FindIndex(point => math.distancesq(point, lockedEnd) < 0.01f);
-            if (start < 0 || end < 0)
-            {
-                return false;
-            }
-            if ((start + 1) % hull.Count != end)
-            {
-                if ((end + 1) % hull.Count != start)
-                {
-                    return false;
-                }
-                hull.Reverse();
-                start = hull.FindIndex(point => math.distancesq(point, lockedStart) < 0.01f);
-            }
-            oriented = new List<float2>(hull.Count);
-            for (int i = 0; i < hull.Count; i++)
-            {
-                oriented.Add(hull[(start + i) % hull.Count]);
-            }
-            return oriented.Count >= 3 && math.distancesq(oriented[1], lockedEnd) < 0.01f;
+            return obstacles;
         }
 
         private bool IsOperationalAreaCandidateClear(
@@ -846,7 +749,7 @@ namespace CS2MCP
                 polygon.Add(node.m_Position.xz);
                 if (!IsOnOwnedTile(node.m_Position))
                 {
-                    reason = "a planned fan node is outside owned map tiles";
+                    reason = "a planned expansion node is outside owned map tiles";
                     return false;
                 }
             }
@@ -862,9 +765,9 @@ namespace CS2MCP
                     PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(other);
                     float clearance = BuildingRadius(prefabRef.m_Prefab) + 2f;
                     if (clearance > 2f
-                        && DistanceToPolygon(transform.m_Position.xz, polygon) < clearance)
+                        && OperationalAreaPlanningMath.DistanceToPolygon(transform.m_Position.xz, polygon) < clearance)
                     {
-                        reason = "planned fan intersects an existing building";
+                        reason = "planned expansion intersects an existing building";
                         return false;
                     }
                 }
@@ -881,9 +784,9 @@ namespace CS2MCP
                     for (int i = 0; i <= 24; i++)
                     {
                         float2 point = BezierPoint(curve.m_Bezier, i / 24f).xz;
-                        if (DistanceToPolygon(point, polygon) < clearance)
+                        if (OperationalAreaPlanningMath.DistanceToPolygon(point, polygon) < clearance)
                         {
-                            reason = "planned fan intersects an existing road";
+                            reason = "planned expansion intersects an existing road";
                             return false;
                         }
                     }
@@ -891,26 +794,6 @@ namespace CS2MCP
             }
             reason = null;
             return true;
-        }
-
-        private static float DistanceToPolygon(float2 point, List<float2> polygon)
-        {
-            bool inside = false;
-            float distance = float.MaxValue;
-            for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
-            {
-                float2 a = polygon[j];
-                float2 b = polygon[i];
-                float2 edge = b - a;
-                float t = math.saturate(math.dot(point - a, edge) / math.max(0.001f, math.lengthsq(edge)));
-                distance = math.min(distance, math.distance(point, a + edge * t));
-                if ((a.y > point.y) != (b.y > point.y)
-                    && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x)
-                {
-                    inside = !inside;
-                }
-            }
-            return inside ? 0f : distance;
         }
 
         private static Node FindNearestOperationalAreaNode(DynamicBuffer<Node> nodes, float2 point)

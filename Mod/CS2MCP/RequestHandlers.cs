@@ -138,8 +138,22 @@ namespace CS2MCP
                     return GetOperationalArea(request);
                 case "/build/operational-area/expand":
                     return ExpandOperationalArea(request);
-                case "/city/roads":
-                    return ListRoads(request);
+                case "/city/buildings/upgrades":
+                    return ListFacilityUpgrades(request);
+                case "/build/facility-upgrade":
+                    return SetFacilityUpgrade(request);
+                case "/city/transit/stops":
+                    return ListTransitStops(request);
+                case "/city/transit/lines":
+                    return ListTransitLines(request);
+                case "/build/transit/line":
+                    return CreateTransitLine(request);
+                case "/build/transit/line/delete":
+                    return DeleteTransitLine(request);
+                case "/city/networks":
+                    return ListNetworks(request);
+                case "/city/networks/topology":
+                    return InspectNetworkTopology(request);
                 case "/city/loan":
                     return GetLoan();
                 case "/city/loan/set":

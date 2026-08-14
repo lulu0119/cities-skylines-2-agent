@@ -1,6 +1,6 @@
 # `cities-skylines1-agent-skill` 道路规划能力审计（2026-08-13）
 
-**状态：** 一手源码审计；未修改产品代码。  
+**状态：** 一手源码审计；产品侧 typed-network list / demolish / topology QA 见 [ADR-0009](../adr/0009-typed-network-graph.md)。本笔记仍是 CS1 证据，不是路线规划实现。  
 **问题：** `Sunwood-ai-labs/cities-skylines1-agent-skill` 如何处理断头路、地图/地形/道路几何、曲线道路与桥梁？哪些思路适合迁移到本项目？  
 **审计固定点：** 默认分支 `main` 的 commit
 [`70a5116215a4c83820134cca870aae1934e92d87`](https://github.com/Sunwood-ai-labs/cities-skylines1-agent-skill/commit/70a5116215a4c83820134cca870aae1934e92d87)。未合并分支仅在明确标注时作为补充材料，不视为产品现状。  

@@ -1,19 +1,9 @@
-using System;
 using System.Collections.Generic;
 using Unity.Entities;
 using Unity.Mathematics;
 
 namespace CS2MCP
 {
-    [Flags]
-    internal enum UtilityNetworkKinds : byte
-    {
-        None = 0,
-        Water = 1,
-        Sewage = 2,
-        LowVoltage = 4,
-    }
-
     /// <summary>
     /// A stable placement snapshot of one connectable utility lane. It carries
     /// the owning edge solely as the native split anchor; road prefab identity
@@ -22,21 +12,29 @@ namespace CS2MCP
     internal readonly struct PlacementUtilityPath
     {
         public PlacementUtilityPath(
-            UtilityNetworkKinds kinds,
+            TypedNetworkKinds kinds,
             Entity parentEdge,
             float2 edgeDelta,
-            float3[] points)
+            float3[] points,
+            bool nodeSnap = false)
         {
             Kinds = kinds;
             ParentEdge = parentEdge;
             EdgeDelta = edgeDelta;
             Points = points;
+            NodeSnap = nodeSnap;
         }
 
-        public UtilityNetworkKinds Kinds { get; }
+        public TypedNetworkKinds Kinds { get; }
         public Entity ParentEdge { get; }
         public float2 EdgeDelta { get; }
         public float3[] Points { get; }
+
+        /// <summary>
+        /// Native edge-snap is illegal for this parent (roads vs pipes). The
+        /// connector must attach at a node instead of splitting the edge.
+        /// </summary>
+        public bool NodeSnap { get; }
     }
 
     internal readonly struct UtilityConnectionTarget
@@ -175,14 +173,14 @@ namespace CS2MCP
 
         public static bool TryFindNearestUtilityPoint(
             IReadOnlyList<PlacementUtilityPath> paths,
-            UtilityNetworkKinds required,
+            TypedNetworkKinds required,
             float3 from,
             float maxDistance,
             out UtilityConnectionTarget nearest)
         {
             nearest = default;
             if (paths == null
-                || required == UtilityNetworkKinds.None
+                || required == TypedNetworkKinds.None
                 || maxDistance < 0f)
             {
                 return false;
@@ -196,6 +194,27 @@ namespace CS2MCP
                     || path.Points == null
                     || path.Points.Length < 2)
                 {
+                    continue;
+                }
+
+                if (path.NodeSnap)
+                {
+                    ConsiderNode(
+                        path.Points[0],
+                        SnapSplitToNode(path.EdgeDelta.x),
+                        from,
+                        ref bestDistanceSquared,
+                        ref nearest,
+                        ref found,
+                        path.ParentEdge);
+                    ConsiderNode(
+                        path.Points[path.Points.Length - 1],
+                        SnapSplitToNode(path.EdgeDelta.y),
+                        from,
+                        ref bestDistanceSquared,
+                        ref nearest,
+                        ref found,
+                        path.ParentEdge);
                     continue;
                 }
 
@@ -306,6 +325,30 @@ namespace CS2MCP
                     segmentEnd,
                     boxCenter - right - forward,
                     expansion);
+        }
+
+        private static float SnapSplitToNode(float split)
+        {
+            return split <= 0.5f ? 0f : 1f;
+        }
+
+        private static void ConsiderNode(
+            float3 position,
+            float parentSplit,
+            float3 from,
+            ref float bestDistanceSquared,
+            ref UtilityConnectionTarget nearest,
+            ref bool found,
+            Entity parentEdge)
+        {
+            float distanceSquared = math.distancesq(from.xz, position.xz);
+            if (distanceSquared <= bestDistanceSquared
+                && (!found || distanceSquared < bestDistanceSquared))
+            {
+                bestDistanceSquared = distanceSquared;
+                nearest = new UtilityConnectionTarget(position, parentEdge, parentSplit);
+                found = true;
+            }
         }
 
         private static bool OverlapsOnAxis(

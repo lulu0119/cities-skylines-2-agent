@@ -14,6 +14,12 @@ namespace CitiesSkylines2Agent
         Off,
     }
 
+    public enum ContextBudgetMode
+    {
+        Auto,
+        Custom,
+    }
+
     [FileLocation(nameof(CitiesSkylines2Agent))]
     [SettingsUIGroupOrder(kConnectionGroup, kAgentGroup)]
     [SettingsUIShowGroupName(kConnectionGroup, kAgentGroup)]
@@ -61,10 +67,19 @@ namespace CitiesSkylines2Agent
         [SettingsUISection(kSection, kAgentGroup)]
         public VisionToolMode VisionTools { get; set; } = VisionToolMode.Auto;
 
+        [SettingsUISection(kSection, kAgentGroup)]
+        public ContextBudgetMode ContextBudget { get; set; } = ContextBudgetMode.Auto;
+
+        [SettingsUISection(kSection, kAgentGroup)]
+        [SettingsUISlider(min = 16_000, max = 2_000_000, step = 1_000)]
+        [SettingsUIHideByCondition(typeof(Setting), nameof(HideWindowTokens))]
+        public int WindowTokens { get; set; } = 200_000;
+
+        private bool HideWindowTokens => ContextBudget != ContextBudgetMode.Custom;
+
         // ---- Hidden --------------------------------------
 
         public string StartupPrompt { get; set; } = "";
-        public int WindowTokens { get; set; } = 200_000;
 
         // ---- Static facade ---------------------------------
 
@@ -85,6 +100,8 @@ namespace CitiesSkylines2Agent
             Instance?.EnableDevelopmentTools ?? false;
         public static VisionToolMode StaticVisionToolMode =>
             Instance?.VisionTools ?? VisionToolMode.Auto;
+        public static ContextBudgetMode StaticContextBudgetMode =>
+            Instance?.ContextBudget ?? ContextBudgetMode.Auto;
         public static string StaticApiKey => Instance?.ApiKey ?? "";
         public static long StaticWindowTokens => Instance?.WindowTokens ?? 200_000;
 
@@ -99,6 +116,7 @@ namespace CitiesSkylines2Agent
             AllowDemolition = true;
             EnableDevelopmentTools = false;
             VisionTools = VisionToolMode.Auto;
+            ContextBudget = ContextBudgetMode.Auto;
             StartupPrompt = "";
             WindowTokens = 200_000;
         }
@@ -138,10 +156,16 @@ namespace CitiesSkylines2Agent
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.EnableDevelopmentTools)), "Expose diagnostic, experimental, and manual-save tools to the in-game agent." },
                 { m_Setting.GetOptionLabelLocaleID(nameof(Setting.VisionTools)), "Visual tools" },
                 { m_Setting.GetOptionDescLocaleID(nameof(Setting.VisionTools)), "Auto follows model-name capabilities; On and Off force the result." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.ContextBudget)), "Context budget" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.ContextBudget)), "Auto uses the named-model window; Custom uses the token count below. This is the loop's budget, not the server model limit." },
+                { m_Setting.GetOptionLabelLocaleID(nameof(Setting.WindowTokens)), "Window tokens" },
+                { m_Setting.GetOptionDescLocaleID(nameof(Setting.WindowTokens)), "How many tokens the loop treats as the window. This does not change the server model limit." },
 
                 { m_Setting.GetEnumValueLocaleID(VisionToolMode.Auto), "Auto" },
                 { m_Setting.GetEnumValueLocaleID(VisionToolMode.On), "On" },
                 { m_Setting.GetEnumValueLocaleID(VisionToolMode.Off), "Off" },
+                { m_Setting.GetEnumValueLocaleID(ContextBudgetMode.Auto), "Auto" },
+                { m_Setting.GetEnumValueLocaleID(ContextBudgetMode.Custom), "Custom" },
             };
         }
 

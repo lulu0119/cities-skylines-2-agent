@@ -7,7 +7,9 @@ using Game.City;
 using Game.Common;
 using Game.Net;
 using Game.Notifications;
+using Game.Pathfind;
 using Game.Prefabs;
+using Game.Routes;
 using Game.Simulation;
 using Game.Tools;
 using Game.Zones;
@@ -55,6 +57,8 @@ namespace CS2MCP
             Area,
             OperationalArea,
             Zone,
+            FacilityUpgrade,
+            TransitLine,
         }
 
         private Stage m_Stage = Stage.Idle;
@@ -114,6 +118,8 @@ namespace CS2MCP
         private float m_AutoConnectTargetSplit;
         private string m_PlacedBuildingName;
         private float3 m_PlacedBuildingPosition;
+        private Entity[] m_PendingTransitStops;
+        private EntityQuery m_TempRouteQuery;
 
         private CityConfigurationSystem m_CityConfigurationSystem;
 
@@ -144,6 +150,9 @@ namespace CS2MCP
         {
             base.OnCreate();
             m_CityConfigurationSystem = base.World.GetOrCreateSystemManaged<CityConfigurationSystem>();
+            m_TempRouteQuery = GetEntityQuery(
+                ComponentType.ReadOnly<Route>(),
+                ComponentType.ReadOnly<Temp>());
         }
 
         public override PrefabBase GetPrefab()
@@ -385,6 +394,62 @@ namespace CS2MCP
             return true;
         }
 
+        /// <summary>
+        /// Must be called on the simulation thread. Installs a facility upgrade
+        /// through ObjectToolBaseSystem.CreateDefinitions with the parent as
+        /// owner — the same job ObjectToolSystem uses for Mode.Upgrade.
+        /// </summary>
+        public bool TryQueueFacilityUpgrade(
+            Entity parent,
+            Entity upgradePrefabEntity,
+            PrefabBase upgradePrefab,
+            float3 position,
+            quaternion rotation,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.FacilityUpgrade;
+            m_PendingTarget = parent;
+            m_PendingPrefabEntity = upgradePrefabEntity;
+            m_PendingPrefab = upgradePrefab;
+            m_PendingLabel = upgradePrefab != null ? upgradePrefab.name : null;
+            m_PendingPosition = position;
+            m_PendingRotation = rotation;
+            m_PendingRequest = request;
+            ClearAutoConnect();
+            Activate();
+            return true;
+        }
+
+        /// <summary>
+        /// Must be called on the simulation thread. Creates a passenger line
+        /// through RouteTool CreationDefinition + WaypointDefinition so
+        /// GenerateRoutesSystem / ApplyRoutesSystem own pathfinding and apply.
+        /// </summary>
+        public bool TryQueueTransitLine(
+            Entity linePrefabEntity,
+            PrefabBase linePrefab,
+            Entity[] stops,
+            BridgeRequest request)
+        {
+            if (m_Stage != Stage.Idle)
+            {
+                return false;
+            }
+            m_PendingKind = OperationKind.TransitLine;
+            m_PendingPrefabEntity = linePrefabEntity;
+            m_PendingPrefab = linePrefab;
+            m_PendingLabel = linePrefab != null ? linePrefab.name : null;
+            m_PendingTransitStops = stops;
+            m_PendingRequest = request;
+            ClearAutoConnect();
+            Activate();
+            return true;
+        }
+
         /// <summary>Must be called on the simulation thread.</summary>
         public bool TryQueueDemolish(Entity target, string label, BridgeRequest request)
         {
@@ -602,6 +667,12 @@ namespace CS2MCP
                             case OperationKind.Zone:
                                 ApplyZoneCells();
                                 break;
+                            case OperationKind.FacilityUpgrade:
+                                CreateFacilityUpgradeDefinitions();
+                                break;
+                            case OperationKind.TransitLine:
+                                CreateTransitLineDefinitions();
+                                break;
                         }
                         if (m_Stage != Stage.Finish)
                         {
@@ -615,6 +686,11 @@ namespace CS2MCP
                         break;
 
                     case Stage.Apply:
+                        if (m_PendingKind == OperationKind.TransitLine)
+                        {
+                            UpdateTransitLineApply();
+                            break;
+                        }
                         if (GetAllowApply())
                         {
                             applyMode = ApplyMode.Apply;
@@ -961,6 +1037,30 @@ namespace CS2MCP
                         entity = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
                         note = "road features applied via the native upgrade pipeline; this does not change the road prefab, width or lane layout",
                     });
+                case OperationKind.FacilityUpgrade:
+                    return BridgeResponse.Json(new
+                    {
+                        applied = true,
+                        upgrade = m_PendingLabel,
+                        enabled = true,
+                        installed = true,
+                        entity = new { index = m_PendingTarget.Index, version = m_PendingTarget.Version },
+                        position = new
+                        {
+                            x = m_PendingPosition.x,
+                            y = m_PendingPosition.y,
+                            z = m_PendingPosition.z,
+                        },
+                        note = "installed via ObjectToolBaseSystem.CreateDefinitions with the parent as owner; native validation accepted CreationFlags.Upgrade",
+                    });
+                case OperationKind.TransitLine:
+                    return BridgeResponse.Json(new
+                    {
+                        created = true,
+                        prefab = m_PendingLabel,
+                        stopCount = m_PendingTransitStops != null ? m_PendingTransitStops.Length : 0,
+                        note = "passenger line applied through GenerateRoutesSystem / ApplyRoutesSystem after native pathfinding; vehicles spawn from depots. Call list_transit_lines to read the new line.",
+                    });
                 case OperationKind.ReplaceNet:
                     return BridgeResponse.Json(new
                     {
@@ -969,7 +1069,7 @@ namespace CS2MCP
                         prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
                         start = new { x = m_PendingPosition.x, z = m_PendingPosition.z },
                         end = new { x = m_PendingEnd.x, z = m_PendingEnd.z },
-                        note = "native Replace transaction committed; the original edge entity may be replaced, so refresh list_roads and verify lanes, zoning and traffic",
+                        note = "native Replace transaction committed; the original edge entity may be replaced, so refresh list_networks and verify lanes, zoning and traffic",
                     });
                 case OperationKind.Net:
                     float? widthM = null;
@@ -994,7 +1094,7 @@ namespace CS2MCP
                                 endM = (float?)m_PendingElevations.y,
                             },
                         widthM,
-                        note = "committed this frame; verify via /city/roads or /screenshot",
+                        note = "committed this frame; verify via list_networks or /screenshot",
                     });
                 case OperationKind.Area:
                     return BridgeResponse.Json(new
@@ -1363,6 +1463,7 @@ namespace CS2MCP
             m_AutoConnectTargetEdge = Entity.Null;
             m_AutoConnectTargetSplit = 0f;
             m_PlacedBuildingName = null;
+            m_PendingTransitStops = null;
             if (m_ToolSystem.activeTool == this)
             {
                 m_ToolSystem.activeTool = m_PreviousTool != null ? m_PreviousTool : m_DefaultToolSystem;
@@ -1628,6 +1729,172 @@ namespace CS2MCP
             });
             commandBuffer.AddComponent(entity, default(Updated));
             commandBuffer.AddComponent(entity, course);
+        }
+
+        /// <summary>
+        /// <summary>
+        /// Schedules the native ObjectToolBaseSystem definition job with the
+        /// parent building as owner. Completes immediately so the following
+        /// Apply frame sees the same Temp entities as ObjectToolSystem.Mode.Upgrade.
+        /// </summary>
+        private void CreateFacilityUpgradeDefinitions()
+        {
+            var controlPoints = new NativeList<ControlPoint>(1, Allocator.TempJob);
+            try
+            {
+                controlPoints.Add(new ControlPoint
+                {
+                    m_Position = m_PendingPosition,
+                    m_HitPosition = m_PendingPosition,
+                    m_Rotation = m_PendingRotation,
+                });
+                NativeReference<AttachmentData> attachmentPrefab = default;
+                JobHandle handle = base.CreateDefinitions(
+                    m_PendingPrefabEntity,
+                    Entity.Null,
+                    Entity.Null,
+                    m_PendingTarget,
+                    Entity.Null,
+                    Entity.Null,
+                    m_CityConfigurationSystem.defaultTheme,
+                    controlPoints,
+                    attachmentPrefab,
+                    false,
+                    m_CityConfigurationSystem.leftHandTraffic,
+                    false,
+                    false,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    0f,
+                    RandomSeed.Next(),
+                    Snap.None,
+                    AgeMask.Mature,
+                    false,
+                    default(JobHandle));
+                handle.Complete();
+            }
+            finally
+            {
+                if (controlPoints.IsCreated)
+                {
+                    controlPoints.Dispose();
+                }
+            }
+        }
+
+        private void UpdateTransitLineApply()
+        {
+            if (!TransitLinePathfindReady())
+            {
+                applyMode = ApplyMode.None;
+                return;
+            }
+            if (GetAllowApply())
+            {
+                applyMode = ApplyMode.Apply;
+                CompletePending(BuildSuccessResponse());
+            }
+            else
+            {
+                applyMode = ApplyMode.Clear;
+                CompletePending(BridgeResponse.Error(BridgeErrorKind.Conflict, DescribeValidationBlock()));
+            }
+            m_Stage = Stage.Finish;
+        }
+
+        private bool TransitLinePathfindReady()
+        {
+            if (m_TempRouteQuery.IsEmptyIgnoreFilter)
+            {
+                return false;
+            }
+            using (NativeArray<Entity> routes = m_TempRouteQuery.ToEntityArray(Allocator.Temp))
+            {
+                Entity route = routes[0];
+                if (!EntityManager.HasComponent<Route>(route)
+                    || (EntityManager.GetComponentData<Route>(route).m_Flags & RouteFlags.Complete) == 0
+                    || !EntityManager.HasBuffer<RouteWaypoint>(route)
+                    || !EntityManager.HasBuffer<RouteSegment>(route))
+                {
+                    return false;
+                }
+                DynamicBuffer<RouteWaypoint> waypoints =
+                    EntityManager.GetBuffer<RouteWaypoint>(route, isReadOnly: true);
+                DynamicBuffer<RouteSegment> segments =
+                    EntityManager.GetBuffer<RouteSegment>(route, isReadOnly: true);
+                if (waypoints.Length == 0 || segments.Length == 0)
+                {
+                    return false;
+                }
+                for (int i = 0; i < segments.Length; i++)
+                {
+                    Entity segment = segments[i].m_Segment;
+                    if (!EntityManager.HasComponent<PathTargets>(segment)
+                        || !EntityManager.HasComponent<PathInformation>(segment))
+                    {
+                        return false;
+                    }
+                    PathTargets targets = EntityManager.GetComponentData<PathTargets>(segment);
+                    RouteWaypoint start = waypoints[i];
+                    RouteWaypoint end = waypoints[i + 1 >= waypoints.Length ? 0 : i + 1];
+                    if (!EntityManager.HasComponent<Position>(start.m_Waypoint)
+                        || !EntityManager.HasComponent<Position>(end.m_Waypoint))
+                    {
+                        return false;
+                    }
+                    float3 startPosition = EntityManager.GetComponentData<Position>(start.m_Waypoint).m_Position;
+                    float3 endPosition = EntityManager.GetComponentData<Position>(end.m_Waypoint).m_Position;
+                    if (math.distancesq(targets.m_ReadyStartPosition, startPosition) >= 1f
+                        || math.distancesq(targets.m_ReadyEndPosition, endPosition) >= 1f)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Mirrors RouteToolSystem.CreateDefinitionsJob for a new complete
+        /// passenger route: CreationDefinition + ColorDefinition + closed
+        /// WaypointDefinition loop attached to existing TransportStop entities.
+        /// </summary>
+        private void CreateTransitLineDefinitions()
+        {
+            if (m_PendingTransitStops == null || m_PendingTransitStops.Length < 2)
+            {
+                return;
+            }
+            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
+            Entity definition = commandBuffer.CreateEntity();
+            commandBuffer.AddComponent(definition, new CreationDefinition
+            {
+                m_Prefab = m_PendingPrefabEntity,
+            });
+            UnityEngine.Color32 color = UnityEngine.Color.magenta;
+            if (m_PendingPrefab is RoutePrefab routePrefab)
+            {
+                color = routePrefab.color;
+            }
+            commandBuffer.AddComponent(definition, new ColorDefinition { m_Color = color });
+            commandBuffer.AddComponent(definition, default(Updated));
+            DynamicBuffer<WaypointDefinition> waypoints = commandBuffer.AddBuffer<WaypointDefinition>(definition);
+            for (int i = 0; i < m_PendingTransitStops.Length; i++)
+            {
+                waypoints.Add(MakeStopWaypoint(m_PendingTransitStops[i]));
+            }
+            waypoints.Add(MakeStopWaypoint(m_PendingTransitStops[0]));
+        }
+
+        private WaypointDefinition MakeStopWaypoint(Entity stop)
+        {
+            Transform transform = EntityManager.GetComponentData<Transform>(stop);
+            return new WaypointDefinition(transform.m_Position)
+            {
+                m_Connection = stop,
+            };
         }
 
         /// <summary>

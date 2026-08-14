@@ -173,216 +173,6 @@ namespace CS2MCP
             }
         }
 
-        private BridgeResponse ListRoads(BridgeRequest request)
-        {
-            if (!TryGetCity(out _, out BridgeResponse error))
-            {
-                return error;
-            }
-
-            request.Query.TryGetValue("query", out string search);
-            request.Query.TryGetValue("role", out string requestedRole);
-            if (!string.IsNullOrWhiteSpace(requestedRole))
-            {
-                requestedRole = requestedRole.Trim().ToLowerInvariant();
-                if (!kPrefabRoles.Contains(requestedRole))
-                {
-                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                        $"unknown role '{requestedRole}'; use {string.Join(", ", kPrefabRoles)}");
-                }
-            }
-            request.Query.TryGetValue("operational_area", out string operationalAreaFilter);
-            if (!string.IsNullOrWhiteSpace(operationalAreaFilter))
-            {
-                operationalAreaFilter = operationalAreaFilter.Trim().ToLowerInvariant();
-                if (operationalAreaFilter != "any"
-                    && operationalAreaFilter != "storage"
-                    && operationalAreaFilter != "extractor")
-                {
-                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                        "operational_area must be any, storage or extractor");
-                }
-            }
-            const int hardMax = 128;
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
-            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
-            float2 center = new float2(x, z);
-            request.Query.TryGetValue("sort", out string sort);
-            sort = sort?.Trim().ToLowerInvariant();
-            if (!string.IsNullOrEmpty(sort)
-                && sort != "distance"
-                && sort != "traffic_volume"
-                && sort != "congestion")
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "sort must be distance, traffic_volume or congestion");
-            }
-            if (sort == "distance" && !hasCenter)
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "sort=distance requires both x and z");
-            }
-
-            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var found = new List<(float rank, float distance, object item)>();
-            int total = 0;
-            using (NativeArray<Entity> entities = PlacedRoadQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    Game.Net.Curve curve = EntityManager.GetComponentData<Game.Net.Curve>(entity);
-                    float2 midpoint = (curve.m_Bezier.a.xz + curve.m_Bezier.d.xz) * 0.5f;
-                    if (hasCenter && math.distance(midpoint, center) > radius)
-                    {
-                        continue;
-                    }
-                    PrefabRef prefabRef = EntityManager.GetComponentData<PrefabRef>(entity);
-                    if (!EntityManager.HasComponent<RoadData>(prefabRef.m_Prefab))
-                    {
-                        continue;
-                    }
-                    PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(prefabRef.m_Prefab);
-                    string name = prefab != null ? prefab.name : "<unknown>";
-                    List<string> roles = GetPrefabRoles(prefabRef.m_Prefab);
-                    if (!string.IsNullOrEmpty(search)
-                        && name.IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        continue;
-                    }
-                    if (!string.IsNullOrEmpty(requestedRole) && !roles.Contains(requestedRole))
-                    {
-                        continue;
-                    }
-                    GetBuildingOperationalCapabilities(
-                        entity,
-                        out bool hasStorageArea,
-                        out bool hasExtractorArea,
-                        out bool expandableStorageArea,
-                        out bool expandableExtractorArea);
-                    if ((operationalAreaFilter == "any" && !hasStorageArea && !hasExtractorArea)
-                        || (operationalAreaFilter == "storage" && !hasStorageArea)
-                        || (operationalAreaFilter == "extractor" && !hasExtractorArea))
-                    {
-                        continue;
-                    }
-                    total++;
-                    float distance = hasCenter ? math.distance(midpoint, center) : 0f;
-                    object traffic = null;
-                    float volumeIndex = 0f;
-                    float congestionIndex = 0f;
-                    if (EntityManager.HasComponent<Game.Net.Road>(entity))
-                    {
-                        Game.Net.Road road = EntityManager.GetComponentData<Game.Net.Road>(entity);
-                        float flowPercent = math.csum(Game.Net.NetUtils.GetTrafficFlowSpeed(road)) * 25f;
-                        volumeIndex = math.csum(
-                            (road.m_TrafficFlowDistance0 + road.m_TrafficFlowDistance1)
-                            * 2.6666667f) * 0.25f;
-                        congestionIndex = volumeIndex * math.saturate(1f - flowPercent * 0.01f);
-                        int activeBottlenecks = 0;
-                        if (EntityManager.HasBuffer<Game.Net.SubLane>(entity))
-                        {
-                            DynamicBuffer<Game.Net.SubLane> lanes =
-                                EntityManager.GetBuffer<Game.Net.SubLane>(entity, isReadOnly: true);
-                            foreach (Game.Net.SubLane lane in lanes)
-                            {
-                                if (EntityManager.HasComponent<Game.Net.Bottleneck>(lane.m_SubLane)
-                                    && EntityManager.GetComponentData<Game.Net.Bottleneck>(lane.m_SubLane).m_Timer >= 20)
-                                {
-                                    activeBottlenecks++;
-                                }
-                            }
-                        }
-                        traffic = new
-                        {
-                            flowPercent = (float)Math.Round(flowPercent, 1),
-                            volumeIndex = (float)Math.Round(volumeIndex, 1),
-                            congestionIndex = (float)Math.Round(congestionIndex, 1),
-                            activeBottlenecks,
-                        };
-                    }
-                    float rank = sort == "traffic_volume"
-                        ? -volumeIndex
-                        : sort == "congestion"
-                            ? -congestionIndex
-                            : distance;
-                    var item = new
-                    {
-                        entity = new { index = entity.Index, version = entity.Version },
-                        prefab = name,
-                        roles,
-                        capabilities = new
-                        {
-                            operationalArea = hasStorageArea || hasExtractorArea,
-                            storageArea = hasStorageArea,
-                            extractorArea = hasExtractorArea,
-                            expandableStorageArea,
-                            expandableExtractorArea,
-                        },
-                        start = new { x = curve.m_Bezier.a.x, z = curve.m_Bezier.a.z },
-                        end = new { x = curve.m_Bezier.d.x, z = curve.m_Bezier.d.z },
-                        length = curve.m_Length,
-                        widthM = NetworkWidthM(EntityManager, prefabRef.m_Prefab),
-                        distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
-                        traffic,
-                    };
-                    if (found.Count < limit)
-                    {
-                        found.Add((rank, distance, item));
-                    }
-                    else if (hasCenter || !string.IsNullOrEmpty(sort))
-                    {
-                        int worst = 0;
-                        for (int j = 1; j < found.Count; j++)
-                        {
-                            if (found[j].rank > found[worst].rank)
-                            {
-                                worst = j;
-                            }
-                        }
-                        if (rank < found[worst].rank)
-                        {
-                            found[worst] = (rank, distance, item);
-                        }
-                    }
-                }
-            }
-
-            if ((hasCenter || !string.IsNullOrEmpty(sort)) && found.Count > 1)
-            {
-                for (int i = 0; i < found.Count - 1; i++)
-                {
-                    for (int j = i + 1; j < found.Count; j++)
-                    {
-                        if (found[j].rank < found[i].rank)
-                        {
-                            (found[i], found[j]) = (found[j], found[i]);
-                        }
-                    }
-                }
-            }
-            var results = new List<object>(found.Count);
-            foreach ((_, _, object item) in found)
-            {
-                results.Add(item);
-            }
-
-            bool truncated = total > results.Count;
-            return BridgeResponse.Json(new
-            {
-                totalMatches = total,
-                returned = results.Count,
-                limit,
-                sort,
-                truncated,
-                warning = truncated
-                    ? $"too many results: {total} road segments match, only {results.Count} returned; shrink radius / add query filter, or paginate."
-                    : null,
-                note = "one entry per road segment; traffic uses the game's four-period aggregate: flowPercent=relative speed, volumeIndex=native relative volume, congestionIndex=slowdown weighted by volume; hard max 128",
-                roads = results,
-            });
-        }
-
         private BridgeResponse GetPrefabs(BridgeRequest request)
         {
             if (!TryGetCity(out _, out BridgeResponse error))
@@ -1380,30 +1170,31 @@ namespace CS2MCP
                             continue;
                         }
                         PrefabRef lanePrefab = EntityManager.GetComponentData<PrefabRef>(lane);
-                        // Utility kind belongs to the child lane prefab; native
-                        // connect-layer compatibility belongs to the parent net
-                        // prefab, matching NetToolSystem's edge-snap check.
-                        if (!EntityManager.HasComponent<UtilityLaneData>(lanePrefab.m_Prefab)
-                            || !CanConnectUtilityPrefab(
-                                context.Connector,
-                                prefabRef.m_Prefab))
+                        if (!EntityManager.HasComponent<UtilityLaneData>(lanePrefab.m_Prefab))
                         {
                             continue;
                         }
-                        UtilityNetworkKinds kinds = ToUtilityNetworkKinds(
+                        TypedNetworkKinds kinds = ToTypedNetworkKinds(
                             EntityManager.GetComponentData<UtilityLaneData>(lanePrefab.m_Prefab)
                                 .m_UtilityTypes);
-                        if (kinds == UtilityNetworkKinds.None)
+                        if (kinds == TypedNetworkKinds.None)
                         {
                             continue;
                         }
+                        // Kind is on the child lane. Parent CanConnect is the
+                        // native edge-snap test: dedicated pipes pass it;
+                        // road-carried water/sewage/LV fail it and must attach
+                        // at a node, which the net tool still accepts.
                         Game.Net.Curve laneCurve =
                             EntityManager.GetComponentData<Game.Net.Curve>(lane);
                         context.UtilityPaths.Add(new PlacementUtilityPath(
                             kinds,
                             entity,
                             EntityManager.GetComponentData<Game.Net.EdgeLane>(lane).m_EdgeDelta,
-                            SamplePlacementPath(laneCurve)));
+                            SamplePlacementPath(laneCurve),
+                            !CanConnectUtilityPrefab(
+                                context.Connector,
+                                prefabRef.m_Prefab)));
                     }
                 }
             }
@@ -1514,38 +1305,18 @@ namespace CS2MCP
             }
         }
 
-        private static UtilityNetworkKinds ToUtilityNetworkKinds(
-            Game.Net.UtilityTypes utilityTypes)
-        {
-            UtilityNetworkKinds result = UtilityNetworkKinds.None;
-            if ((utilityTypes & Game.Net.UtilityTypes.WaterPipe) != 0)
-            {
-                result |= UtilityNetworkKinds.Water;
-            }
-            if ((utilityTypes & Game.Net.UtilityTypes.SewagePipe) != 0)
-            {
-                result |= UtilityNetworkKinds.Sewage;
-            }
-            if ((utilityTypes & Game.Net.UtilityTypes.LowVoltageLine) != 0)
-            {
-                result |= UtilityNetworkKinds.LowVoltage;
-            }
-            return result;
-        }
-
-        private static UtilityNetworkKinds ToUtilityNetworkKinds(
-            UtilityConnectionKind kind)
+        private static TypedNetworkKinds ToTypedNetworkKinds(UtilityConnectionKind kind)
         {
             switch (kind)
             {
                 case UtilityConnectionKind.Water:
-                    return UtilityNetworkKinds.Water;
+                    return TypedNetworkKinds.Water;
                 case UtilityConnectionKind.Sewage:
-                    return UtilityNetworkKinds.Sewage;
+                    return TypedNetworkKinds.Sewage;
                 case UtilityConnectionKind.LowVoltage:
-                    return UtilityNetworkKinds.LowVoltage;
+                    return TypedNetworkKinds.LowVoltage;
                 default:
-                    return UtilityNetworkKinds.None;
+                    return TypedNetworkKinds.None;
             }
         }
 
@@ -1943,7 +1714,7 @@ namespace CS2MCP
             }
             if (!request.TryGetInt("index", out int index) || !request.TryGetInt("version", out int version))
             {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=&version= of a road segment from /city/roads");
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?index=&version= of a road segment from list_networks");
             }
             if (!request.Query.TryGetValue("upgrades", out string upgradesRaw) || string.IsNullOrEmpty(upgradesRaw))
             {
@@ -2007,7 +1778,7 @@ namespace CS2MCP
                 || !request.TryGetInt("version", out int version))
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "provide ?index=&version= of a standalone road segment from /city/roads");
+                    "provide ?index=&version= of a standalone road segment from list_networks");
             }
             if (!request.Query.TryGetValue("prefab", out string prefabName)
                 || string.IsNullOrWhiteSpace(prefabName))
@@ -2103,6 +1874,28 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("query", out string search);
+            request.Query.TryGetValue("role", out string requestedRole);
+            if (!string.IsNullOrWhiteSpace(requestedRole))
+            {
+                requestedRole = requestedRole.Trim().ToLowerInvariant();
+                if (!kPrefabRoles.Contains(requestedRole))
+                {
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                        $"unknown role '{requestedRole}'; use {string.Join(", ", kPrefabRoles)}");
+                }
+            }
+            request.Query.TryGetValue("operational_area", out string operationalAreaFilter);
+            if (!string.IsNullOrWhiteSpace(operationalAreaFilter))
+            {
+                operationalAreaFilter = operationalAreaFilter.Trim().ToLowerInvariant();
+                if (operationalAreaFilter != "any"
+                    && operationalAreaFilter != "storage"
+                    && operationalAreaFilter != "extractor")
+                {
+                    return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                        "operational_area must be any, storage or extractor");
+                }
+            }
             const int hardMax = 128;
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
             bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
@@ -2124,8 +1917,25 @@ namespace CS2MCP
                     {
                         continue;
                     }
+                    List<string> roles = GetPrefabRoles(prefabRef.m_Prefab);
+                    if (!string.IsNullOrEmpty(requestedRole) && !roles.Contains(requestedRole))
+                    {
+                        continue;
+                    }
                     Transform transform = EntityManager.GetComponentData<Transform>(entity);
                     if (hasCenter && math.distance(transform.m_Position.xz, center) > radius)
+                    {
+                        continue;
+                    }
+                    GetBuildingOperationalCapabilities(
+                        entity,
+                        out bool hasStorageArea,
+                        out bool hasExtractorArea,
+                        out bool expandableStorageArea,
+                        out bool expandableExtractorArea);
+                    if ((operationalAreaFilter == "any" && !hasStorageArea && !hasExtractorArea)
+                        || (operationalAreaFilter == "storage" && !hasStorageArea)
+                        || (operationalAreaFilter == "extractor" && !hasExtractorArea))
                     {
                         continue;
                     }
@@ -2147,6 +1957,15 @@ namespace CS2MCP
                     {
                         entity = new { index = entity.Index, version = entity.Version },
                         prefab = name,
+                        roles,
+                        capabilities = new
+                        {
+                            operationalArea = hasStorageArea || hasExtractorArea,
+                            storageArea = hasStorageArea,
+                            extractorArea = hasExtractorArea,
+                            expandableStorageArea,
+                            expandableExtractorArea,
+                        },
                         isSubBuilding = EntityManager.HasComponent<Game.Common.Owner>(entity),
                         position = new
                         {
@@ -2303,17 +2122,18 @@ namespace CS2MCP
                 return BridgeResponse.Error(BridgeErrorKind.NotFound, $"entity {index}:{version} does not exist (stale id?)");
             }
             bool isBuilding = EntityManager.HasComponent<Game.Buildings.Building>(entity);
-            bool isRoadEdge = false;
+            bool isTypedNetwork = false;
             if (EntityManager.HasComponent<Game.Net.Edge>(entity)
                 && EntityManager.HasComponent<PrefabRef>(entity))
             {
-                Entity prefabEntity = EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab;
-                isRoadEdge = EntityManager.HasComponent<RoadData>(prefabEntity);
+                TypedNetworkKinds kinds = ClassifyNetPrefab(
+                    EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab);
+                isTypedNetwork = (kinds & TypedNetworkMath.ProductKinds) != TypedNetworkKinds.None;
             }
-            if (!isBuilding && !isRoadEdge)
+            if (!isBuilding && !isTypedNetwork)
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "demolish only accepts a building from list_buildings or a road segment from list_roads; trees, plants, districts and other network types are unsupported");
+                    "demolish only accepts a building from list_buildings or a typed-network edge from list_networks (road, water, sewage, low_voltage); trees, plants, districts, tracks and other nets are unsupported");
             }
             if (EntityManager.HasComponent<Game.Common.Deleted>(entity))
             {
@@ -3171,7 +2991,7 @@ namespace CS2MCP
             {
                 return false;
             }
-            UtilityNetworkKinds required = ToUtilityNetworkKinds(
+            TypedNetworkKinds required = ToTypedNetworkKinds(
                 capabilities.UtilityConnection);
             float bestDistanceSquared = float.MaxValue;
             foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
@@ -3210,7 +3030,7 @@ namespace CS2MCP
             {
                 return false;
             }
-            UtilityNetworkKinds required = ToUtilityNetworkKinds(
+            TypedNetworkKinds required = ToTypedNetworkKinds(
                 capabilities.UtilityConnection);
             foreach (float3 localPoint in capabilities.UtilityConnectionPoints)
             {

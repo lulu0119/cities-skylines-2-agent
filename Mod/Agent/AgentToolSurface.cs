@@ -17,8 +17,13 @@ namespace CitiesSkylines2Agent.Agent
                 ["construction"] = new[]
                 {
                     "find_prefabs", "place_building", "build_road",
-                    "list_buildings", "get_operational_area", "expand_operational_area", "list_zones", "zone_area", "zone_rectangle", "set_road_features",
-                    "list_roads", "demolish", "terrain", "gridmap", "zoning",
+                    "list_buildings", "get_operational_area", "expand_operational_area",
+                    "list_facility_upgrades", "set_facility_upgrade",
+                    "list_transit_stops", "list_transit_lines",
+                    "create_transit_line", "delete_transit_line",
+                    "list_zones", "zone_area", "zone_rectangle", "set_road_features",
+                    "list_networks", "inspect_network_topology", "demolish",
+                    "terrain", "gridmap", "zoning",
                     "list_tiles", "buy_tiles", "list_objects",
                 },
                 ["finance"] = new[]
@@ -83,7 +88,7 @@ namespace CitiesSkylines2Agent.Agent
             var exposed = new List<string>();
             foreach (string name in s_Groups[normalized])
             {
-                if (IsAllowed(name, visionAvailable))
+                if (IsAllowed(name, visionAvailable) && ToolCatalog.Find(name) != null)
                 {
                     exposed.Add(name);
                 }

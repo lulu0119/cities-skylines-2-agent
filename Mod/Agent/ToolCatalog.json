@@ -583,7 +583,7 @@
     },
     {
       "name": "expand_operational_area",
-      "description": "Expand one owner-linked landfill storage or specialized-industry extractor area to a requested total surface. The tool preserves the locked building edge, plans several fan-shaped polygons, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits through the game's native validation/apply pipeline. Extractors rank clear candidates by polygon/resource intersection; fertile land, ore, oil and fish use the natural-resource map while forest scans productive tree entities. Call get_operational_area afterward to verify simulation state.",
+      "description": "Expand one owner-linked landfill storage or specialized-industry extractor area to a requested total surface. The tool preserves the locked building edge, plans a near-circle minus obstacles, adds nodes, samples terrain, rejects candidates crossing unowned land, buildings or roads, and commits through the game's native validation/apply pipeline. Extractors rank clear candidates by polygon/resource intersection; fertile land, ore, oil and fish use the natural-resource map while forest scans productive tree entities. Call get_operational_area afterward to verify simulation state.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -621,6 +621,239 @@
         {
           "key": "target_area_m2",
           "arg": "target_area_m2"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "list_facility_upgrades",
+      "description": "List installable and already-installed facility upgrades for one building from list_buildings. Returns prefab names plus installed, enabled and locked state. Read-only; use set_facility_upgrade to install a missing upgrade or toggle Out of Service.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Building entity index from list_buildings"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Building entity version from list_buildings"
+          }
+        },
+        "required": [
+          "index",
+          "version"
+        ]
+      },
+      "route": "/city/buildings/upgrades",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "set_facility_upgrade",
+      "description": "Install a missing facility upgrade or toggle Out of Service on an installed one through the native object-upgrade and policy pipelines. upgrade is a prefab name from list_facility_upgrades. enabled=true installs or returns the upgrade to service; enabled=false sets Out of Service. Do not use place_building for upgrades.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Building entity index from list_buildings"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Building entity version from list_buildings"
+          },
+          "upgrade": {
+            "type": "string",
+            "description": "Exact upgrade prefab name from list_facility_upgrades"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "true installs or returns to service; false sets Out of Service"
+          }
+        },
+        "required": [
+          "index",
+          "version",
+          "upgrade",
+          "enabled"
+        ]
+      },
+      "route": "/build/facility-upgrade",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
+        },
+        {
+          "key": "upgrade",
+          "arg": "upgrade"
+        },
+        {
+          "key": "enabled",
+          "arg": "enabled"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "list_transit_stops",
+      "description": "List existing transit stops (station sub-stops and roadside stops) with type, position and how many lines already use them. Read-only. Use these entity ids with create_transit_line. Do not use place_building to create a stop.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Optional passenger type filter such as bus, tram, train, subway or ferry"
+          },
+          "x": {
+            "type": "number",
+            "description": "Optional search center X; with z, keeps the nearest stops inside radius"
+          },
+          "z": {
+            "type": "number",
+            "description": "Optional search center Z"
+          },
+          "radius": {
+            "type": "number",
+            "description": "Search radius in meters when x and z are set (default 250)"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum stops to return (default 128)"
+          }
+        },
+        "required": []
+      },
+      "route": "/city/transit/stops",
+      "query": [
+        {
+          "key": "type",
+          "arg": "type"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
+          "key": "limit",
+          "arg": "limit"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "list_transit_lines",
+      "description": "List existing transit lines with type, length, stop count, vehicle count and usage. Vehicles and production stay native. Read-only; use create_transit_line / delete_transit_line to change lines.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Optional passenger type filter such as bus, tram, train, subway or ferry"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum lines to return (default 128)"
+          }
+        },
+        "required": []
+      },
+      "route": "/city/transit/lines",
+      "query": [
+        {
+          "key": "type",
+          "arg": "type"
+        },
+        {
+          "key": "limit",
+          "arg": "limit"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "create_transit_line",
+      "description": "Create a simple passenger line through the native route-tool apply pipeline (GenerateRoutesSystem / ApplyRoutesSystem after pathfinding). stops is an ordered list of list_transit_stops ids as index:version,index:version. Default type is bus. The line closes back to the first stop. Vehicles spawn from depots natively. Do not use place_building for stops or lines.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "stops": {
+            "type": "string",
+            "description": "Ordered stop list from list_transit_stops: index:version,index:version. At least two stops of the same passenger type."
+          },
+          "type": {
+            "type": "string",
+            "description": "Passenger line type; default bus. Must match the stops."
+          }
+        },
+        "required": [
+          "stops"
+        ]
+      },
+      "route": "/build/transit/line",
+      "query": [
+        {
+          "key": "stops",
+          "arg": "stops"
+        },
+        {
+          "key": "type",
+          "arg": "type"
+        }
+      ],
+      "response": "json"
+    },
+    {
+      "name": "delete_transit_line",
+      "description": "Delete one transit line from list_transit_lines through the same Deleted component the transportation overview uses. Does not demolish stops or stations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Line entity index from list_transit_lines"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Line entity version from list_transit_lines"
+          }
+        },
+        "required": [
+          "index",
+          "version"
+        ]
+      },
+      "route": "/build/transit/line/delete",
+      "query": [
+        {
+          "key": "index",
+          "arg": "index"
+        },
+        {
+          "key": "version",
+          "arg": "version"
         }
       ],
       "response": "json"
@@ -1093,7 +1326,7 @@
     },
     {
       "name": "set_road_features",
-      "description": "Set composition features on an existing road segment from list_roads: grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. This uses the game's native road-feature upgrade pipeline but does NOT change road prefab, width or lane layout.",
+      "description": "Set composition features on an existing road segment from list_networks: grass, trees, wideSidewalk, soundBarrier, parking, lighting, medianGrass, medianTrees. This uses the game's native road-feature upgrade pipeline but does NOT change road prefab, width or lane layout.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1203,17 +1436,17 @@
     },
     {
       "name": "replace_road_type",
-      "description": "DEVELOPMENT/ACCEPTANCE EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. Only road-to-road replacement is supported. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_roads after success.",
+      "description": "DEVELOPMENT/ACCEPTANCE EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. Only road-to-road replacement is supported. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_networks after success.",
       "parameters": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Road segment entity index from list_roads"
+            "description": "Road segment entity index from list_networks"
           },
           "version": {
             "type": "integer",
-            "description": "Road segment entity version from list_roads"
+            "description": "Road segment entity version from list_networks"
           },
           "prefab": {
             "type": "string",
@@ -1244,11 +1477,21 @@
       "response": "json"
     },
     {
-      "name": "list_roads",
-      "description": "List road segments with endpoints, width and native four-period traffic aggregates. Use sort=traffic_volume to find heavily used roads or sort=congestion to rank slowdown weighted by volume; activeBottlenecks comes from road sublanes. Spatial filter with x/z/radius. Hard max 128 results.",
+      "name": "list_networks",
+      "description": "List Game.Net edges: roads, water pipes, sewage pipes and low-voltage cables, including isolated components. Filter with kind=road|water|sewage|low_voltage. Returns kind, endpoints, isolated and componentSize. Road-kind rows include native four-period traffic aggregates; use sort=traffic_volume to find heavily used roads or sort=congestion to rank slowdown weighted by volume; activeBottlenecks comes from road sublanes. Spatial filter with x/z/radius. Hard max 128 results. This is inventory of what is there; use inspect_network_topology for QA. Demolish accepts these entity ids through the native bulldoze pipeline.",
       "parameters": {
         "type": "object",
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "road",
+              "water",
+              "sewage",
+              "low_voltage"
+            ],
+            "description": "Typed-network kind; omit to include every product kind"
+          },
           "query": {
             "type": "string",
             "description": "Prefab-name substring filter"
@@ -1278,13 +1521,17 @@
               "traffic_volume",
               "congestion"
             ],
-            "description": "Optional ranking; distance requires x/z, traffic rankings return highest first"
+            "description": "Optional ranking; distance requires x/z; traffic rankings return highest first and apply to road-kind rows"
           }
         },
         "required": []
       },
-      "route": "/city/roads",
+      "route": "/city/networks",
       "query": [
+        {
+          "key": "kind",
+          "arg": "kind"
+        },
         {
           "key": "query",
           "arg": "query"
@@ -1313,18 +1560,75 @@
       "response": "json"
     },
     {
+      "name": "inspect_network_topology",
+      "description": "Read-only road topology QA on the typed-network graph: near-miss, unnoded crossing, too-close junctions, surprise short stubs and isolated roads. Degree-1 dead ends are facts, not automatic errors; pass include_dead_ends=true to list them. Spatial filter with x/z/radius. Findings cite entity ids from list_networks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "road"
+            ],
+            "description": "Currently roads only; omit or pass road"
+          },
+          "x": {
+            "type": "number",
+            "description": "Center X for spatial filter"
+          },
+          "z": {
+            "type": "number",
+            "description": "Center Z for spatial filter"
+          },
+          "radius": {
+            "type": "number",
+            "description": "Radius in meters for spatial filter (default 500)"
+          },
+          "include_dead_ends": {
+            "type": "boolean",
+            "description": "If true, also list degree-1 dead ends as facts, not as QA errors"
+          }
+        },
+        "required": []
+      },
+      "route": "/city/networks/topology",
+      "query": [
+        {
+          "key": "kind",
+          "arg": "kind"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
+        },
+        {
+          "key": "include_dead_ends",
+          "arg": "include_dead_ends"
+        }
+      ],
+      "response": "json"
+    },
+    {
       "name": "demolish",
-      "description": "Demolish (bulldoze) one building from list_buildings or road segment from list_roads, identified by entity index and version. Trees, plants, districts and non-road networks are unsupported. Irreversible 鈥?double-check the target first.",
+      "description": "Demolish (bulldoze) one building from list_buildings or one typed-network edge from list_networks (road, water pipe, sewage pipe, or low-voltage cable), identified by entity index and version. Trees, plants, districts, tracks and other nets are unsupported. Irreversible; double-check the target first.",
       "parameters": {
         "type": "object",
         "properties": {
           "index": {
             "type": "integer",
-            "description": "Entity index from list_buildings or list_roads"
+            "description": "Entity index from list_buildings or list_networks"
           },
           "version": {
             "type": "integer",
-            "description": "Entity version from list_buildings or list_roads"
+            "description": "Entity version from list_buildings or list_networks"
           }
         },
         "required": [

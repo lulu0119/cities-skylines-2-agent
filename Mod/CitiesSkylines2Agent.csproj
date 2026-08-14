@@ -128,4 +128,10 @@
 		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\merge-deps.ps1&quot; -DeployDir &quot;$(DeployDir)&quot; -GameManaged &quot;$(ManagedFullPath)&quot;" LogStandardErrorAsError="true" />
 	</Target>
 
+	<!-- Overlay exists only while iterating with Mod/HotReload. A leftover
+	     file would silently replace the catalog just embedded in this DLL. -->
+	<Target Name="ClearHotReloadCatalog" AfterTargets="DeployWIP" Condition="'$(NeedBuild)' == 'true'">
+		<Delete Files="$(UserDataPath)\ModsData\CitiesSkylines2Agent\hot-reload\ToolCatalog.json" />
+	</Target>
+
 </Project>

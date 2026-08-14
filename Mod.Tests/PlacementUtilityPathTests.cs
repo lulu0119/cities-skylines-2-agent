@@ -11,13 +11,13 @@ namespace CS2MCP
         {
             PlacementUtilityPath[] paths =
             {
-                Path(UtilityNetworkKinds.Water | UtilityNetworkKinds.Sewage, 10f),
-                Path(UtilityNetworkKinds.LowVoltage, 40f),
+                Path(TypedNetworkKinds.Water | TypedNetworkKinds.Sewage, 10f),
+                Path(TypedNetworkKinds.LowVoltage, 40f),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.LowVoltage,
+                TypedNetworkKinds.LowVoltage,
                 new float3(0f),
                 150f,
                 out UtilityConnectionTarget nearest);
@@ -31,12 +31,12 @@ namespace CS2MCP
         {
             PlacementUtilityPath[] paths =
             {
-                Path(UtilityNetworkKinds.Water, 10f),
+                Path(TypedNetworkKinds.Water, 10f),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.LowVoltage,
+                TypedNetworkKinds.LowVoltage,
                 new float3(0f),
                 150f,
                 out _);
@@ -49,13 +49,13 @@ namespace CS2MCP
         {
             PlacementUtilityPath[] paths =
             {
-                Path(UtilityNetworkKinds.Water, 10f),
-                Path(UtilityNetworkKinds.Sewage, 35f),
+                Path(TypedNetworkKinds.Water, 10f),
+                Path(TypedNetworkKinds.Sewage, 35f),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.Sewage,
+                TypedNetworkKinds.Sewage,
                 new float3(0f),
                 150f,
                 out UtilityConnectionTarget nearest);
@@ -69,12 +69,12 @@ namespace CS2MCP
         {
             PlacementUtilityPath[] paths =
             {
-                Path(UtilityNetworkKinds.LowVoltage, 151f),
+                Path(TypedNetworkKinds.LowVoltage, 151f),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.LowVoltage,
+                TypedNetworkKinds.LowVoltage,
                 new float3(0f),
                 150f,
                 out _);
@@ -87,17 +87,105 @@ namespace CS2MCP
         {
             PlacementUtilityPath[] paths =
             {
-                Path(UtilityNetworkKinds.Water | UtilityNetworkKinds.Sewage, 24f),
+                Path(TypedNetworkKinds.Water | TypedNetworkKinds.Sewage, 24f),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.Water,
+                TypedNetworkKinds.Water,
                 new float3(0f),
                 150f,
                 out _);
 
             Assert.True(found);
+        }
+
+        [Fact]
+        public void Node_snap_ignores_nearer_interior_and_selects_endpoint()
+        {
+            Entity edge = new Entity { Index = 8, Version = 2 };
+            PlacementUtilityPath[] paths =
+            {
+                new PlacementUtilityPath(
+                    TypedNetworkKinds.LowVoltage,
+                    edge,
+                    new float2(0f, 1f),
+                    new[]
+                    {
+                        new float3(0f, 0f, 0f),
+                        new float3(0f, 0f, 50f),
+                        new float3(0f, 0f, 100f),
+                    },
+                    nodeSnap: true),
+            };
+
+            bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
+                paths,
+                TypedNetworkKinds.LowVoltage,
+                new float3(10f, 0f, 50f),
+                150f,
+                out UtilityConnectionTarget nearest);
+
+            Assert.True(found);
+            Assert.Equal(edge, nearest.ParentEdge);
+            Assert.Equal(0f, nearest.ParentSplit, 3);
+            Assert.Equal(0f, nearest.Position.z, 3);
+        }
+
+        [Fact]
+        public void Node_snap_rejects_when_only_interior_is_within_range()
+        {
+            PlacementUtilityPath[] paths =
+            {
+                new PlacementUtilityPath(
+                    TypedNetworkKinds.Water,
+                    new Entity { Index = 3, Version = 1 },
+                    new float2(0f, 1f),
+                    new[]
+                    {
+                        new float3(0f, 0f, 0f),
+                        new float3(0f, 0f, 400f),
+                    },
+                    nodeSnap: true),
+            };
+
+            bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
+                paths,
+                TypedNetworkKinds.Water,
+                new float3(10f, 0f, 200f),
+                150f,
+                out _);
+
+            Assert.False(found);
+        }
+
+        [Fact]
+        public void Node_snap_maps_reversed_lane_end_to_parent_node()
+        {
+            Entity edge = new Entity { Index = 9, Version = 1 };
+            PlacementUtilityPath[] paths =
+            {
+                new PlacementUtilityPath(
+                    TypedNetworkKinds.Sewage,
+                    edge,
+                    new float2(1f, 0f),
+                    new[]
+                    {
+                        new float3(0f, 0f, 100f),
+                        new float3(0f, 0f, 0f),
+                    },
+                    nodeSnap: true),
+            };
+
+            bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
+                paths,
+                TypedNetworkKinds.Sewage,
+                new float3(5f, 0f, 90f),
+                150f,
+                out UtilityConnectionTarget nearest);
+
+            Assert.True(found);
+            Assert.Equal(1f, nearest.ParentSplit, 3);
         }
 
         [Fact]
@@ -107,7 +195,7 @@ namespace CS2MCP
             PlacementUtilityPath[] paths =
             {
                 new PlacementUtilityPath(
-                    UtilityNetworkKinds.LowVoltage,
+                    TypedNetworkKinds.LowVoltage,
                     edge,
                     new float2(1f, 0f),
                     new[]
@@ -119,7 +207,7 @@ namespace CS2MCP
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.LowVoltage,
+                TypedNetworkKinds.LowVoltage,
                 new float3(10f, 0f, 25f),
                 150f,
                 out UtilityConnectionTarget nearest);
@@ -136,7 +224,7 @@ namespace CS2MCP
             PlacementUtilityPath[] paths =
             {
                 new PlacementUtilityPath(
-                    UtilityNetworkKinds.Water,
+                    TypedNetworkKinds.Water,
                     edge,
                     new float2(0.5f, 1f),
                     new[]
@@ -148,7 +236,7 @@ namespace CS2MCP
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
                 paths,
-                UtilityNetworkKinds.Water,
+                TypedNetworkKinds.Water,
                 new float3(10f, 0f, 50f),
                 150f,
                 out UtilityConnectionTarget nearest);
@@ -182,7 +270,7 @@ namespace CS2MCP
             Assert.Equal(split, anchorSplit, 3);
         }
 
-        private static PlacementUtilityPath Path(UtilityNetworkKinds kinds, float x)
+        private static PlacementUtilityPath Path(TypedNetworkKinds kinds, float x)
         {
             return new PlacementUtilityPath(
                 kinds,

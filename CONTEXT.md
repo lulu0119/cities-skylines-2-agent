@@ -18,13 +18,17 @@ _Avoid_: HTTP route, backend handler, catalog row (those may exist without being
 A playbook the mayor model loads with `agent_read_skill`.
 _Avoid_: engineering skills under `.agents/` or `~/.agents/`
 
+**Traffic governance**:
+The mayor's congestion loop over existing tools: ledger trigger, topology QA plus `list_networks` ranked by congestion or traffic volume, existing road writes, then `wait_simulation` and re-measure.
+_Avoid_: a new traffic tool, adding lanes to every local street, treating degree-1 dead ends as automatic errors
+
 **Wait simulation**:
 The tool that advances in-game time, then restores the previous speed and pause. The player owns the clock.
 _Avoid_: forced pause as the product runtime, polling `game_state` to wait
 
 **Context budget**:
-How many tokens the loop treats as the window. Auto infers from the model name; Custom uses the player setting.
-_Avoid_: Endpoint or provider as the source of the window
+How many tokens the loop treats as the window. Auto uses the named-model profile; Custom replaces that window with the player setting for every model name.
+_Avoid_: Endpoint or provider as the source of the window; Custom as a change to the server model limit
 
 **Compaction**:
 Summarizing older turns when estimated tokens reach the compact threshold.
@@ -64,9 +68,25 @@ _Avoid_: Agent-drawn pipes or cables as the happy path
 Roads, pipes, and cables as linear infrastructure.
 _Avoid_: "road" as a synonym for every utility line
 
+**Typed network**:
+A top-level linear edge classified as road, fresh water, sewage, or low-voltage from native prefab layers. Auto-connect, list, demolish, and topology QA share that identity.
+_Avoid_: a second utility-versus-road taxonomy; high-voltage as part of this set
+
+**Isolated component**:
+A connected set of typed-network edges that does not reach an outside connection (roads) or a road edge (pipes and cables).
+_Avoid_: treating every degree-1 dead end as isolated
+
 **Operational area**:
 An owner-linked lot polygon on a facility (storage or extractor). The current product expands only.
 _Avoid_: district, a standalone area with no owner
+
+**Transit stop**:
+An existing passenger or cargo boarding object (station sub-stop or roadside stop). Listed for line tools; not a `place_building` role.
+_Avoid_: inventing a stop by placing a transport building role
+
+**Transit line**:
+An ordered loop of transit stops applied through the native route tool. Vehicles stay native.
+_Avoid_: Gameface `transportLines$` as the write path; a vehicle or production tool
 
 ### Perception and authority
 

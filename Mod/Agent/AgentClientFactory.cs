@@ -11,6 +11,10 @@ namespace CitiesSkylines2Agent.Agent
     /// </summary>
     internal sealed class AgentClientFactory : IDisposable
     {
+        internal const int ModelRequestTimeoutSeconds = 600;
+        internal static readonly TimeSpan ModelRequestTimeout =
+            TimeSpan.FromSeconds(ModelRequestTimeoutSeconds);
+
         private readonly AgentObservability m_Observability;
         private readonly object m_Lock = new object();
         private IChatClient m_Client;
@@ -43,6 +47,7 @@ namespace CitiesSkylines2Agent.Agent
                     var options = new OpenAIClientOptions
                     {
                         Endpoint = new Uri(Setting.StaticEndpoint),
+                        NetworkTimeout = ModelRequestTimeout,
                     };
                     var openAiClient = new OpenAIClient(
                         new ApiKeyCredential(Setting.StaticApiKey),
@@ -83,7 +88,8 @@ namespace CitiesSkylines2Agent.Agent
         {
             string signature = Setting.StaticEndpoint + "|" +
                 Setting.StaticApiKey + "|" + Setting.StaticModel + "|" +
-                Setting.StaticWindowTokens + "|" + Setting.StaticVisionToolMode;
+                Setting.StaticWindowTokens + "|" + Setting.StaticVisionToolMode + "|" +
+                Setting.StaticContextBudgetMode;
             if (string.Equals(m_ConfigSignature, signature, StringComparison.Ordinal))
             {
                 return;
@@ -95,7 +101,8 @@ namespace CitiesSkylines2Agent.Agent
             m_Profile = AgentModelProfile.Resolve(
                 Setting.StaticModel,
                 Setting.StaticWindowTokens,
-                Setting.StaticVisionToolMode);
+                Setting.StaticVisionToolMode,
+                Setting.StaticContextBudgetMode);
         }
 
         public void Dispose()

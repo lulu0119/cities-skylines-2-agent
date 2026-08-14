@@ -6,7 +6,7 @@ using System.Text;
 
 namespace CitiesSkylines2Agent.Agent
 {
-    /// <summary>One user-editable skill package (folder + SKILL.md).</summary>
+    /// <summary>One skill package (folder + SKILL.md).</summary>
     public sealed class AgentSkill
     {
         public string Name;
@@ -18,10 +18,9 @@ namespace CitiesSkylines2Agent.Agent
 
     /// <summary>
     /// Loads skill packages from &lt;user data&gt;/Mods/CitiesSkylines2Agent/Skills.
-    /// Each skill is a folder containing SKILL.md with optional front matter
-    /// (name / description) followed by Markdown instructions. Skills are text
-    /// only: the agent loop injects a small index and loads full instructions
-    /// only when the model requests one; no code from skills is ever executed.
+    /// Bundled names (utility-networks, city-building, transit-lines) are
+    /// refreshed from the assembly when their bytes change. Extra folders are
+    /// left alone. A newer hot-reload copy of the same name wins.
     /// </summary>
     public static class SkillStore
     {
@@ -31,12 +30,13 @@ namespace CitiesSkylines2Agent.Agent
 
         public static string SkillsDirectory => Path.Combine(ModPaths.ModDataDirectory, SkillsDirectoryName);
 
-        /// <summary>Ensures the folder exists and ships bundled skills on first run.</summary>
+        /// <summary>Ensures the folder exists and refreshes bundled skills.</summary>
         public static void EnsureDefaults()
         {
             Directory.CreateDirectory(SkillsDirectory);
             CopyBuiltin("utility-networks");
             CopyBuiltin("city-building");
+            CopyBuiltin("transit-lines");
         }
 
         public static List<AgentSkill> LoadAll()
@@ -49,8 +49,8 @@ namespace CitiesSkylines2Agent.Agent
             EnsureDefaults();
             var skills = new List<AgentSkill>();
             var indexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            LoadSkillsFrom(SkillsDirectory, includeContent, skills, indexes);
-            LoadSkillsFrom(ModPaths.HotReloadSkillsDirectory, includeContent, skills, indexes);
+            LoadSkillsFrom(SkillsDirectory, includeContent, skills, indexes, false);
+            LoadSkillsFrom(ModPaths.HotReloadSkillsDirectory, includeContent, skills, indexes, true);
             return skills;
         }
 
@@ -58,7 +58,8 @@ namespace CitiesSkylines2Agent.Agent
             string root,
             bool includeContent,
             List<AgentSkill> skills,
-            Dictionary<string, int> indexes)
+            Dictionary<string, int> indexes,
+            bool replaceIfNewer)
         {
             if (!Directory.Exists(root))
             {
@@ -76,6 +77,11 @@ namespace CitiesSkylines2Agent.Agent
                     AgentSkill skill = ParseSkill(directory, skillFile, includeContent);
                     if (indexes.TryGetValue(skill.Name, out int index))
                     {
+                        if (replaceIfNewer
+                            && skill.LastWriteTimeUtc <= skills[index].LastWriteTimeUtc)
+                        {
+                            continue;
+                        }
                         skills[index] = skill;
                     }
                     else
@@ -220,17 +226,35 @@ namespace CitiesSkylines2Agent.Agent
                     return;
                 }
                 string target = Path.Combine(SkillsDirectory, name, "SKILL.md");
-                if (File.Exists(target))
+                byte[] bundled;
+                using (var copy = new MemoryStream())
+                {
+                    stream.CopyTo(copy);
+                    bundled = copy.ToArray();
+                }
+                if (File.Exists(target) && BytesEqual(File.ReadAllBytes(target), bundled))
                 {
                     return;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(target));
-                using (FileStream file = File.Create(target))
-                {
-                    stream.CopyTo(file);
-                }
+                File.WriteAllBytes(target, bundled);
             }
         }
 
+        private static bool BytesEqual(byte[] left, byte[] right)
+        {
+            if (left.Length != right.Length)
+            {
+                return false;
+            }
+            for (int i = 0; i < left.Length; i++)
+            {
+                if (left[i] != right[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 }

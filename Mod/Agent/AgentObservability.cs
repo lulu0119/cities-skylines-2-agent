@@ -110,7 +110,7 @@ namespace CitiesSkylines2Agent.Agent
             Record("turn.start", new JsonObject { ["user"] = userText });
         }
 
-        public void TurnFinish(int generationCount, int functionCount, long elapsedMs, JsonObject usage)
+        public void TurnFinish(int generationCount, int functionCount, long elapsedMs, JsonObject usage, JsonObject coverage)
         {
             Record("turn.finish", new JsonObject
             {
@@ -118,6 +118,7 @@ namespace CitiesSkylines2Agent.Agent
                 ["functions"] = functionCount,
                 ["elapsedMs"] = elapsedMs,
                 ["usage"] = usage ?? new JsonObject(),
+                ["coverage"] = coverage ?? new JsonObject(),
             });
         }
 

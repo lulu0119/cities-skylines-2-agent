@@ -28,10 +28,28 @@ namespace CitiesSkylines2Agent.Agent
         public static AgentModelProfile Resolve(
             string model,
             long fallbackWindowTokens,
-            VisionToolMode visionMode)
+            VisionToolMode visionMode,
+            ContextBudgetMode contextBudgetMode)
         {
             ModelCapabilities caps = ModelProfileRegistry.Resolve(model, fallbackWindowTokens);
+            caps.ContextWindowTokens = ResolveWindowTokens(
+                caps.ContextWindowTokens,
+                fallbackWindowTokens,
+                contextBudgetMode);
             return new AgentModelProfile(caps, visionMode);
+        }
+
+        private static long ResolveWindowTokens(
+            long profileWindowTokens,
+            long customWindowTokens,
+            ContextBudgetMode mode)
+        {
+            if (mode == ContextBudgetMode.Custom)
+            {
+                return customWindowTokens > 0 ? customWindowTokens : 200_000;
+            }
+
+            return profileWindowTokens;
         }
     }
 }

@@ -28,7 +28,7 @@ When a domain term is used, match [CONTEXT.md](CONTEXT.md). When a seam or modul
 - Tools enqueue onto the simulation thread. Do not apply construction from the UI or chat thread.
 - Model-facing writes: `place_building` for buildings, `build_road` for linear networks. Do not add preview-then-commit, a `role` argument on place, or silent grade-separated promotion.
 - The player owns the clock. `wait_simulation` advances time then restores speed and pause. Do not force pause as the product runtime.
-- Smallest correct diff; no drive-by refactors or unsolicited docs.
+- Design it twice and pick the cleaner design. No unsolicited docs.
 
 ## Skills
 
