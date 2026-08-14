@@ -1,7 +1,9 @@
 # Tool deepening: next seams
 
+**Status:** Partially superseded. One-step `place_building` and the split between road features and replacement are [ADR-0003](../adr/0003-one-step-building-placement.md) and [ADR-0004](../adr/0004-linear-networks.md). `find_infrastructure_candidate` is not model-facing. Current open work: [open-work.md](../open-work.md).
+
 **Date:** 2026-08-11
-**Scope:** research only; no Mod behavior was changed
+**Scope:** originally research only; later sections describe shipped seams. Do not treat this file as the live inventory.
 **Current source anchor:** `e53c750f4d818afc0363806e1029ef8c3df22e80`
 **Installed game anchor:** Steam build `23700737`; `Game.dll` SHA-256 `721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`
 

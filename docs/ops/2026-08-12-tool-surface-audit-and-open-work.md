@@ -1,14 +1,10 @@
 # Tool surface audit & open-work inventory (2026-08-12)
 
-**Status:** Live inventory. The compact local map and bounded building-placement
-planner are implemented, built and pushed, but they are only two completed slices;
-controlled real-game acceptance and several accepted runtime/road/network items
-remain open. The 2026-08-14 long-run audit below must not be read as final acceptance.
-**Context:** the Windows verification machine is available again. The accepted
-product decisions through the first tool-surface review live in
-`docs/adr/2026-08-13-agent-tool-surface-and-permissions.md`; they supersede the
-alternatives captured during the original 2026-08-12 audit. This note retains the
-investigation evidence and tracks the remaining live acceptance work.
+**Status:** Frozen audit. Not current authority.
+
+Current vocabulary: [CONTEXT.md](../../CONTEXT.md). Current decisions: [docs/adr/](../adr/). Current open work: [open-work.md](../open-work.md).
+
+This file keeps investigation evidence and the 2026-08-13/14 long-run freezes. Do not append new status here. Accepted decisions from the 2026-08-13 combined spec live in numbered ADRs.
 
 ## 1. 当前选址/放置工具面（三件套）
 

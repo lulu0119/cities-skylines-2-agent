@@ -1,6 +1,10 @@
 # 10k acceptance follow-up: gameplay capability backlog (2026-08-10)
 
-**Status:** Rectangle zoning, progression reads, typed prefab roles, road-feature
+**Status:** Superseded. Current open work: [open-work.md](../open-work.md). Decisions: [docs/adr/](../adr/).
+
+This file is a post-10k snapshot. Rows that still mention `find_infrastructure_candidate` as a product tool are stale: that write left the model-facing surface in [ADR-0003](../adr/0003-one-step-building-placement.md).
+
+**Historical status at the time:** Rectangle zoning, progression reads, typed prefab roles, road-feature
 editing, restricted road-type replacement, and operational-area inspection are
 implemented and live-accepted. Building discovery now also accepts typed service
 roles and operational-area capabilities. Landfill expansion plans a multi-node fan

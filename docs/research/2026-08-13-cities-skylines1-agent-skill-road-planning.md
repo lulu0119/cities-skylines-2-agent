@@ -246,7 +246,7 @@ module 内部。这也避免大地图数据持续占用模型上下文。
 由 bridge 意图解决。桥梁不能只是在误入水后给整段道路统一加 10 米高度：
 至少要规划两岸连接点、引桥长度、允许纵坡、跨水段和落地连接。当前接受的
 ADR 也已经把单控制点高架原语与可靠 landmark bridge planner 区分开
-([道路与桥梁决策](../adr/2026-08-13-agent-tool-surface-and-permissions.md#roads-and-bridges))。
+([ADR-0004](../adr/0004-linear-networks.md))。
 
 ### 5.4 建议的实施次序
 

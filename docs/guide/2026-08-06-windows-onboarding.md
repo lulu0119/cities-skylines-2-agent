@@ -15,13 +15,13 @@ Pure in-game AI mayor mod: Gameface chat UI + API key in mod settings + C# tools
 | [`archive/`](../../archive/) | Offline POCs (`web/`, `mock/`, `cs/ModHost`) + frozen [M1 smoke](../../archive/docs/2026-08-06-m1-smoke.md) |
 | [`docs/`](../README.md) | Guide / research / ops (this tree) |
 
-## Locked / provisional decisions
+## Locked decisions
 
-- Agent loop (provisional): **C# MEAI `IChatClient` + hand-rolled ReAct / function-calling** — not Gameface apeira/xsai, not Semantic Kernel / Agent Framework first. See [csharp-agent-runtimes](../research/2026-08-06-csharp-agent-runtimes.md).
-- Why not apeira in UI: Gameface has no `ReadableStream`; stock `@xsai/shared` still requires it. See [agent-runtime-gameface-requirements](../research/2026-08-06-agent-runtime-gameface-requirements.md).
-- Tools always enqueue to the sim main thread (`UIUpdate` / `ToolUpdate`); pause-first.
+See numbered ADRs under [docs/adr/](../adr/) and [CONTEXT.md](../../CONTEXT.md). Setup-only reminders:
+
+- Tools enqueue to the simulation thread (`UIUpdate` / `ToolUpdate`).
 - API keys never in the repo.
-- Do not append UI to bare `"Game"` (collides with `-developerMode` F/S/H/Q strip); use `GameBottomRight` + `Portal`.
+- Hang UI on `GameBottomRight` + `Portal`, not bare `"Game"`.
 
 ## Environment
 

@@ -1,46 +1,53 @@
 # Docs index
 
-Dated notes under `guide/` / `research/` / `ops/`; accepted product and architecture decisions under `adr/`. Frozen M1 smoke checklist lives in [`../archive/docs/`](../archive/docs/).
+Vocabulary: [`CONTEXT.md`](../CONTEXT.md). Current open work: [`open-work.md`](./open-work.md). How agents write this tree: [`AGENTS.md`](./AGENTS.md). Dated notes under `guide/` / `research/` / `ops/` are evidence or history; accepted decisions live under `adr/` with sequential numbers. Frozen M1 smoke is in [`../archive/docs/`](../archive/docs/).
 
 ## ADR
 
 | Doc | Decision |
 | --- | --- |
-| [2026-08-13-agent-tool-surface-and-permissions.md](./adr/2026-08-13-agent-tool-surface-and-permissions.md) | One-step prefab placement, normal native validation, player permissions, development tools, model capability resolution, and runtime data lifecycle |
+| [0001-in-process-meai-loop.md](./adr/0001-in-process-meai-loop.md) | In-process MEAI loop; not apeira, SK, MAF, or an external process |
+| [0002-native-validation.md](./adr/0002-native-validation.md) | Ordinary native validation; no Anarchy or `force` |
+| [0003-one-step-building-placement.md](./adr/0003-one-step-building-placement.md) | `place_building` is the only model-facing building write |
+| [0004-linear-networks.md](./adr/0004-linear-networks.md) | `build_road`; ground vs grade-separated; no silent promotion |
+| [0005-player-permissions.md](./adr/0005-player-permissions.md) | Demolish / progression / visual / development tools are settings |
+| [0006-budgeted-local-map.md](./adr/0006-budgeted-local-map.md) | `terrain` returns `LOCAL_MAP`, not a raw grid |
+| [0007-session-lifecycle.md](./adr/0007-session-lifecycle.md) | Session follows the loaded city; data under `ModsData` |
+| [0008-context-budget-auto-custom.md](./adr/0008-context-budget-auto-custom.md) | Auto from model name; Custom from the player setting |
 
 ## Guide
 
 | Doc | Topic |
 | --- | --- |
-| [2026-08-06-windows-onboarding.md](./guide/2026-08-06-windows-onboarding.md) | Windows setup, build/load `Mod/`, decisions, link to archived M1 |
+| [2026-08-06-windows-onboarding.md](./guide/2026-08-06-windows-onboarding.md) | Windows setup, build/load `Mod/` |
 
 ## Research
 
 | Doc | Topic |
 | --- | --- |
-| [2026-08-06-csharp-agent-runtimes.md](./research/2026-08-06-csharp-agent-runtimes.md) | C# agent stacks; provisional MEAI + hand loop |
+| [2026-08-06-csharp-agent-runtimes.md](./research/2026-08-06-csharp-agent-runtimes.md) | C# agent stacks (superseded by [0001](./adr/0001-in-process-meai-loop.md)) |
 | [2026-08-06-agent-runtime-gameface-requirements.md](./research/2026-08-06-agent-runtime-gameface-requirements.md) | apeira/xsai vs Gameface Web APIs |
 | [2026-08-06-gameface-feature-support.md](./research/2026-08-06-gameface-feature-support.md) | Official Coherent support + CS2 empirical notes |
 | [2026-08-06-research-in-game-ai-mods.md](./research/2026-08-06-research-in-game-ai-mods.md) | Other games’ in-game LLM mod patterns |
-| [2026-08-06-agent-runtime-compression-observability.md](./research/2026-08-06-agent-runtime-compression-observability.md) | Long-run compression, tool-call observability, interleaved input (Apeira/Agents SDK/LangChain/SK refs) |
-| [2026-08-10-cs2-mod-hot-reload.md](./research/2026-08-10-cs2-mod-hot-reload.md) | CS2 data/UI/C# hot-reload feasibility; stable host + replaceable policy architecture |
-| [2026-08-11-tool-deepening-next-seams.md](./research/2026-08-11-tool-deepening-next-seams.md) | ECS prefab roles, road features vs replacement, and owner-linked operational-area seams |
-| [2026-08-11-cs2-map-image-mod.md](./research/2026-08-11-cs2-map-image-mod.md) | CS2MapView / Carto map-image mods; open-source status and agent integration options |
-| [2026-08-12-cs2-sewage-outlet-placement-rules.md](./research/2026-08-12-cs2-sewage-outlet-placement-rules.md) | Official evidence for shoreline, road, and pipe requirements of water pumps and sewage outlets |
-| [2026-08-13-cities-skylines1-agent-skill-road-planning.md](./research/2026-08-13-cities-skylines1-agent-skill-road-planning.md) | CS1 Agent Skill road-topology QA, geometry/planning limits, and transferable CS2 route-planning ideas |
-| [2026-08-13-compact-local-map-and-route-anchoring.md](./research/2026-08-13-compact-local-map-and-route-anchoring.md) | Budgeted semantic-vector local-map text; high-resolution terrain stays internal, and automatic route anchoring is explicitly out of scope |
+| [2026-08-06-agent-runtime-compression-observability.md](./research/2026-08-06-agent-runtime-compression-observability.md) | Long-run compression and tool-call observability |
+| [2026-08-10-cs2-mod-hot-reload.md](./research/2026-08-10-cs2-mod-hot-reload.md) | CS2 data/UI/C# hot-reload feasibility |
+| [2026-08-11-tool-deepening-next-seams.md](./research/2026-08-11-tool-deepening-next-seams.md) | Prefab roles, road features vs replacement, operational areas (partially superseded) |
+| [2026-08-11-cs2-map-image-mod.md](./research/2026-08-11-cs2-map-image-mod.md) | CS2MapView / Carto map-image options |
+| [2026-08-12-cs2-sewage-outlet-placement-rules.md](./research/2026-08-12-cs2-sewage-outlet-placement-rules.md) | Shoreline, road, and pipe requirements for pumps and outlets |
+| [2026-08-13-cities-skylines1-agent-skill-road-planning.md](./research/2026-08-13-cities-skylines1-agent-skill-road-planning.md) | CS1 road-topology QA ideas transferable to CS2 |
+| [2026-08-13-compact-local-map-and-route-anchoring.md](./research/2026-08-13-compact-local-map-and-route-anchoring.md) | `LOCAL_MAP` design; auto route anchoring out of scope ([0004](./adr/0004-linear-networks.md), [0006](./adr/0006-budgeted-local-map.md)) |
 
 ## Ops
 
 | Doc | Topic |
 | --- | --- |
+| [2026-08-12-tool-surface-audit-and-open-work.md](./ops/2026-08-12-tool-surface-audit-and-open-work.md) | Frozen audit (not current open work) |
+| [2026-08-10-gameplay-capability-backlog.md](./ops/2026-08-10-gameplay-capability-backlog.md) | Superseded post-10k backlog |
+| [2026-08-10-placement-utilities-handoff.md](./ops/2026-08-10-placement-utilities-handoff.md) | 10k handoff evidence |
+| [2026-08-09-10k-loop-task.md](./ops/2026-08-09-10k-loop-task.md) | Historical 10k task brief |
+| [2026-08-08-windows-mcp-game-debug-loop.md](./ops/2026-08-08-windows-mcp-game-debug-loop.md) | Hands-off Steam/Gameface control loop |
+| [2026-08-07-sewage-handoff.md](./ops/2026-08-07-sewage-handoff.md) | Historical sewage-session handoff |
+| [2026-08-07-chat-ui-debug-computer-use-handoff.md](./ops/2026-08-07-chat-ui-debug-computer-use-handoff.md) | Chat UI / Gameface CDP handoff |
+| [scripts/2026-08-07-gameface-cdp/](./ops/scripts/2026-08-07-gameface-cdp/) | CDP probe helpers for `-uiDeveloperMode` :9444 |
+| [2026-08-06-in-game-agent-fixes-handoff.md](./ops/2026-08-06-in-game-agent-fixes-handoff.md) | Early in-game agent handoff |
 | [2026-08-06-windows-toolchain-pitfalls.md](./ops/2026-08-06-windows-toolchain-pitfalls.md) | Steam/Scoop/Unity/`f2c1`/UI template traps |
-| [2026-08-06-in-game-agent-fixes-handoff.md](./ops/2026-08-06-in-game-agent-fixes-handoff.md) | Session handoff: UI Portal, compact, sim wait, perception caps, road ErrorType |
-| [2026-08-07-chat-ui-debug-computer-use-handoff.md](./ops/2026-08-07-chat-ui-debug-computer-use-handoff.md) | Chat UI crashes/dupes/black-screen hypotheses, Windows-MCP + Gameface CDP, keep 548a1a instrumentation |
-| [scripts/2026-08-07-gameface-cdp/](./ops/scripts/2026-08-07-gameface-cdp/) | CDP probe/send/check helpers for `-uiDeveloperMode` :9444 |
-| [2026-08-07-sewage-handoff.md](./ops/2026-08-07-sewage-handoff.md) | Session handoff: agent sees sewage problem but never fixes it; `agent_advance_time` dispatch bug; proposed fixes |
-| [2026-08-08-windows-mcp-game-debug-loop.md](./ops/2026-08-08-windows-mcp-game-debug-loop.md) | Repeatable hands-off Steam/launcher/Gameface control, black-screen diagnosis, and real-machine acceptance loop |
-| [2026-08-09-10k-loop-task.md](./ops/2026-08-09-10k-loop-task.md) | Codex task brief: iterate launch/observe/diagnose/build until the in-game agent reaches 10k population |
-| [2026-08-10-placement-utilities-handoff.md](./ops/2026-08-10-placement-utilities-handoff.md) | Completed 10k handoff: one-step place, auto-connect, zoning pipeline, list/buy tiles and cold acceptance evidence |
-| [2026-08-10-gameplay-capability-backlog.md](./ops/2026-08-10-gameplay-capability-backlog.md) | Post-10k backlog: rectangle zoning, progression/dev tree, road hierarchy, specialized industry and editable landfill areas |
-| [2026-08-12-tool-surface-audit-and-open-work.md](./ops/2026-08-12-tool-surface-audit-and-open-work.md) | Read-only audit: place/find tool surface, "candidate returns one site" design issue, and the authoritative open-work inventory |

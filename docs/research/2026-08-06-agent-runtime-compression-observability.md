@@ -1,5 +1,7 @@
 # Agent runtime 参考：长行程压缩、可观测与插话
 
+**Status:** Survey evidence only. Current loop decision is [ADR-0001](../adr/0001-in-process-meai-loop.md); context budget is [ADR-0008](../adr/0008-context-budget-auto-custom.md). "暂停优先" in the constraint lens is not current — the player owns the clock via wait simulation.
+
 **Date:** 2026-08-06
 
 **Question:** 在 C# `IChatClient` + 手写 function-calling loop（进程内 mod）里，如何实现 (1) 长行程任务的上下文压缩，(2) 最大化可观测的模型/tool call 日志，(3) Codex 式的“工具执行期间用户插话”？必须参考成熟的 agent runtime 实现。

@@ -1,5 +1,7 @@
 # C# agent runtimes — depth survey (for CS2 in-mod loop)
 
+**Status:** Superseded by [ADR-0001](../adr/0001-in-process-meai-loop.md). The survey remains as evidence; "暂定选型" is not current.
+
 **Date:** 2026-08-06  
 **Question:** Does the C# ecosystem have mature *and/or* lightweight agent runtimes suitable for an in-process Cities: Skylines II mod?  
 **Constraint lens:** Paradox Mods packaging, Unity Mono / `net472`-class surface, UIUpdate tool queue, OpenAI-compatible HTTP (already proven in-mod for TLS).
