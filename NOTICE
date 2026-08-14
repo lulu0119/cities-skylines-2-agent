@@ -1,0 +1,12 @@
+Cities: Skylines 2 Agent
+Copyright 2026 lulu0119
+
+This product includes an inlined, adapted copy of the CS2MCP bridge
+(https://github.com/LancerComet/cities-skylines-2-mcp), Copyright 2026 LancerComet,
+licensed under the Apache License, Version 2.0.
+See Mod/CS2MCP/NOTICE.txt and Mod/CS2MCP/LICENSE-CS2MCP.txt.
+
+CreateDefinitions.cs contains portions derived from game code:
+Copyright (c) Colossal Order and Paradox Interactive.
+Not for reuse or distribution except in accordance with the Paradox Interactive
+End User License Agreement.
