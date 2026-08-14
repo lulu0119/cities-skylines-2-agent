@@ -27,8 +27,6 @@ namespace CitiesSkylines2Agent
             AssetDatabase.global.LoadSettings(nameof(CitiesSkylines2Agent), m_Setting, new Setting(this));
             Setting.Instance = m_Setting;
 
-            AgentLoop.EnsureCreated();
-
             // UIUpdate keeps running while the simulation is paused.
             updateSystem.UpdateAt<ToolQueueSystem>(SystemUpdatePhase.UIUpdate);
             updateSystem.UpdateAt<CS2MCP.BridgeSystem>(SystemUpdatePhase.UIUpdate);

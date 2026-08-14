@@ -51,9 +51,19 @@ namespace CS2MCP
                 }
 
                 output = captured;
-                if (request.TryGetInt("width", out int width) && width > 0 && width < captured.width)
+                if (request.TryGetInt("width", out int width))
                 {
-                    output = Downscale(captured, width);
+                    if (width < 320 || width > 1920)
+                    {
+                        request.Complete(BridgeResponse.Error(
+                            BridgeErrorKind.InvalidArguments,
+                            "width must be between 320 and 1920"));
+                        return;
+                    }
+                    if (width < captured.width)
+                    {
+                        output = Downscale(captured, width);
+                    }
                 }
 
                 byte[] png = ImageConversion.EncodeToPNG(output);

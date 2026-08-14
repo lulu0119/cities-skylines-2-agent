@@ -205,12 +205,17 @@ namespace CS2MCP
             request.Query.TryGetValue("query", out string search);
             request.Query.TryGetValue("role", out string requestedRole);
             requestedRole = requestedRole?.Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(search) && string.IsNullOrEmpty(requestedRole))
+            {
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                    "provide ?role=<prefab role> and/or ?query=<name substring>");
+            }
             if (!string.IsNullOrEmpty(requestedRole) && !kPrefabRoles.Contains(requestedRole))
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     $"unknown prefab role '{requestedRole}'; valid: {string.Join(", ", kPrefabRoles)}");
             }
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 200) : 50;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 64) : 16;
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var results = new List<object>();
@@ -355,6 +360,11 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=<float>&z=<float> world coordinates");
             }
+            if (request.Query.ContainsKey("y"))
+            {
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                    "y is not accepted; place_building samples terrain height from x/z");
+            }
             request.TryGetFloat("rotation", out float rotationDegrees);
 
             if (!TryFindStandaloneObjectPrefab(
@@ -371,8 +381,7 @@ namespace CS2MCP
             }
 
             PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
-            bool hasY = request.TryGetFloat("y", out float y);
-            float3 requestedPosition = new float3(x, hasY ? y : 0f, z);
+            float3 requestedPosition = new float3(x, 0f, z);
             bool hasRotation = request.Query.ContainsKey("rotation");
             TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
             TerrainHeightData heightData = terrain.GetHeightData();
@@ -416,7 +425,6 @@ namespace CS2MCP
                 if (!TryResolvePlacement(
                         capabilities,
                         requestedPosition,
-                        hasY,
                         hasRotation,
                         rotationDegrees,
                         searchContext,
@@ -469,94 +477,6 @@ namespace CS2MCP
             }
             // Completed asynchronously by BridgeToolSystem over the next tool frames.
             return null;
-        }
-
-        private BridgeResponse FindPlacement(BridgeRequest request)
-        {
-            if (!TryGetCity(out _, out BridgeResponse error))
-            {
-                return error;
-            }
-
-            if (!request.Query.TryGetValue("prefab", out string prefabName) || string.IsNullOrEmpty(prefabName))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?prefab=<name from /prefabs>");
-            }
-            if (!request.TryGetFloat("x", out float x) || !request.TryGetFloat("z", out float z))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide ?x=<float>&z=<float> search center");
-            }
-            float radius = request.TryGetFloat("radius", out float rawRadius)
-                ? math.clamp(rawRadius, 8f, 300f)
-                : 40f;
-            request.TryGetFloat("rotation", out float rotationDegrees);
-
-            if (!TryFindStandaloneObjectPrefab(
-                    prefabName,
-                    out Entity prefabEntity,
-                    out PrefabBase prefab,
-                    out BridgeResponse prefabError))
-            {
-                return prefabError;
-            }
-            if (IsLocked(prefabEntity))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict, $"prefab '{prefab.name}' is locked (milestone not reached)");
-            }
-
-            PlacementCapabilities capabilities = GetPlacementCapabilities(prefabEntity);
-            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
-            TerrainHeightData heightData = terrain.GetHeightData();
-            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-            WaterSurfaceData<SurfaceWater> waterSurfaceData =
-                water.GetSurfaceData(out JobHandle waterDeps);
-            waterDeps.Complete();
-            bool hasRotation = request.Query.ContainsKey("rotation");
-            float2 center = new float2(x, z);
-            PlacementSearchContext searchContext =
-                CreatePlacementSearchContext(capabilities, center, radius);
-            if (!TryPlanPlacement(
-                    capabilities,
-                    center,
-                    radius,
-                    hasRotation,
-                    rotationDegrees,
-                    searchContext,
-                    ref heightData,
-                    ref waterSurfaceData,
-                    out PlacementPlan plan,
-                    out string failure))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                    $"no placement candidate could be resolved within {radius:F0}m: {failure}. " +
-                    PlacementRetryHint(capabilities, radius, hasRotation));
-            }
-
-            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueueProbe(
-                    prefabEntity,
-                    prefab,
-                    new[] { plan.Pose.Position },
-                    plan.Pose.RotationDegrees,
-                    request))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
-            }
-            // Completed asynchronously by BridgeToolSystem over the next tool frames.
-            return null;
-        }
-
-        private sealed class InfrastructureCandidate
-        {
-            public Entity PrefabEntity;
-            public PrefabBase Prefab;
-            public float3 Position;
-            public float RotationDegrees;
-            public uint ConstructionCost;
-            public float DistanceFromCenter;
-            public float RoadClearance;
-            public int GeneratedCandidates;
-            public int PreflightRejected;
         }
 
         private struct PlacementSeed
@@ -645,204 +565,6 @@ namespace CS2MCP
             public float RoadClearance;
             public int GeneratedCandidates;
             public int PreflightRejected;
-        }
-
-        /// <summary>
-        /// Resolves one typed, unlocked service prefab and one valid site. The
-        /// caller supplies gameplay intent; prefab flags select shoreline,
-        /// road-side or free placement search inside this module.
-        /// One final candidate is sent through the native preview pipeline so a
-        /// rejected preview cannot wedge a multi-candidate tool transaction.
-        /// </summary>
-        private BridgeResponse FindInfrastructureCandidate(BridgeRequest request)
-        {
-            if (!TryGetCity(out _, out BridgeResponse error))
-            {
-                return error;
-            }
-            if (!request.Query.TryGetValue("role", out string role)
-                || string.IsNullOrWhiteSpace(role))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "provide ?role=power|water|sewage|garbage|healthcare|fire|police|education|transport|post|telecom");
-            }
-            role = role.Trim().ToLowerInvariant();
-            if (!kInfrastructureCandidateRoles.Contains(role))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    $"role '{role}' is not supported by infrastructure candidate planning; valid: {string.Join(", ", kInfrastructureCandidateRoles)}");
-            }
-
-            bool hasX = request.TryGetFloat("x", out float x);
-            bool hasZ = request.TryGetFloat("z", out float z);
-            if (hasX != hasZ)
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, "provide both x and z, or omit both to search around owned tiles");
-            }
-            float2 center = hasX
-                ? new float2(x, z)
-                : GetOwnedTileCenter();
-            float radius = request.TryGetFloat("radius", out float rawRadius)
-                ? math.clamp(rawRadius, 64f, 2500f)
-                : 900f;
-
-            var prefabs = new List<(
-                Entity entity,
-                PrefabBase prefab,
-                uint cost,
-                PlacementCapabilities capabilities)>();
-            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            using (NativeArray<Entity> entities = BuildingPrefabQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    if (!IsIndependentBuildingPrefab(entity)
-                        || IsLocked(entity)
-                        || !GetPrefabRoles(entity).Contains(role))
-                    {
-                        continue;
-                    }
-                    PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(entity);
-                    if (prefab == null || !EntityManager.HasComponent<PlaceableObjectData>(entity))
-                    {
-                        continue;
-                    }
-                    PlaceableObjectData placeable = EntityManager.GetComponentData<PlaceableObjectData>(entity);
-                    prefabs.Add((
-                        entity,
-                        prefab,
-                        placeable.m_ConstructionCost,
-                        GetPlacementCapabilities(entity)));
-                }
-            }
-            if (prefabs.Count == 0)
-            {
-                return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                    $"no unlocked placeable building prefab has typed role '{role}'");
-            }
-            prefabs.Sort((a, b) =>
-            {
-                int byCost = a.cost.CompareTo(b.cost);
-                return byCost != 0
-                    ? byCost
-                    : string.Compare(a.prefab.name, b.prefab.name, StringComparison.Ordinal);
-            });
-
-            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-            WaterSurfaceData<SurfaceWater> waterSurfaceData =
-                water.GetSurfaceData(out JobHandle waterDependencies);
-            waterDependencies.Complete();
-            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
-            TerrainHeightData heightData = terrain.GetHeightData();
-            var candidates = new List<InfrastructureCandidate>();
-            foreach ((
-                Entity entity,
-                PrefabBase prefab,
-                uint cost,
-                PlacementCapabilities capabilities) in prefabs)
-            {
-                if (TryFindInfrastructureSite(
-                        prefab,
-                        cost,
-                        capabilities,
-                        center,
-                        radius,
-                        ref heightData,
-                        ref waterSurfaceData,
-                        out InfrastructureCandidate candidate))
-                {
-                    candidates.Add(candidate);
-                }
-            }
-            if (candidates.Count == 0)
-            {
-                return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                    $"no valid '{role}' site was found within {radius:F0}m of ({center.x:F0},{center.y:F0}); " +
-                    "checked prefab shoreline, road-access and utility-connection requirements");
-            }
-            candidates.Sort((a, b) =>
-            {
-                int byCost = a.ConstructionCost.CompareTo(b.ConstructionCost);
-                if (byCost != 0)
-                {
-                    return byCost;
-                }
-                int byDistance = a.DistanceFromCenter.CompareTo(b.DistanceFromCenter);
-                if (byDistance != 0)
-                {
-                    return byDistance;
-                }
-                int byName = string.Compare(a.Prefab.name, b.Prefab.name, StringComparison.Ordinal);
-                if (byName != 0)
-                {
-                    return byName;
-                }
-                int byX = a.Position.x.CompareTo(b.Position.x);
-                return byX != 0 ? byX : a.Position.z.CompareTo(b.Position.z);
-            });
-            InfrastructureCandidate selected = candidates[0];
-            BridgeToolSystem tool = World.GetOrCreateSystemManaged<BridgeToolSystem>();
-            if (!tool.TryQueueInfrastructureCandidate(
-                    selected.PrefabEntity,
-                    selected.Prefab,
-                    new BridgeToolSystem.InfrastructureCandidatePlan
-                    {
-                        Position = selected.Position,
-                        RotationDegrees = selected.RotationDegrees,
-                        Role = role,
-                        GeneratedCandidates = selected.GeneratedCandidates,
-                        PreflightRejected = selected.PreflightRejected,
-                        ConstructionCost = selected.ConstructionCost,
-                        DistanceFromCenter = selected.DistanceFromCenter,
-                        RoadClearance = selected.RoadClearance,
-                    },
-                    request))
-            {
-                return BridgeResponse.Error(BridgeErrorKind.Conflict, "another build operation is in progress, retry shortly");
-            }
-            return null;
-        }
-
-        private bool TryFindInfrastructureSite(
-            PrefabBase prefab,
-            uint constructionCost,
-            PlacementCapabilities capabilities,
-            float2 center,
-            float radius,
-            ref TerrainHeightData heightData,
-            ref WaterSurfaceData<SurfaceWater> waterSurfaceData,
-            out InfrastructureCandidate candidate)
-        {
-            PlacementSearchContext context =
-                CreatePlacementSearchContext(capabilities, center, radius);
-            if (!TryPlanPlacement(
-                    capabilities,
-                    center,
-                    radius,
-                    hasRotation: false,
-                    rotationDegrees: 0f,
-                    context,
-                    ref heightData,
-                    ref waterSurfaceData,
-                    out PlacementPlan plan,
-                    out _))
-            {
-                candidate = null;
-                return false;
-            }
-            candidate = new InfrastructureCandidate
-            {
-                PrefabEntity = capabilities.PrefabEntity,
-                Prefab = prefab,
-                Position = plan.Pose.Position,
-                RotationDegrees = plan.Pose.RotationDegrees,
-                ConstructionCost = constructionCost,
-                DistanceFromCenter = plan.DistanceFromCenter,
-                RoadClearance = plan.RoadClearance,
-                GeneratedCandidates = plan.GeneratedCandidates,
-                PreflightRejected = plan.PreflightRejected,
-            };
-            return true;
         }
 
         private List<PlacementSeed> CreatePlacementSearchSeeds(
@@ -1356,7 +1078,6 @@ namespace CS2MCP
                 if (!TryResolvePlacement(
                         capabilities,
                         seed.Position,
-                        hasExplicitY: false,
                         candidateHasRotation,
                         candidateRotation,
                         context,
@@ -1494,32 +1215,6 @@ namespace CS2MCP
                 : "all resolved candidates were duplicates";
             return $"generated {generated} seeds and {resolved} distinct resolved poses; " +
                 $"leading rejections: {reasonSummary}";
-        }
-
-        private static readonly HashSet<string> kInfrastructureCandidateRoles =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "power", "water", "sewage", "garbage", "healthcare", "fire",
-                "police", "education", "transport", "post", "telecom",
-            };
-
-        private float2 GetOwnedTileCenter()
-        {
-            float2 sum = float2.zero;
-            int count = 0;
-            using (NativeArray<Entity> entities = MapTileQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    if (EntityManager.HasComponent<Game.Common.Native>(entity))
-                    {
-                        continue;
-                    }
-                    sum += EntityManager.GetComponentData<Game.Areas.Geometry>(entity).m_CenterPosition.xz;
-                    count++;
-                }
-            }
-            return count > 0 ? sum / count : float2.zero;
         }
 
         private BridgeResponse BuildRoad(BridgeRequest request)
@@ -1784,7 +1479,7 @@ namespace CS2MCP
                 || string.IsNullOrWhiteSpace(prefabName))
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "provide ?prefab=<exact road prefab name from find_prefabs(category=road)>");
+                    "provide ?prefab=<exact road prefab name from list_prefabs(category=road)>");
             }
 
             if (!TryResolveExistingEntity(index, version, out Entity target)
@@ -1821,7 +1516,7 @@ namespace CS2MCP
                     out PrefabBase newPrefab))
             {
                 return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                    $"unknown road prefab '{prefabName}'; search via find_prefabs(category=road)");
+                    $"unknown road prefab '{prefabName}'; search via list_prefabs(category=road)");
             }
             if (newPrefabEntity == oldPrefabEntity)
             {
@@ -1896,11 +1591,13 @@ namespace CS2MCP
                         "operational_area must be any, storage or extractor");
                 }
             }
-            const int hardMax = 128;
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
+            const int hardMax = 64;
+            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : 16;
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
-            float2 center = new float2(x, z);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var found = new List<(float distance, object item)>();
@@ -2027,7 +1724,7 @@ namespace CS2MCP
                 warning = total > results.Count
                     ? $"too many results: {total} buildings match, only {results.Count} returned; shrink radius / add query filter, or paginate."
                     : null,
-                note = "hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
+                note = "hard max 64; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
                 buildings = results,
             });
         }
@@ -2312,7 +2009,6 @@ namespace CS2MCP
         private bool TryResolvePlacement(
             PlacementCapabilities capabilities,
             float3 requestedPosition,
-            bool hasExplicitY,
             bool hasExplicitRotation,
             float rotationDegrees,
             PlacementSearchContext context,
@@ -2333,10 +2029,7 @@ namespace CS2MCP
             }
 
             float3 position = requestedPosition;
-            if (!hasExplicitY)
-            {
-                position.y = TerrainUtils.SampleHeight(ref heightData, position);
-            }
+            position.y = TerrainUtils.SampleHeight(ref heightData, position);
             float resolvedRotation = rotationDegrees;
             if (!hasExplicitRotation)
             {

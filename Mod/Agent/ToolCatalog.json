@@ -3,42 +3,6 @@
   "mcpVersion": "0.8.0",
   "tools": [
     {
-      "name": "ping",
-      "description": "Check that Cities: Skylines II is running with the CS2MCP bridge mod loaded. Returns mod version, current game mode (MainMenu / Game / Editor) and whether a save is loading. Works even while a save is still loading; use this first to diagnose connection issues.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      },
-      "route": "/ping",
-      "query": [],
-      "response": "json"
-    },
-    {
-      "name": "game_state",
-      "description": "Get the current game state: game mode, whether a city is loaded, city name, simulation pause/speed and the in-game date/time.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      },
-      "route": "/state",
-      "query": [],
-      "response": "json"
-    },
-    {
-      "name": "city_overview",
-      "description": "Key statistics of the loaded city: population (plus citizens currently moving in), average happiness and health, city treasury money, XP, in-game date and simulation speed. Requires a loaded city.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      },
-      "route": "/city/overview",
-      "query": [],
-      "response": "json"
-    },
-    {
       "name": "get_progression",
       "description": "Read milestone/XP progress, unspent Development Points, purchased node names, and the current Development Tree frontier. The default omits distant locked branches; pass service to inspect one service tree. Use this after a milestone or when an advanced service is locked.",
       "parameters": {
@@ -98,7 +62,7 @@
     },
     {
       "name": "wait_simulation",
-      "description": "Run the simulation forward by in-game time: default 1 in-game hour (about 20-30 real seconds at high speed). Resumes if paused, then restores the previous speed/pause state and returns the latest city state. Call it after zoning or placing buildings so construction, leveling and population growth can happen; then re-check city_services.problems[]/demand. Never poll game_state in a loop.",
+      "description": "Run the simulation forward by in-game time: default 1 in-game hour (about 20-30 real seconds at the engine 8x speed cap). Resumes if paused, then restores the previous speed/pause state. On success the result includes city overview fields (population, money, xp, happiness, etc.) plus hours/completed/targetReached. Call after zoning or placing buildings so construction and growth can happen; then re-check city_services.problems[]/demand. First turn can wait for the first snapshot. Never poll.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -171,9 +135,10 @@
         "properties": {
           "width": {
             "type": "integer",
-            "minimum": 64,
-            "maximum": 3840,
-            "description": "Downscale the image to this width in pixels (default 1280, keeps aspect ratio)"
+            "minimum": 320,
+            "maximum": 1920,
+            "description": "Output width in pixels (320-1920). Default 1280.",
+            "default": 1280
           }
         },
         "required": []
@@ -241,8 +206,9 @@
           "samples": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 512,
-            "description": "How many recent samples to return (default 64)"
+            "maximum": 64,
+            "description": "History samples to return. Default 16, max 64.",
+            "default": 16
           }
         },
         "required": [
@@ -261,7 +227,8 @@
         },
         {
           "key": "samples",
-          "arg": "samples"
+          "arg": "samples",
+          "default": "16"
         }
       ],
       "response": "json"
@@ -418,8 +385,8 @@
       "response": "json"
     },
     {
-      "name": "find_prefabs",
-      "description": "Search game prefabs by name. Use 'Highway' to find highway connections, 'Sewage' for sewage outlets, 'Water' for water pumping, 'WindTurbine' for power, 'School' for schools, 'Clinic'/'Hospital' for healthcare. Check 'locked' field to see if milestone blocks it.",
+      "name": "list_prefabs",
+      "description": "Search game prefabs by name and/or typed role. Requires role and/or query. Use role for infrastructure/services; query for name substrings like 'Highway' or 'School'. Check 'locked' for milestone blocks. Default limit 16, max 64.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -435,7 +402,7 @@
           },
           "query": {
             "type": "string",
-            "description": "Case-insensitive name substring filter"
+            "description": "Name substring filter. Required if role is omitted."
           },
           "role": {
             "type": "string",
@@ -453,13 +420,14 @@
               "telecom",
               "specialized-industry"
             ],
-            "description": "Optional capability filter backed by prefab ECS data. Prefer this over guessing names for infrastructure and city services."
+            "description": "Typed capability filter from prefab ECS data. Prefer over name guessing for infrastructure and services. At least one of role or query is required."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 200,
-            "description": "Max results (default 50)"
+            "maximum": 64,
+            "description": "Max results. Default 16, max 64.",
+            "default": 16
           }
         },
         "required": []
@@ -480,70 +448,8 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "find_infrastructure_candidate",
-      "description": "Find one deterministic, native-validated site for an unlocked infrastructure/service role without committing construction. The tool chooses a typed standalone prefab and derives its search from prefab data: shoreline snapping when required, road frontage only when RequireRoad is set, and free placement otherwise. It also checks owned tiles, footprint collisions and required off-road utility connections. Omit x/z to search around owned tiles. Use the returned prefab/position/rotation with place_building to commit.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "role": {
-            "type": "string",
-            "enum": [
-              "power",
-              "water",
-              "sewage",
-              "garbage",
-              "healthcare",
-              "fire",
-              "police",
-              "education",
-              "transport",
-              "post",
-              "telecom"
-            ],
-            "description": "Typed gameplay role; the tool chooses among unlocked prefabs for this role"
-          },
-          "x": {
-            "type": "number",
-            "description": "Optional search-center world X; provide together with z"
-          },
-          "z": {
-            "type": "number",
-            "description": "Optional search-center world Z; provide together with x"
-          },
-          "radius": {
-            "type": "number",
-            "minimum": 64,
-            "maximum": 2500,
-            "description": "Search radius in metres (default 900)"
-          }
-        },
-        "required": [
-          "role"
-        ]
-      },
-      "route": "/build/infrastructure/candidate",
-      "query": [
-        {
-          "key": "role",
-          "arg": "role"
-        },
-        {
-          "key": "x",
-          "arg": "x"
-        },
-        {
-          "key": "z",
-          "arg": "z"
-        },
-        {
-          "key": "radius",
-          "arg": "radius"
+          "arg": "limit",
+          "default": "16"
         }
       ],
       "response": "json"
@@ -733,7 +639,10 @@
           },
           "limit": {
             "type": "integer",
-            "description": "Maximum stops to return (default 128)"
+            "description": "Maximum stops to return. Default 16, max 64.",
+            "minimum": 1,
+            "maximum": 64,
+            "default": 16
           }
         },
         "required": []
@@ -758,14 +667,15 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
+          "arg": "limit",
+          "default": "16"
         }
       ],
       "response": "json"
     },
     {
       "name": "list_transit_lines",
-      "description": "List existing transit lines with type, length, stop count, vehicle count and usage. Vehicles and production stay native. Read-only; use create_transit_line / delete_transit_line to change lines.",
+      "description": "List transit lines. Optional x/z/radius keeps lines with a stop/waypoint inside the range. Optional type filter. Default limit 16, max 64.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -775,7 +685,22 @@
           },
           "limit": {
             "type": "integer",
-            "description": "Maximum lines to return (default 128)"
+            "description": "Maximum lines to return. Default 16, max 64.",
+            "minimum": 1,
+            "maximum": 64,
+            "default": 16
+          },
+          "x": {
+            "type": "number",
+            "description": "Optional center X (requires z)"
+          },
+          "z": {
+            "type": "number",
+            "description": "Optional center Z (requires x)"
+          },
+          "radius": {
+            "type": "number",
+            "description": "Radius in meters (default 250 when center given)"
           }
         },
         "required": []
@@ -788,7 +713,20 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
+          "arg": "limit",
+          "default": "16"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
         }
       ],
       "response": "json"
@@ -866,7 +804,7 @@
         "properties": {
           "prefab": {
             "type": "string",
-            "description": "Exact prefab name from find_prefabs"
+            "description": "Exact prefab name from list_prefabs"
           },
           "x": {
             "type": "number",
@@ -926,7 +864,7 @@
         "properties": {
           "prefab": {
             "type": "string",
-            "description": "Exact prefab name from find_prefabs (category road or net)"
+            "description": "Exact prefab name from list_prefabs (category road or net)"
           },
           "x1": {
             "type": "number",
@@ -1027,76 +965,6 @@
       "response": "json"
     },
     {
-      "name": "find_placement",
-      "description": "Preview ONE resolved placement without committing. The tool derives shoreline snapping and road frontage from prefab flags before sending one candidate to native validation; radius and attempts do not create a multi-candidate native probe because rejected previews can wedge the game tool. Prefer place_building with radius for one-step placement. roadAccess is returned only for a prefab that declares RequireRoad. Failures report game reasons such as NoRoadAccess, NotOnShoreline, OverlapExisting, InWater or ExceedsCityLimits.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "prefab": {
-            "type": "string",
-            "description": "Exact prefab name from find_prefabs (buildings or trees)"
-          },
-          "x": {
-            "type": "number",
-            "description": "Exact world X to preview (meters)"
-          },
-          "z": {
-            "type": "number",
-            "description": "Exact world Z to preview (meters)"
-          },
-          "radius": {
-            "type": "number",
-            "minimum": 8,
-            "maximum": 300,
-            "description": "Compatibility parameter only; preview still tests exactly x/z once"
-          },
-          "attempts": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1,
-            "description": "Must be 1; multi-candidate preview is intentionally disabled"
-          },
-          "rotation": {
-            "type": "number",
-            "description": "Rotation in degrees to require (default 0); retry with 90/180/270 if not found"
-          }
-        },
-        "required": [
-          "prefab",
-          "x",
-          "z"
-        ]
-      },
-      "route": "/build/find-place",
-      "query": [
-        {
-          "key": "prefab",
-          "arg": "prefab"
-        },
-        {
-          "key": "x",
-          "arg": "x"
-        },
-        {
-          "key": "z",
-          "arg": "z"
-        },
-        {
-          "key": "radius",
-          "arg": "radius"
-        },
-        {
-          "key": "attempts",
-          "arg": "attempts"
-        },
-        {
-          "key": "rotation",
-          "arg": "rotation"
-        }
-      ],
-      "response": "json"
-    },
-    {
       "name": "list_buildings",
       "description": "Find buildings existing in the city by typed service role, operational-area capability, prefab-name substring, or location. Returns roles, capabilities, world position, current entity id and footprint. Prefer role over guessing internal prefab names; use role=garbage for landfills, role=police for police facilities, and role=specialized-industry with operational_area=extractor for farms/extractors. Entity ids change after save reload. Hard max 128 results.",
       "parameters": {
@@ -1149,8 +1017,9 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 128,
-            "description": "Max results (default 128, hard cap 128)"
+            "maximum": 64,
+            "description": "Max results. Default 16, max 64.",
+            "default": 16
           }
         },
         "required": []
@@ -1183,14 +1052,15 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
+          "arg": "limit",
+          "default": "16"
         }
       ],
       "response": "json"
     },
     {
-      "name": "list_zones",
-      "description": "All zone TYPES (residential low/medium/high, commercial, industrial, office...) with their internal name, area type and locked state. This is a small type list (not the painted cells); use zoning for per-type cell counts. Use the exact name with zone_rectangle or zone_area.",
+      "name": "list_zone_types",
+      "description": "All zone TYPES (residential low/medium/high, commercial, industrial, office...) with internal name, area type and locked state. Small type list (not painted cells); use count_zone_cells for per-type cell counts. Use the exact name with zone_rectangle or zone_area.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -1208,7 +1078,7 @@
         "properties": {
           "zone": {
             "type": "string",
-            "description": "Zone name from list_zones, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
+            "description": "Zone name from list_zone_types, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
           },
           "x": {
             "type": "number",
@@ -1260,7 +1130,7 @@
         "properties": {
           "zone": {
             "type": "string",
-            "description": "Zone name from list_zones, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
+            "description": "Zone name from list_zone_types, a generic residential/commercial name that will resolve to the map theme, or 'None' to dezone"
           },
           "x": {
             "type": "number",
@@ -1380,61 +1250,6 @@
       "response": "json"
     },
     {
-      "name": "upgrade_road",
-      "description": "Deprecated compatibility alias for set_road_features. It only changes composition features and never changes road prefab, width or lane layout.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer",
-            "description": "Road segment entity index"
-          },
-          "version": {
-            "type": "integer",
-            "description": "Road segment entity version"
-          },
-          "upgrades": {
-            "type": "string",
-            "description": "Comma-separated feature names, e.g. 'grass,lighting'"
-          },
-          "side": {
-            "type": "string",
-            "enum": [
-              "both",
-              "left",
-              "right"
-            ],
-            "description": "Which side for side features (default both)"
-          }
-        },
-        "required": [
-          "index",
-          "version",
-          "upgrades"
-        ]
-      },
-      "route": "/build/upgrade",
-      "query": [
-        {
-          "key": "index",
-          "arg": "index"
-        },
-        {
-          "key": "version",
-          "arg": "version"
-        },
-        {
-          "key": "upgrades",
-          "arg": "upgrades"
-        },
-        {
-          "key": "side",
-          "arg": "side"
-        }
-      ],
-      "response": "json"
-    },
-    {
       "name": "replace_road_type",
       "description": "DEVELOPMENT/ACCEPTANCE EXPERIMENTAL: replace one simple standalone road edge with a different road prefab through the game's native Replace pipeline. Only road-to-road replacement is supported. v0 rejects intersections, chain segments, owned/fixed edges and locked target prefabs. The original edge entity may change; refresh list_networks after success.",
       "parameters": {
@@ -1450,7 +1265,7 @@
           },
           "prefab": {
             "type": "string",
-            "description": "Exact replacement road prefab from find_prefabs(category=road)"
+            "description": "Exact replacement road prefab from list_prefabs(category=road)"
           }
         },
         "required": [
@@ -1478,7 +1293,7 @@
     },
     {
       "name": "list_networks",
-      "description": "List Game.Net edges: roads, water pipes, sewage pipes and low-voltage cables, including isolated components. Filter with kind=road|water|sewage|low_voltage. Returns kind, endpoints, isolated and componentSize. Road-kind rows include native four-period traffic aggregates; use sort=traffic_volume to find heavily used roads or sort=congestion to rank slowdown weighted by volume; activeBottlenecks comes from road sublanes. Spatial filter with x/z/radius. Hard max 128 results. This is inventory of what is there; use inspect_network_topology for QA. Demolish accepts these entity ids through the native bulldoze pipeline.",
+      "description": "Inventory of typed network edges for one required kind (road, water, sewage, low_voltage). Zero topology: no isolated/kinds/componentSize. Shared fields: entity, prefab, start, end, length; distanceM when x/z given. Road also returns widthM and traffic{volumeIndex, congestionIndex, activeBottlenecks}. Water and sewage are geometry only; low_voltage electricity{flow,capacity,bottleneck} is deferred pending Windows Game.dll. Sort: distance (with x/z); traffic_volume|congestion for road; load for low_voltage once electricity fields land. Default limit 16, max 64. Use inspect_network_topology for isolation QA.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1490,7 +1305,7 @@
               "sewage",
               "low_voltage"
             ],
-            "description": "Typed-network kind; omit to include every product kind"
+            "description": "Required typed-network kind"
           },
           "query": {
             "type": "string",
@@ -1511,20 +1326,18 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 128,
-            "description": "Max results (default 128, hard cap 128)"
+            "maximum": 64,
+            "description": "Max results. Default 16, max 64.",
+            "default": 16
           },
           "sort": {
             "type": "string",
-            "enum": [
-              "distance",
-              "traffic_volume",
-              "congestion"
-            ],
-            "description": "Optional ranking; distance requires x/z; traffic rankings return highest first and apply to road-kind rows"
+            "description": "Optional ranking: distance (needs x/z); traffic_volume or congestion (kind=road only); load (kind=low_voltage, once electricity fields land)"
           }
         },
-        "required": []
+        "required": [
+          "kind"
+        ]
       },
       "route": "/city/networks",
       "query": [
@@ -1550,7 +1363,8 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
+          "arg": "limit",
+          "default": "16"
         },
         {
           "key": "sort",
@@ -1561,16 +1375,19 @@
     },
     {
       "name": "inspect_network_topology",
-      "description": "Read-only road topology QA on the typed-network graph: near-miss, unnoded crossing, too-close junctions, surprise short stubs and isolated roads. Degree-1 dead ends are facts, not automatic errors; pass include_dead_ends=true to list them. Spatial filter with x/z/radius. Findings cite entity ids from list_networks.",
+      "description": "Topology QA for one required kind. kind=road: near_miss, unnoded_crossing, too_close_junctions, short_stub, isolated_road (optional dead ends with include_dead_ends). kind=water|sewage|low_voltage: only isolated_* components that do not reach a road edge. Findings capped at 64. Optional x/z/radius.",
       "parameters": {
         "type": "object",
         "properties": {
           "kind": {
             "type": "string",
             "enum": [
-              "road"
+              "road",
+              "water",
+              "sewage",
+              "low_voltage"
             ],
-            "description": "Currently roads only; omit or pass road"
+            "description": "Required typed-network kind to inspect"
           },
           "x": {
             "type": "number",
@@ -1589,7 +1406,9 @@
             "description": "If true, also list degree-1 dead ends as facts, not as QA errors"
           }
         },
-        "required": []
+        "required": [
+          "kind"
+        ]
       },
       "route": "/city/networks/topology",
       "query": [
@@ -1728,8 +1547,8 @@
       "response": "json"
     },
     {
-      "name": "terrain",
-      "description": "Budgeted semantic-vector LOCAL_MAP v1 for a map range. Returns a local coordinate frame, elevation/slope/water/owned/buildable summaries, connected water/steep/buildable/owned regions, real road nodes and edges, directional sectors, and explicit omitted metadata. Use it before choosing an expansion direction or placing shoreline/terrain-sensitive infrastructure. Coordinates in region and network geometry are quantized units relative to frame.origin_world; multiply by quantum_m to recover meter offsets. This is spatial evidence, not native construction validation. Requires x+z+radius or xMin+zMin+xMax+zMax bounds.",
+      "name": "local_map",
+      "description": "Budgeted semantic-vector LOCAL_MAP v1 for a map range. Returns a local coordinate frame, elevation/slope/water/owned/buildable summaries, connected regions, road nodes/edges, directional sectors, and omitted metadata. Use before choosing an expansion direction or placing shoreline/terrain-sensitive infrastructure. Coordinates in region and network geometry are quantized units relative to frame.origin_world; multiply by quantum_m to recover meter offsets. Spatial evidence, not native construction validation. Requires x+z+radius or xMin+zMin+xMax+zMax bounds.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1808,7 +1627,7 @@
       "response": "text"
     },
     {
-      "name": "gridmap",
+      "name": "probe_cell_layer",
       "description": "Compact cell-map probe (landValue, pollution, groundWater, …) for a map range: value min/max/mean plus fixed 8x8 samples. Requires x+z+radius or xMin+zMin+xMax+zMax. If the range covers more than 128 native cells, returns truncated=true with a warning and still only 8x8 samples. Never returns full arrays.",
       "parameters": {
         "type": "object",
@@ -1906,7 +1725,7 @@
       "response": "json"
     },
     {
-      "name": "zoning",
+      "name": "count_zone_cells",
       "description": "Aggregated summary of painted zones (counts only, never per-cell rows): cells per zone type with occupied/empty split, whole-city or within an optional x/z/radius. Empty zoned cells are where buildings will grow. Whole-city counts are cheap and safe to call.",
       "parameters": {
         "type": "object",
@@ -1946,7 +1765,7 @@
     },
     {
       "name": "notifications",
-      "description": "All active in-world warning icons (no electricity, no water, garbage piling up, abandoned buildings, high rent...) with type counts, locations and target entities. The primary way to discover problems. Optional 'type' filters the detailed items by notification type name substring (countsByType always stays complete). Hard max 128 detail items; truncated=true when details were cut.",
+      "description": "Citywide warning-icon summary. countsByType and topIssues are always complete citywide. Optional x/z/radius and limit filter detail items only (default limit 16, max 64). Use type as a substring filter. Inspect targets with inspect.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1957,8 +1776,21 @@
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 128,
-            "description": "Max detailed items (default 128, hard cap 128)"
+            "maximum": 64,
+            "description": "Max detailed items. Default 16, max 64.",
+            "default": 16
+          },
+          "x": {
+            "type": "number",
+            "description": "Optional center X for detail filtering (requires z)"
+          },
+          "z": {
+            "type": "number",
+            "description": "Optional center Z for detail filtering (requires x)"
+          },
+          "radius": {
+            "type": "number",
+            "description": "Detail filter radius in meters (default 250 when center given)"
           }
         },
         "required": []
@@ -1971,7 +1803,20 @@
         },
         {
           "key": "limit",
-          "arg": "limit"
+          "arg": "limit",
+          "default": "16"
+        },
+        {
+          "key": "x",
+          "arg": "x"
+        },
+        {
+          "key": "z",
+          "arg": "z"
+        },
+        {
+          "key": "radius",
+          "arg": "radius"
         }
       ],
       "response": "json"
@@ -2070,7 +1915,7 @@
           },
           "fee": {
             "type": "number",
-            "description": "New fee value"
+            "description": "Fee value; must be within the resource sliderRange from get_fees (rejected if out of range)."
           }
         },
         "required": [
@@ -2087,62 +1932,6 @@
         {
           "key": "fee",
           "arg": "fee"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "list_objects",
-      "description": "Read-only inventory of standalone trees and plants (not building sub-objects), with entity ids and positions. Filter spatially with x/z/radius or by prefab-name substring. Hard max 128 results; if more match, truncated=true and warning tells you to shrink the range. Generic demolish does not remove these objects; clearing is deferred to a future spatial brush tool.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Prefab-name substring filter"
-          },
-          "x": {
-            "type": "number",
-            "description": "Center X for spatial filter"
-          },
-          "z": {
-            "type": "number",
-            "description": "Center Z for spatial filter"
-          },
-          "radius": {
-            "type": "number",
-            "description": "Radius meters (default 250 with x/z)"
-          },
-          "limit": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 128,
-            "description": "Max results (default 128, hard cap 128)"
-          }
-        },
-        "required": []
-      },
-      "route": "/city/objects",
-      "query": [
-        {
-          "key": "query",
-          "arg": "query"
-        },
-        {
-          "key": "x",
-          "arg": "x"
-        },
-        {
-          "key": "z",
-          "arg": "z"
-        },
-        {
-          "key": "radius",
-          "arg": "radius"
-        },
-        {
-          "key": "limit",
-          "arg": "limit"
         }
       ],
       "response": "json"
@@ -2171,19 +1960,20 @@
     },
     {
       "name": "list_tiles",
-      "description": "List map tiles with their grid position (23x23, 623m squares), center world coordinates and ownership. filter=all (default) | owned | unowned | available. available only returns unowned tiles when a purchase permit exists; the game still validates tile eligibility and funds. Also reports total/owned counts and upkeep settings. Use this BEFORE expanding: build roads and zone only on owned tiles; buy an adjacent tile with buy_tiles.",
+      "description": "List map tiles. filter=owned (default) or all (must be explicit); also unowned|available. Not item-capped. Tiles are 623m squares on a 23x23 grid.",
       "parameters": {
         "type": "object",
         "properties": {
           "filter": {
             "type": "string",
             "enum": [
-              "all",
               "owned",
+              "all",
               "unowned",
               "available"
             ],
-            "description": "Which tiles to return: all, owned, unowned, or currently available by permit count (default all)"
+            "default": "owned",
+            "description": "owned (default), all (explicit), unowned, or available"
           }
         },
         "required": []
@@ -2192,7 +1982,8 @@
       "query": [
         {
           "key": "filter",
-          "arg": "filter"
+          "arg": "filter",
+          "default": "owned"
         }
       ],
       "response": "json"
@@ -2231,142 +2022,6 @@
         {
           "key": "gridZ",
           "arg": "gridZ"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "list_districts",
-      "description": "All districts with entity id, center position, polygon size and active policy count.",
-      "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      },
-      "route": "/districts",
-      "query": [],
-      "response": "json"
-    },
-    {
-      "name": "create_district",
-      "description": "Draw a district over an area by polygon corners (3-32 points, world meters). Buildings and roads inside get assigned to it; district policies can then be applied to just that area.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "nodes": {
-            "type": "string",
-            "description": "Polygon corners 'x1,z1;x2,z2;x3,z3;...' (counter-clockwise)"
-          },
-          "prefab": {
-            "type": "string",
-            "description": "District prefab name (default: the standard district)"
-          }
-        },
-        "required": [
-          "nodes"
-        ]
-      },
-      "route": "/build/district",
-      "query": [
-        {
-          "key": "nodes",
-          "arg": "nodes"
-        },
-        {
-          "key": "prefab",
-          "arg": "prefab"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "district_policies",
-      "description": "Policies available for one district (speed limits, parking fees, combustion ban...) with active/locked state. District from list_districts.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer",
-            "description": "District entity index"
-          },
-          "version": {
-            "type": "integer",
-            "description": "District entity version"
-          }
-        },
-        "required": [
-          "index",
-          "version"
-        ]
-      },
-      "route": "/district/policies",
-      "query": [
-        {
-          "key": "index",
-          "arg": "index"
-        },
-        {
-          "key": "version",
-          "arg": "version"
-        }
-      ],
-      "response": "json"
-    },
-    {
-      "name": "set_district_policy",
-      "description": "Activate/deactivate a policy on one district (policy name from district_policies).",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer",
-            "description": "District entity index"
-          },
-          "version": {
-            "type": "integer",
-            "description": "District entity version"
-          },
-          "name": {
-            "type": "string",
-            "description": "Policy internal name"
-          },
-          "active": {
-            "type": "boolean",
-            "description": "true to activate"
-          },
-          "adjustment": {
-            "type": "number",
-            "description": "Slider value for slider policies"
-          }
-        },
-        "required": [
-          "index",
-          "version",
-          "name",
-          "active"
-        ]
-      },
-      "route": "/district/policies/set",
-      "query": [
-        {
-          "key": "index",
-          "arg": "index"
-        },
-        {
-          "key": "version",
-          "arg": "version"
-        },
-        {
-          "key": "name",
-          "arg": "name"
-        },
-        {
-          "key": "active",
-          "arg": "active"
-        },
-        {
-          "key": "adjustment",
-          "arg": "adjustment"
         }
       ],
       "response": "json"

@@ -48,6 +48,7 @@ Complete, verify, commit, and push one work item at a time. Do not accumulate un
 ## Docs
 
 Follow [docs/AGENTS.md](docs/AGENTS.md). `CONTEXT.md` is glossary only. ADRs are numbered. Current inventory is `docs/open-work.md` only.
+- Completing work that changes unfinished inventory **must** edit `docs/open-work.md` in the same change (or same session before done). Do not leave it for the user to remember.
 
 ## Verification
 
@@ -55,3 +56,4 @@ Follow [docs/AGENTS.md](docs/AGENTS.md). `CONTEXT.md` is glossary only. ADRs are
 - UI-only: `cd Mod/UI && npm run build` (needs `CSII_USERDATAPATH`).
 - Prefer targeted checks over inventing large test suites unless asked.
 - After logic changes: deslop; use codebase-design language if a seam moved.
+- Before claiming done: if unfinished inventory changed, `docs/open-work.md` is updated (not implemented vs awaiting live acceptance; delete passed gates).

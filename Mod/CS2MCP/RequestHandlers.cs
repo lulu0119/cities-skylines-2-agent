@@ -75,8 +75,6 @@ namespace CS2MCP
         {
             switch (request.Path)
             {
-                case "/ping":
-                    return GetPing();
                 case "/state":
                     return GetState();
                 case "/city/overview":
@@ -111,14 +109,9 @@ namespace CS2MCP
                     return GetPrefabs(request);
                 case "/build/place":
                     return PlaceBuilding(request);
-                case "/build/find-place":
-                    return FindPlacement(request);
-                case "/build/infrastructure/candidate":
-                    return FindInfrastructureCandidate(request);
                 case "/build/road":
                     return BuildRoad(request);
                 case "/build/road/features":
-                case "/build/upgrade": // Deprecated upgrade_road compatibility route.
                     return SetRoadFeatures(request);
                 case "/build/road/replace":
                     return ReplaceRoadType(request);
@@ -162,8 +155,6 @@ namespace CS2MCP
                     return GetFees();
                 case "/city/fees/set":
                     return SetFee(request);
-                case "/city/objects":
-                    return ListObjects(request);
                 case "/camera":
                     return GetCamera();
                 case "/camera/set":
@@ -186,37 +177,15 @@ namespace CS2MCP
                     return GetTilesInfo(request);
                 case "/city/tiles/buy":
                     return BuyTiles(request);
-                case "/districts":
-                    return GetDistricts();
-                case "/build/district":
-                    return CreateDistrict(request);
-                case "/district/policies":
-                    return GetDistrictPolicies(request);
-                case "/district/policies/set":
-                    return SetDistrictPolicy(request);
                 case "/screenshot":
                     return Screenshot(request);
                 default:
                     return BridgeResponse.Error(BridgeErrorKind.NotFound,
-                        $"unknown endpoint: {request.Path}; available: /ping /state /city/overview /city/demand " +
+                        $"unknown endpoint: {request.Path}; available: /state /city/overview /city/demand " +
                         "/city/budget /city/services /city/labor /city/statistics /city/taxes /city/taxes/set " +
                         "/city/policies /city/policies/set /city/service-budgets /city/service-budgets/set " +
                         "/prefabs /build/place /build/demolish /city/buildings /sim/wait /screenshot");
             }
-        }
-
-        private BridgeResponse GetPing()
-        {
-            GameManager manager = GameManager.instance;
-            return BridgeResponse.Json(new
-            {
-                ok = true,
-                mod = Mod.Name,
-                version = Mod.Version,
-                handlerRevision = GetType().Assembly.ManifestModule.ModuleVersionId.ToString("N"),
-                gameMode = manager != null ? manager.gameMode.ToString() : "Unknown",
-                isLoading = manager != null && manager.isGameLoading,
-            });
         }
 
         private BridgeResponse GetState()

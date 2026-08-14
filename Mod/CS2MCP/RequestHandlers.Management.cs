@@ -1,10 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Game.City;
-using Game.Prefabs;
 using Game.Simulation;
-using Game.Tools;
-using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
@@ -12,47 +9,10 @@ namespace CS2MCP
 {
     /// <summary>
     /// Management endpoints: loans (borrow/repay) and service fees
-    /// (electricity/water/education... pricing), plus a generic standalone
-    /// object listing (trees etc.) so placed decorations can be found and
-    /// demolished again.
+    /// (electricity/water/education... pricing).
     /// </summary>
     public sealed partial class RequestHandlers
     {
-        private EntityQuery m_StandaloneObjectQuery;
-        private bool m_StandaloneObjectQueryCreated;
-
-        private EntityQuery StandaloneObjectQuery
-        {
-            get
-            {
-                if (!m_StandaloneObjectQueryCreated)
-                {
-                    m_StandaloneObjectQuery = EntityManager.CreateEntityQuery(new EntityQueryDesc
-                    {
-                        All = new[]
-                        {
-                            ComponentType.ReadOnly<Game.Objects.Static>(),
-                            ComponentType.ReadOnly<Game.Objects.Transform>(),
-                            ComponentType.ReadOnly<PrefabRef>(),
-                        },
-                        Any = new[]
-                        {
-                            ComponentType.ReadOnly<Game.Objects.Tree>(),
-                            ComponentType.ReadOnly<Game.Objects.Plant>(),
-                        },
-                        None = new[]
-                        {
-                            ComponentType.ReadOnly<Game.Tools.Temp>(),
-                            ComponentType.ReadOnly<Game.Common.Deleted>(),
-                            ComponentType.ReadOnly<Game.Common.Owner>(),
-                        },
-                    });
-                    m_StandaloneObjectQueryCreated = true;
-                }
-                return m_StandaloneObjectQuery;
-            }
-        }
-
         private BridgeResponse GetLoan()
         {
             if (!TryGetCity(out _, out BridgeResponse error))
@@ -152,109 +112,20 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, $"resource '{resource}' has no adjustable fee in this city");
             }
+            ServiceFeeSystem feeSystem = World.GetOrCreateSystemManaged<ServiceFeeSystem>();
+            int3 limits = feeSystem.GetServiceFees(resource);
+            if (fee < limits.x || fee > limits.y)
+            {
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                    $"fee {fee} out of slider range [{limits.x}, {limits.y}] for {resource}");
+            }
             ServiceFeeSystem.SetFee(resource, fees, fee);
             return BridgeResponse.Json(new
             {
                 resource = resource.ToString(),
                 previousFee = previous,
                 newFee = fee,
-            });
-        }
-
-        private BridgeResponse ListObjects(BridgeRequest request)
-        {
-            if (!TryGetCity(out _, out BridgeResponse error))
-            {
-                return error;
-            }
-            request.Query.TryGetValue("query", out string search);
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
-            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
-            float2 center = new float2(x, z);
-
-            PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
-            var found = new List<(float distance, object item)>();
-            int total = 0;
-            using (NativeArray<Entity> entities = StandaloneObjectQuery.ToEntityArray(Allocator.Temp))
-            {
-                foreach (Entity entity in entities)
-                {
-                    Game.Objects.Transform transform = EntityManager.GetComponentData<Game.Objects.Transform>(entity);
-                    if (hasCenter && math.distance(transform.m_Position.xz, center) > radius)
-                    {
-                        continue;
-                    }
-                    PrefabBase prefab = prefabSystem.GetPrefab<PrefabBase>(EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab);
-                    string name = prefab != null ? prefab.name : "<unknown>";
-                    if (!string.IsNullOrEmpty(search) && name.IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        continue;
-                    }
-                    total++;
-                    float distance = hasCenter
-                        ? math.distance(transform.m_Position.xz, center)
-                        : 0f;
-                    var item = new
-                    {
-                        entity = new { index = entity.Index, version = entity.Version },
-                        prefab = name,
-                        position = new { x = transform.m_Position.x, y = transform.m_Position.y, z = transform.m_Position.z },
-                        distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
-                    };
-                    if (found.Count < limit)
-                    {
-                        found.Add((distance, item));
-                    }
-                    else if (hasCenter)
-                    {
-                        int worst = 0;
-                        for (int j = 1; j < found.Count; j++)
-                        {
-                            if (found[j].distance > found[worst].distance)
-                            {
-                                worst = j;
-                            }
-                        }
-                        if (distance < found[worst].distance)
-                        {
-                            found[worst] = (distance, item);
-                        }
-                    }
-                }
-            }
-
-            if (hasCenter && found.Count > 1)
-            {
-                for (int i = 0; i < found.Count - 1; i++)
-                {
-                    for (int j = i + 1; j < found.Count; j++)
-                    {
-                        if (found[j].distance < found[i].distance)
-                        {
-                            (found[i], found[j]) = (found[j], found[i]);
-                        }
-                    }
-                }
-            }
-            var results = new List<object>(found.Count);
-            foreach ((_, object item) in found)
-            {
-                results.Add(item);
-            }
-
-            bool truncated = total > results.Count;
-            return BridgeResponse.Json(new
-            {
-                totalMatches = total,
-                returned = results.Count,
-                limit,
-                truncated,
-                warning = truncated
-                    ? $"too many results: {total} objects match, only {results.Count} returned; shrink radius / add query filter, or paginate."
-                    : null,
-                note = "standalone trees/plants; hard max 128; sorted by distanceM when x/z given; use entity index+version with /build/demolish",
-                objects = results,
+                sliderRange = new { min = limits.x, max = limits.y, defaultValue = limits.z },
             });
         }
     }

@@ -30,12 +30,12 @@ description: How electricity, water and sewage networks work in CS2.
 ## When separate underground networks are needed
 - Off-road facilities need a pipe or cable only when the prefab declares a water, sewage or low-voltage node.
 - WaterPumpingStation01 draws SURFACE water: search near a shoreline. Do not use groundWater for this prefab.
-- Groundwater Pumping Station is a different prefab: use gridmap (groundWater) only for that building. A Water Tower does not need a water source.
+- Groundwater Pumping Station is a different prefab: use probe_cell_layer (groundWater) only for that building. A Water Tower does not need a water source.
 - Do not infer road access from a name. place_building reads BuildingFlags.RequireRoad; shoreline is PlacementFlags.Shoreline.
 
 ## Connecting manually
 - For a site you choose, pass a radius and omit rotation. Omit radius or force rotation only for an exact player pose; after an exact failure, enlarge radius and drop rotation.
-- Network connections attach at NODES. list_networks start/end coordinates are nodes. place_building x/z is the lot center, not a guaranteed utility node — offset the cable endpoint outside the footprint toward the other building.
+- Network connections attach at NODES. list_networks (kind required) start/end coordinates are nodes; list rows are inventory only (road traffic / low-voltage electricity when available / water-sewage geometry). Isolation QA is inspect_network_topology(kind=...). place_building x/z is the lot center, not a guaranteed utility node — offset the cable endpoint outside the footprint toward the other building.
 - After a high-voltage OverlapExisting, switch to High-voltage Ground Cable and shorten the segment; do not retry the same 30m-wide Line through the buildings.
 
 ## Burying underground networks

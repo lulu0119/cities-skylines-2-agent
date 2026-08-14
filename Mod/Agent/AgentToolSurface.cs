@@ -16,15 +16,15 @@ namespace CitiesSkylines2Agent.Agent
             {
                 ["construction"] = new[]
                 {
-                    "find_prefabs", "place_building", "build_road",
+                    "list_prefabs", "place_building", "build_road",
                     "list_buildings", "get_operational_area", "expand_operational_area",
                     "list_facility_upgrades", "set_facility_upgrade",
                     "list_transit_stops", "list_transit_lines",
                     "create_transit_line", "delete_transit_line",
-                    "list_zones", "zone_area", "zone_rectangle", "set_road_features",
+                    "list_zone_types", "zone_area", "zone_rectangle", "set_road_features",
                     "list_networks", "inspect_network_topology", "demolish",
-                    "terrain", "gridmap", "zoning",
-                    "list_tiles", "buy_tiles", "list_objects",
+                    "local_map", "probe_cell_layer", "count_zone_cells",
+                    "list_tiles", "buy_tiles",
                 },
                 ["finance"] = new[]
                 {
@@ -44,7 +44,7 @@ namespace CitiesSkylines2Agent.Agent
         private static readonly HashSet<string> s_CoreTools =
             new HashSet<string>(StringComparer.Ordinal)
             {
-                "ping", "game_state", "city_overview", "demand",
+                "demand",
                 "budget", "city_services", "labor", "statistics", "notifications",
                 "inspect", "wait_simulation",
             };
@@ -205,7 +205,7 @@ namespace CitiesSkylines2Agent.Agent
   ""properties"":{
     ""name"":{ ""type"": ""string"" },
     ""kind"":{ ""type"": ""string"", ""enum"": [""pin"", ""network"", ""note""] },
-    ""data"":{ ""type"": ""string"" }
+    ""data"":{ ""type"": ""string"", ""maxLength"": 4000 }
   },
   ""required"": [""name"", ""data""]
 }"),

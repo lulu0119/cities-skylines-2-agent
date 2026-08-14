@@ -24,7 +24,7 @@ _Avoid_: a new traffic tool, adding lanes to every local street, treating degree
 
 **Wait simulation**:
 The tool that advances in-game time, then restores the previous speed and pause. The player owns the clock.
-_Avoid_: forced pause as the product runtime, polling `game_state` to wait
+_Avoid_: forced pause as the product runtime, polling wait results incorrectly
 
 **Context budget**:
 How many tokens the loop treats as the window. Auto uses the named-model profile; Custom replaces that window with the player setting for every model name.
@@ -91,7 +91,7 @@ _Avoid_: Gameface `transportLines$` as the write path; a vehicle or production t
 ### Perception and authority
 
 **LOCAL_MAP**:
-Budgeted semantic-vector text from `terrain`. Spatial evidence, not construction approval.
+Budgeted semantic-vector text from `local_map`. Spatial evidence, not construction approval.
 _Avoid_: heightmap, 8×8 samples as the Agent interface
 
 **Player permission**:

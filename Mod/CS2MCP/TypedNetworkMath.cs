@@ -21,6 +21,9 @@ namespace CS2MCP
         TooCloseJunctions,
         ShortStub,
         IsolatedRoad,
+        IsolatedWater,
+        IsolatedSewage,
+        IsolatedLowVoltage,
     }
 
     /// <summary>
@@ -162,11 +165,12 @@ namespace CS2MCP
 
         public static bool TryParseKind(string raw, out TypedNetworkKinds kind, out string error)
         {
-            kind = ProductKinds;
+            kind = TypedNetworkKinds.None;
             error = null;
             if (string.IsNullOrWhiteSpace(raw))
             {
-                return true;
+                error = "kind is required; pass road, water, sewage or low_voltage";
+                return false;
             }
             switch (raw.Trim().ToLowerInvariant())
             {
@@ -190,6 +194,7 @@ namespace CS2MCP
 
         public static bool TryParseNetworkSort(
             string raw,
+            TypedNetworkKinds kind,
             bool hasCenter,
             out string sort,
             out string error)
@@ -200,24 +205,54 @@ namespace CS2MCP
             {
                 return true;
             }
-            if (sort != "distance" && sort != "traffic_volume" && sort != "congestion")
+            if (sort == "distance")
+            {
+                if (!hasCenter)
+                {
+                    error = "sort=distance requires both x and z";
+                    return false;
+                }
+                return true;
+            }
+            if (sort == "traffic_volume" || sort == "congestion")
+            {
+                if (kind != TypedNetworkKinds.Road)
+                {
+                    error = "sort=traffic_volume and sort=congestion are only valid for kind=road";
+                    return false;
+                }
+                return true;
+            }
+            if (sort == "load")
+            {
+                if (kind != TypedNetworkKinds.LowVoltage)
+                {
+                    error = "sort=load is only valid for kind=low_voltage";
+                    return false;
+                }
+                return true;
+            }
+            if (kind == TypedNetworkKinds.Road)
             {
                 error = "sort must be distance, traffic_volume or congestion";
-                return false;
             }
-            if (sort == "distance" && !hasCenter)
+            else if (kind == TypedNetworkKinds.LowVoltage)
             {
-                error = "sort=distance requires both x and z";
-                return false;
+                error = "sort must be distance or load";
             }
-            return true;
+            else
+            {
+                error = "sort must be distance for water and sewage";
+            }
+            return false;
         }
 
         public static float NetworkListRank(
             string sort,
             float distance,
             float volumeIndex,
-            float congestionIndex)
+            float congestionIndex,
+            float loadRatio = 0f)
         {
             if (sort == "traffic_volume")
             {
@@ -226,6 +261,10 @@ namespace CS2MCP
             if (sort == "congestion")
             {
                 return -congestionIndex;
+            }
+            if (sort == "load")
+            {
+                return -loadRatio;
             }
             return distance;
         }
@@ -251,28 +290,6 @@ namespace CS2MCP
             return "none";
         }
 
-        public static string[] KindNames(TypedNetworkKinds kinds)
-        {
-            var names = new List<string>(4);
-            if ((kinds & TypedNetworkKinds.Road) != 0)
-            {
-                names.Add("road");
-            }
-            if ((kinds & TypedNetworkKinds.Water) != 0)
-            {
-                names.Add("water");
-            }
-            if ((kinds & TypedNetworkKinds.Sewage) != 0)
-            {
-                names.Add("sewage");
-            }
-            if ((kinds & TypedNetworkKinds.LowVoltage) != 0)
-            {
-                names.Add("low_voltage");
-            }
-            return names.ToArray();
-        }
-
         public static string TopologyClassName(NetworkTopologyClass topologyClass)
         {
             switch (topologyClass)
@@ -287,6 +304,12 @@ namespace CS2MCP
                     return "short_stub";
                 case NetworkTopologyClass.IsolatedRoad:
                     return "isolated_road";
+                case NetworkTopologyClass.IsolatedWater:
+                    return "isolated_water";
+                case NetworkTopologyClass.IsolatedSewage:
+                    return "isolated_sewage";
+                case NetworkTopologyClass.IsolatedLowVoltage:
+                    return "isolated_low_voltage";
                 default:
                     return "unknown";
             }
@@ -502,7 +525,11 @@ namespace CS2MCP
             }
 
             Dictionary<int, int> degrees = RoadDegrees(edges);
-            AddIsolatedRoads(edges, findings);
+            AddIsolatedComponents(
+                edges,
+                TypedNetworkKinds.Road,
+                NetworkTopologyClass.IsolatedRoad,
+                findings);
             AddShortStubs(edges, degrees, findings);
             AddTooCloseJunctions(edges, degrees, findings);
             AddNearMisses(edges, degrees, findings);
@@ -510,11 +537,47 @@ namespace CS2MCP
             return findings;
         }
 
-        private static void AddIsolatedRoads(
+        /// <summary>
+        /// One finding per utility component that does not share a node with any
+        /// road edge. Snapshot must still include roads so connectivity is visible.
+        /// </summary>
+        public static List<NetworkTopologyFinding> FindUtilityIsolatedFindings(
             IReadOnlyList<TypedNetworkEdge> edges,
+            TypedNetworkKinds kind)
+        {
+            var findings = new List<NetworkTopologyFinding>();
+            NetworkTopologyClass topologyClass;
+            if (kind == TypedNetworkKinds.Water)
+            {
+                topologyClass = NetworkTopologyClass.IsolatedWater;
+            }
+            else if (kind == TypedNetworkKinds.Sewage)
+            {
+                topologyClass = NetworkTopologyClass.IsolatedSewage;
+            }
+            else if (kind == TypedNetworkKinds.LowVoltage)
+            {
+                topologyClass = NetworkTopologyClass.IsolatedLowVoltage;
+            }
+            else
+            {
+                return findings;
+            }
+            AddIsolatedComponents(edges, kind, topologyClass, findings);
+            return findings;
+        }
+
+        private static void AddIsolatedComponents(
+            IReadOnlyList<TypedNetworkEdge> edges,
+            TypedNetworkKinds kind,
+            NetworkTopologyClass topologyClass,
             List<NetworkTopologyFinding> findings)
         {
-            int[] labels = LabelComponents(edges, TypedNetworkKinds.Road);
+            if (edges == null || edges.Count == 0)
+            {
+                return;
+            }
+            int[] labels = LabelComponents(edges, kind);
             var seen = new HashSet<int>();
             for (int i = 0; i < edges.Count; i++)
             {
@@ -523,7 +586,7 @@ namespace CS2MCP
                 {
                     continue;
                 }
-                if (!ComponentIsIsolated(edges, TypedNetworkKinds.Road, componentId, labels))
+                if (!ComponentIsIsolated(edges, kind, componentId, labels))
                 {
                     continue;
                 }
@@ -541,7 +604,7 @@ namespace CS2MCP
                     }
                 }
                 findings.Add(new NetworkTopologyFinding(
-                    NetworkTopologyClass.IsolatedRoad,
+                    topologyClass,
                     first,
                     -1,
                     edges[first].StartNode,

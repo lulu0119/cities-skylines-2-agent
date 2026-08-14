@@ -39,9 +39,6 @@ namespace CS2MCP
             Idle,
             CreateDefinitions,
             Apply,
-            ProbeCreate,
-            ProbeValidate,
-            ProbeClear,
             Finish,
         }
 
@@ -49,12 +46,9 @@ namespace CS2MCP
         {
             Object,
             Net,
-            Probe,
-            SearchPlace,
             Demolish,
             Upgrade,
             ReplaceNet,
-            Area,
             OperationalArea,
             Zone,
             FacilityUpgrade,
@@ -74,7 +68,6 @@ namespace CS2MCP
         private RoadBuildMode? m_PendingRoadMode;
         private RoadPath m_PendingRoadPath;
         private CompositionFlags m_PendingUpgradeFlags;
-        private float3[] m_PendingAreaNodes;
         private Game.Areas.Node[] m_PendingOperationalAreaNodes;
         private Entity m_PendingOwner;
         private float m_PendingPreviousAreaSurface;
@@ -94,19 +87,6 @@ namespace CS2MCP
         private bool m_PendingZoneIsRectangle;
         private float2 m_PendingElevations;
         private quaternion m_PendingRotation;
-        private readonly List<float3> m_ProbePositions = new List<float3>();
-        private readonly List<float> m_ProbeRotations = new List<float>();
-        private int m_ProbeIndex;
-        private int m_ProbeTried;
-        private int m_ProbeClearFrames;
-        private float m_ProbeRotationDegrees;
-        private string m_ProbeLastError = "";
-        private string m_ProbeIntentRole;
-        private int m_ProbePreflightCandidates;
-        private int m_ProbePreflightRejected;
-        private uint m_ProbeConstructionCost;
-        private float m_ProbeDistanceFromCenter;
-        private float m_ProbeRoadClearance;
         private BridgeRequest m_PendingRequest;
         private ToolBaseSystem m_PreviousTool;
         private bool m_AutoConnectQueued;
@@ -139,8 +119,7 @@ namespace CS2MCP
             }
             CompletePending(BridgeResponse.Error(BridgeErrorKind.Timeout,
                 "build operation aborted: it did not finish within the bridge watchdog window; " +
-                "stage=" + m_Stage + " probeIndex=" + m_ProbeIndex + "/" + m_ProbePositions.Count +
-                " tried=" + m_ProbeTried + " lastError=" + m_ProbeLastError));
+                "stage=" + m_Stage));
             applyMode = ApplyMode.None;
             Deactivate();
         }
@@ -197,125 +176,6 @@ namespace CS2MCP
                 autoConnectEnd,
                 autoConnectTargetEdge,
                 autoConnectTargetSplit);
-            Activate();
-            return true;
-        }
-
-        /// <summary>
-        /// Must be called on the simulation thread. Probes candidate object
-        /// placements through the same validation pipeline (CreateDefinitions +
-        /// GetAllowApply) without committing any of them, then completes the
-        /// request with the first valid position found.
-        /// </summary>
-        public bool TryQueueProbe(
-            Entity prefabEntity,
-            PrefabBase prefab,
-            IReadOnlyList<float3> positions,
-            float rotationDegrees,
-            BridgeRequest request)
-        {
-            if (m_Stage != Stage.Idle)
-            {
-                return false;
-            }
-            m_PendingKind = OperationKind.Probe;
-            m_PendingPrefabEntity = prefabEntity;
-            m_PendingPrefab = prefab;
-            m_ProbePositions.Clear();
-            m_ProbePositions.AddRange(positions);
-            m_ProbeRotations.Clear();
-            for (int i = 0; i < positions.Count; i++)
-            {
-                m_ProbeRotations.Add(rotationDegrees);
-            }
-            m_ProbeIndex = 0;
-            m_ProbeTried = 0;
-            m_ProbeRotationDegrees = rotationDegrees;
-            m_ProbeLastError = "";
-            m_PendingRequest = request;
-            Activate();
-            return true;
-        }
-
-        /// <summary>
-        /// Queues the single best infrastructure candidate for native preview.
-        /// Candidate generation and ranking happen before this seam; keeping the
-        /// native transaction singular avoids the rejected-preview tool wedge.
-        /// </summary>
-        public sealed class InfrastructureCandidatePlan
-        {
-            public float3 Position;
-            public float RotationDegrees;
-            public string Role;
-            public int GeneratedCandidates;
-            public int PreflightRejected;
-            public uint ConstructionCost;
-            public float DistanceFromCenter;
-            public float RoadClearance;
-        }
-
-        public bool TryQueueInfrastructureCandidate(
-            Entity prefabEntity,
-            PrefabBase prefab,
-            InfrastructureCandidatePlan plan,
-            BridgeRequest request)
-        {
-            if (plan == null)
-            {
-                return false;
-            }
-            if (!TryQueueProbe(
-                    prefabEntity,
-                    prefab,
-                    new[] { plan.Position },
-                    plan.RotationDegrees,
-                    request))
-            {
-                return false;
-            }
-            m_ProbeIntentRole = plan.Role;
-            m_ProbePreflightCandidates = plan.GeneratedCandidates;
-            m_ProbePreflightRejected = plan.PreflightRejected;
-            m_ProbeConstructionCost = plan.ConstructionCost;
-            m_ProbeDistanceFromCenter = plan.DistanceFromCenter;
-            m_ProbeRoadClearance = plan.RoadClearance;
-            return true;
-        }
-
-        /// <summary>
-        /// Must be called on the simulation thread. Finds the first valid,
-        /// road-facing position among the candidates (each with its own
-        /// rotation), then commits the placement in the same operation.
-        /// </summary>
-        public bool TryQueueSearchPlace(
-            Entity prefabEntity,
-            PrefabBase prefab,
-            IReadOnlyList<float3> positions,
-            IReadOnlyList<float> rotations,
-            BridgeRequest request)
-        {
-            if (m_Stage != Stage.Idle)
-            {
-                return false;
-            }
-            if (positions.Count == 0 || positions.Count != rotations.Count)
-            {
-                return false;
-            }
-            m_PendingKind = OperationKind.SearchPlace;
-            m_PendingPrefabEntity = prefabEntity;
-            m_PendingPrefab = prefab;
-            m_ProbePositions.Clear();
-            m_ProbePositions.AddRange(positions);
-            m_ProbeRotations.Clear();
-            m_ProbeRotations.AddRange(rotations);
-            m_ProbeIndex = 0;
-            m_ProbeTried = 0;
-            m_ProbeLastError = "";
-            m_PendingRequest = request;
-            // This legacy multi-candidate seam has no candidate-specific
-            // topology plan. Do not queue a coordinate-only connector.
-            ClearAutoConnect();
             Activate();
             return true;
         }
@@ -460,22 +320,6 @@ namespace CS2MCP
             m_PendingKind = OperationKind.Demolish;
             m_PendingTarget = target;
             m_PendingLabel = label;
-            m_PendingRequest = request;
-            Activate();
-            return true;
-        }
-
-        /// <summary>Must be called on the simulation thread.</summary>
-        public bool TryQueueArea(Entity prefabEntity, PrefabBase prefab, float3[] polygonNodes, BridgeRequest request)
-        {
-            if (m_Stage != Stage.Idle)
-            {
-                return false;
-            }
-            m_PendingKind = OperationKind.Area;
-            m_PendingPrefabEntity = prefabEntity;
-            m_PendingPrefab = prefab;
-            m_PendingAreaNodes = polygonNodes;
             m_PendingRequest = request;
             Activate();
             return true;
@@ -637,18 +481,6 @@ namespace CS2MCP
                                 }
                                 CreateRoadDefinitions();
                                 break;
-                            case OperationKind.Probe:
-                            case OperationKind.SearchPlace:
-                                ApplyProbeCandidate();
-                                // The game may switch the active tool away after a
-                                // rejected preview; re-assert ownership so the probe
-                                // state machine keeps advancing between candidates.
-                                if (m_ToolSystem.activeTool != this)
-                                {
-                                    m_ToolSystem.activeTool = this;
-                                }
-                                CreatePlacementDefinitions();
-                                break;
                             case OperationKind.Demolish:
                                 CreateModifyDefinitions(CreationFlags.Delete, default);
                                 break;
@@ -657,9 +489,6 @@ namespace CS2MCP
                                 break;
                             case OperationKind.ReplaceNet:
                                 CreateRoadReplacementDefinition();
-                                break;
-                            case OperationKind.Area:
-                                CreateAreaDefinitions();
                                 break;
                             case OperationKind.OperationalArea:
                                 CreateOperationalAreaDefinition();
@@ -678,9 +507,6 @@ namespace CS2MCP
                         {
                             m_Stage = m_PendingKind == OperationKind.Zone
                                 ? Stage.Finish
-                                : m_PendingKind == OperationKind.Probe
-                                || m_PendingKind == OperationKind.SearchPlace
-                                ? Stage.ProbeValidate
                                 : Stage.Apply;
                         }
                         break;
@@ -747,63 +573,6 @@ namespace CS2MCP
                         }
                         break;
 
-                    case Stage.ProbeValidate:
-                        m_ProbeTried++;
-                        bool allowApply = GetAllowApply();
-                        string validationBlock = allowApply && PrefabRequiresRoad(m_PendingPrefabEntity)
-                            ? DescribeValidationBlock()
-                            : null;
-                        bool roadBlocked = validationBlock != null &&
-                            validationBlock.IndexOf("NoRoadAccess", StringComparison.Ordinal) >= 0;
-                        if (allowApply && !roadBlocked)
-                        {
-                            if (m_PendingKind == OperationKind.SearchPlace)
-                            {
-                                // Valid and road-facing: commit this candidate in
-                                // the same operation (one-step find+place).
-                                applyMode = ApplyMode.Apply;
-                                m_Stage = Stage.Apply;
-                            }
-                            else
-                            {
-                                applyMode = ApplyMode.Clear;
-                                CompletePending(BuildProbeSuccess());
-                                m_Stage = Stage.Finish;
-                            }
-                        }
-                        else
-                        {
-                            m_ProbeLastError = validationBlock ?? DescribeValidationBlock();
-                            applyMode = ApplyMode.Clear;
-                            m_ProbeIndex++;
-                            if (m_ProbeIndex < m_ProbePositions.Count)
-                            {
-                                m_ProbeClearFrames = 4;
-                                m_Stage = Stage.ProbeClear;
-                            }
-                            else
-                            {
-                                CompletePending(BridgeResponse.Error(BridgeErrorKind.NotFound, DescribeProbeFailure()));
-                                m_Stage = Stage.Finish;
-                            }
-                        }
-                        break;
-
-                    case Stage.ProbeClear:
-                        // Give the game several frames to actually clear the
-                        // rejected preview before probing the next candidate;
-                        // switching immediately wedges the tool pipeline.
-                        applyMode = ApplyMode.Clear;
-                        if (m_ProbeClearFrames > 0)
-                        {
-                            m_ProbeClearFrames--;
-                        }
-                        else
-                        {
-                            m_Stage = Stage.ProbeCreate;
-                        }
-                        break;
-
                     case Stage.Finish:
                         applyMode = ApplyMode.None;
                         Deactivate();
@@ -822,19 +591,6 @@ namespace CS2MCP
                 Deactivate();
             }
             return inputDeps;
-        }
-
-        private void ApplyProbeCandidate()
-        {
-            if (m_ProbeIndex < 0 || m_ProbeIndex >= m_ProbePositions.Count)
-            {
-                return;
-            }
-            m_PendingPosition = m_ProbePositions[m_ProbeIndex];
-            float degrees = m_ProbeIndex < m_ProbeRotations.Count
-                ? m_ProbeRotations[m_ProbeIndex]
-                : m_ProbeRotationDegrees;
-            m_PendingRotation = quaternion.RotateY(math.radians(degrees));
         }
 
         private bool TryRefreshAutoConnectTarget()
@@ -1096,14 +852,6 @@ namespace CS2MCP
                         widthM,
                         note = "committed this frame; verify via list_networks or /screenshot",
                     });
-                case OperationKind.Area:
-                    return BridgeResponse.Json(new
-                    {
-                        created = true,
-                        prefab = m_PendingPrefab != null ? m_PendingPrefab.name : null,
-                        nodes = m_PendingAreaNodes != null ? m_PendingAreaNodes.Length : 0,
-                        note = "area committed this frame; list districts via /districts",
-                    });
                 case OperationKind.OperationalArea:
                     return BridgeResponse.Json(new
                     {
@@ -1175,103 +923,6 @@ namespace CS2MCP
                 return "grade-separated";
             }
             return null;
-        }
-
-        private BridgeResponse BuildProbeSuccess()
-        {
-            bool requiresRoad = PrefabRequiresRoad(m_PendingPrefabEntity);
-            var payload = new Dictionary<string, object>
-            {
-                ["found"] = true,
-                ["prefab"] = m_PendingPrefab != null ? m_PendingPrefab.name : null,
-                ["position"] = new
-                {
-                    x = m_PendingPosition.x,
-                    y = m_PendingPosition.y,
-                    z = m_PendingPosition.z,
-                },
-                ["rotation"] = m_ProbeRotationDegrees,
-                ["attemptsTried"] = m_ProbeTried,
-                ["note"] = requiresRoad
-                    ? "validated by the game's placement validation WITH road access; call place_building with these exact coordinates"
-                    : "validated by the game's placement validation; call place_building with these exact coordinates",
-            };
-            if (requiresRoad)
-            {
-                payload["roadAccess"] = true;
-            }
-            if (!string.IsNullOrEmpty(m_ProbeIntentRole))
-            {
-                bool requiresShoreline = PrefabRequiresShoreline(m_PendingPrefabEntity);
-                payload["role"] = m_ProbeIntentRole;
-                payload["constructionCost"] = m_ProbeConstructionCost;
-                payload["generatedCandidates"] = m_ProbePreflightCandidates;
-                payload["preflightRejected"] = m_ProbePreflightRejected;
-                var evidence = new Dictionary<string, object>
-                {
-                    ["typedUnlockedPrefab"] = true,
-                    ["ownedTile"] = true,
-                    ["footprintClear"] = true,
-                    ["shoreline"] = requiresShoreline ? "required-and-present" : "not-required",
-                    ["distanceFromSearchCenterM"] = (float)Math.Round(m_ProbeDistanceFromCenter, 1),
-                    ["nativeValidation"] = true,
-                };
-                if (requiresRoad)
-                {
-                    evidence["roadFacing"] = true;
-                    evidence["roadClearanceM"] = (float)Math.Round(m_ProbeRoadClearance, 1);
-                }
-                payload["evidence"] = evidence;
-                payload["note"] = "one deterministic, native-validated candidate; call place_building with the returned prefab/position/rotation to commit";
-            }
-            return BridgeResponse.Json(payload);
-        }
-
-        private bool PrefabRequiresRoad(Entity prefabEntity)
-        {
-            if (prefabEntity == Entity.Null
-                || !EntityManager.HasComponent<BuildingData>(prefabEntity))
-            {
-                return false;
-            }
-            BuildingData building = EntityManager.GetComponentData<BuildingData>(prefabEntity);
-            return (building.m_Flags & BuildingFlags.RequireRoad) != 0;
-        }
-
-        private string DescribeProbeFailure()
-        {
-            string lastError = string.IsNullOrWhiteSpace(m_ProbeLastError)
-                ? "unknown"
-                : m_ProbeLastError;
-            string hint;
-            if (PrefabRequiresShoreline(m_PendingPrefabEntity))
-            {
-                hint = PrefabRequiresRoad(m_PendingPrefabEntity)
-                    ? "Try a center near a shoreline with road frontage."
-                    : "Try a center nearer a wet/dry shoreline transition.";
-            }
-            else if (PrefabRequiresRoad(m_PendingPrefabEntity))
-            {
-                hint = "Try a larger radius, a different rotation, or a center closer to a road.";
-            }
-            else
-            {
-                hint = "Try a larger radius or a different center.";
-            }
-            return "no valid placement found near the requested position: tried " +
-                   m_ProbeTried + " candidate(s). Last reason: " + lastError + " " + hint;
-        }
-
-        private bool PrefabRequiresShoreline(Entity prefabEntity)
-        {
-            if (prefabEntity == Entity.Null
-                || !EntityManager.HasComponent<PlaceableObjectData>(prefabEntity))
-            {
-                return false;
-            }
-            PlaceableObjectData placeable =
-                EntityManager.GetComponentData<PlaceableObjectData>(prefabEntity);
-            return (placeable.m_Flags & Game.Objects.PlacementFlags.Shoreline) != 0;
         }
 
         private void CompletePending(BridgeResponse response)
@@ -1441,18 +1092,6 @@ namespace CS2MCP
             m_PendingOperationalAreaNodes = null;
             m_PendingOperationalAreaKind = null;
             m_PendingOperationalResource = null;
-            m_ProbePositions.Clear();
-            m_ProbeRotations.Clear();
-            m_ProbeIndex = 0;
-            m_ProbeTried = 0;
-            m_ProbeClearFrames = 0;
-            m_ProbeLastError = "";
-            m_ProbeIntentRole = null;
-            m_ProbePreflightCandidates = 0;
-            m_ProbePreflightRejected = 0;
-            m_ProbeConstructionCost = 0;
-            m_ProbeDistanceFromCenter = 0f;
-            m_ProbeRoadClearance = 0f;
             m_PendingRoadMode = null;
             m_PendingRoadPath = default;
             m_AutoConnectQueued = false;
@@ -1586,29 +1225,6 @@ namespace CS2MCP
             course.m_EndPosition.m_ParentMesh = -1;
             course.m_EndPosition.m_Flags = CoursePosFlags.IsLast;
             commandBuffer.AddComponent(definitionEntity, course);
-        }
-
-        /// <summary>
-        /// Creates an area definition (district/surface): CreationDefinition +
-        /// polygon node buffer; elevation float.MinValue snaps nodes to terrain
-        /// (mirrors the game's area definition flow).
-        /// </summary>
-        private void CreateAreaDefinitions()
-        {
-            EntityCommandBuffer commandBuffer = m_ToolOutputBarrier.CreateCommandBuffer();
-            Entity e = commandBuffer.CreateEntity();
-            Unity.Mathematics.Random random = RandomSeed.Next().GetRandom(0);
-            commandBuffer.AddComponent(e, new CreationDefinition
-            {
-                m_Prefab = m_PendingPrefabEntity,
-                m_RandomSeed = random.NextInt(),
-            });
-            commandBuffer.AddComponent(e, default(Updated));
-            DynamicBuffer<Game.Areas.Node> nodes = commandBuffer.AddBuffer<Game.Areas.Node>(e);
-            foreach (float3 position in m_PendingAreaNodes)
-            {
-                nodes.Add(new Game.Areas.Node(position, float.MinValue));
-            }
         }
 
         /// <summary>

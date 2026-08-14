@@ -160,9 +160,18 @@ namespace CitiesSkylines2Agent.Agent
             using (JsonDocument document = JsonDocument.Parse(argumentsJson))
             {
                 JsonElement root = document.RootElement;
+                string data = root.TryGetProperty("data", out JsonElement dataElement)
+                    ? dataElement.GetRawText()
+                    : "{}";
+                if (data.Length > ContextBlockStore.MaxDataCharacters)
+                {
+                    return Error(
+                        $"context block data exceeds {ContextBlockStore.MaxDataCharacters} characters");
+                }
                 ContextBlock block = ContextBlockStore.Add(
-                    GetString(root, "name", ""), GetString(root, "kind", "note"),
-                    root.TryGetProperty("data", out JsonElement data) ? data.GetRawText() : "{}");
+                    GetString(root, "name", ""),
+                    GetString(root, "kind", "note"),
+                    data);
                 m_Emit(new AgentUiEvent { Kind = "status", Text = "Added context block: " + block.Name });
                 return Ok(JsonSerializer.Serialize(new { id = block.Id, name = block.Name }));
             }

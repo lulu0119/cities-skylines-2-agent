@@ -1,0 +1,24 @@
+---
+description: Keep docs/open-work.md current when finishing or deferring work
+alwaysApply: true
+---
+
+# Open-work inventory
+
+`docs/open-work.md` is the only current unfinished inventory. Follow [docs/AGENTS.md](docs/AGENTS.md).
+
+## Before claiming done
+
+If the change adds, finishes, defers, or live-accepts unfinished work, edit `docs/open-work.md` in the **same change** (or same session before done). Do not leave the inventory for the user to remember.
+
+## At the start of unfinished work
+
+When a change will leave **not implemented** or **awaiting live acceptance** items, put an `open-work` todo on the list immediately and keep it until the file is updated.
+
+## How to edit
+
+- **Not implemented**: code still missing.
+- **Awaiting live acceptance**: code exists; new city; previous save is not the gate.
+- When implemented, **delete** the not-implemented bullet — do not move it to a “please accept” list.
+- Delete passed live-acceptance gates; keep or re-add failed / never-triggered ones.
+- Do not grow this file into a changelog, scoreboard, or ops note.

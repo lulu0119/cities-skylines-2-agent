@@ -15,9 +15,8 @@ using UnityEngine;
 namespace CS2MCP
 {
     /// <summary>
-    /// Perception endpoints: camera control (for AI-directed screenshots),
-    /// terrain/water export, cell-map grids (land value, pollution, ground
-    /// water), zoning readback, warning-icon listing and entity inspection.
+    /// Perception endpoints: camera, local_map, probe_cell_layer, zoning
+    /// readback, notifications, and entity inspection.
     /// </summary>
     public sealed partial class RequestHandlers
     {
@@ -134,75 +133,13 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("format", out string format);
-            if (!string.Equals(format, "samples", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(format)
+                && string.Equals(format, "samples", StringComparison.OrdinalIgnoreCase))
             {
-                return GetCompactTerrain(request, xMin, zMin, xMax, zMax);
+                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
+                    "format=samples is not supported; omit format for the compact local_map response");
             }
-
-            TerrainSystem terrain = World.GetOrCreateSystemManaged<TerrainSystem>();
-            TerrainHeightData heightData = terrain.GetHeightData();
-            WaterSystem water = World.GetOrCreateSystemManaged<WaterSystem>();
-            WaterSurfaceData<SurfaceWater> surfaceData = water.GetSurfaceData(out JobHandle waterDeps);
-            waterDeps.Complete();
-
-            var samples = new List<object>(kAreaSampleGrid * kAreaSampleGrid);
-            float heightMin = float.PositiveInfinity;
-            float heightMax = float.NegativeInfinity;
-            double heightSum = 0;
-            int waterCount = 0;
-
-            for (int row = 0; row < kAreaSampleGrid; row++)
-            {
-                float tz = (row + 0.5f) / kAreaSampleGrid;
-                float worldZ = math.lerp(zMin, zMax, tz);
-                for (int col = 0; col < kAreaSampleGrid; col++)
-                {
-                    float tx = (col + 0.5f) / kAreaSampleGrid;
-                    float worldX = math.lerp(xMin, xMax, tx);
-                    var samplePosition = new float3(worldX, 0f, worldZ);
-                    float height = (float)Math.Round(TerrainUtils.SampleHeight(ref heightData, samplePosition), 1);
-                    float depth = WaterUtils.SampleDepth(ref surfaceData, samplePosition);
-                    bool hasWater = depth > 0.05f;
-                    if (hasWater)
-                    {
-                        waterCount++;
-                        depth = (float)Math.Round(depth, 1);
-                    }
-                    else
-                    {
-                        depth = 0f;
-                    }
-
-                    heightMin = math.min(heightMin, height);
-                    heightMax = math.max(heightMax, height);
-                    heightSum += height;
-                    samples.Add(new
-                    {
-                        x = (float)Math.Round(worldX, 1),
-                        z = (float)Math.Round(worldZ, 1),
-                        height,
-                        water = hasWater,
-                        waterDepth = depth,
-                    });
-                }
-            }
-
-            int n = samples.Count;
-            return BridgeResponse.Json(new
-            {
-                bounds = new { xMin, zMin, xMax, zMax },
-                sampleGrid = kAreaSampleGrid,
-                sampleCount = n,
-                height = new
-                {
-                    min = heightMin,
-                    max = heightMax,
-                    mean = (float)Math.Round(heightSum / n, 1),
-                },
-                waterCoverage = (float)Math.Round(waterCount / (float)n, 3),
-                note = "fixed 8x8 uniform samples inside bounds (row-major, z varies slowest); no full heightmap arrays",
-                samples,
-            });
+            return GetCompactTerrain(request, xMin, zMin, xMax, zMax);
         }
 
         private BridgeResponse GetCompactTerrain(
@@ -760,8 +697,17 @@ namespace CS2MCP
                 return error;
             }
 
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 128) : 128;
+            const int defaultLimit = 16;
+            const int hardMax = 64;
+            int limit = request.TryGetInt("limit", out int rawLimit)
+                ? math.clamp(rawLimit, 1, hardMax)
+                : defaultLimit;
             string typeFilter = request.Query.TryGetValue("type", out string rawType) ? rawType : null;
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
+            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
 
             var counts = new Dictionary<string, int>();
@@ -779,6 +725,11 @@ namespace CS2MCP
                     counts[type] = counts.TryGetValue(type, out int c) ? c + 1 : 1;
                     if (!string.IsNullOrEmpty(typeFilter)
                         && type.IndexOf(typeFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+                    if (hasCenter
+                        && math.distance(new float2(icon.m_Location.x, icon.m_Location.z), center) > radius)
                     {
                         continue;
                     }
@@ -828,10 +779,10 @@ namespace CS2MCP
                 filterType = typeFilter,
                 truncated = matched > items.Count,
                 warning = matched > items.Count
-                    ? $"too many icons: {matched} notifications match, only {items.Count} details returned; countsByType is still complete. Raise limit (max 128) or narrow the type filter."
+                    ? $"too many icons: {matched} notifications match, only {items.Count} details returned; countsByType/topIssues stay citywide. Raise limit (max 64) or add x/z/radius."
                     : null,
                 countsByType = counts,
-                note = "in-world warning icons (no electricity/water, garbage piling, abandoned...); hard max 128; total/countsByType are always complete, matched respects the type filter; use target with /entity/inspect",
+                note = "countsByType and topIssues are always citywide; limit and optional x/z/radius only filter detail items; hard max 64 on details",
                 notifications = items,
             });
         }

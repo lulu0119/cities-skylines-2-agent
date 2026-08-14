@@ -146,7 +146,7 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
                     "provide ?type=<StatisticType>, e.g. Population, Money, Income, Expense, Unemployed, CrimeRate; " +
-                    "optional &parameter=<int> and &samples=<1-512>");
+                    "optional &parameter=<int> and &samples=<1-64>");
             }
             if (!Enum.TryParse(typeName, ignoreCase: true, out StatisticType type)
                 || type == StatisticType.Invalid || type == StatisticType.Count)
@@ -157,8 +157,8 @@ namespace CS2MCP
 
             request.TryGetInt("parameter", out int parameter);
             int samples = request.TryGetInt("samples", out int requested)
-                ? Math.Max(1, Math.Min(requested, 512))
-                : 64;
+                ? Math.Max(1, Math.Min(requested, 64))
+                : 16;
 
             CityStatisticsSystem statistics = World.GetOrCreateSystemManaged<CityStatisticsSystem>();
             long current = statistics.GetStatisticValueLong(type, parameter);

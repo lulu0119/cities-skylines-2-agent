@@ -25,7 +25,8 @@ namespace CS2MCP
     /// </summary>
     public sealed partial class RequestHandlers
     {
-        private const int TransitListHardMax = 128;
+        private const int TransitListDefaultLimit = 16;
+        private const int TransitListHardMax = 64;
         private const int TransitLineMaxStops = 16;
 
         private EntityQuery m_TransitStopQuery;
@@ -117,10 +118,12 @@ namespace CS2MCP
 
             int limit = request.TryGetInt("limit", out int rawLimit)
                 ? math.clamp(rawLimit, 1, TransitListHardMax)
-                : TransitListHardMax;
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
+                : TransitListDefaultLimit;
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
-            float2 center = new float2(x, z);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var found = new List<(float distance, object item)>();
@@ -213,7 +216,12 @@ namespace CS2MCP
 
             int limit = request.TryGetInt("limit", out int rawLimit)
                 ? math.clamp(rawLimit, 1, TransitListHardMax)
-                : TransitListHardMax;
+                : TransitListDefaultLimit;
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
+            float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             NativeArray<UITransportLineData> sorted =
                 TransportUIUtils.GetSortedLines(TransitLineQuery, EntityManager, prefabSystem);
@@ -225,6 +233,10 @@ namespace CS2MCP
                 {
                     UITransportLineData line = sorted[i];
                     if (typeFilter.HasValue && line.type != typeFilter.Value)
+                    {
+                        continue;
+                    }
+                    if (hasCenter && !TransitLineIntersectsRadius(line.entity, center, radius))
                     {
                         continue;
                     }
@@ -252,7 +264,7 @@ namespace CS2MCP
                     total,
                     truncated = total > lines.Count,
                     lines,
-                    note = "read-only snapshot; vehicles and production stay native. delete_transit_line removes a line.",
+                    note = "read-only snapshot; optional x/z/radius keeps lines with a stop inside the range; vehicles and production stay native",
                 });
             }
             finally
@@ -600,6 +612,31 @@ namespace CS2MCP
         private static string FormatTransportType(TransportType type)
         {
             return Enum.GetName(typeof(TransportType), type)?.ToLowerInvariant() ?? type.ToString();
+        }
+
+        private bool TransitLineIntersectsRadius(Entity line, float2 center, float radius)
+        {
+            if (!EntityManager.HasBuffer<RouteWaypoint>(line))
+            {
+                return false;
+            }
+            DynamicBuffer<RouteWaypoint> waypoints =
+                EntityManager.GetBuffer<RouteWaypoint>(line, isReadOnly: true);
+            float radiusSq = radius * radius;
+            foreach (RouteWaypoint waypoint in waypoints)
+            {
+                if (!EntityManager.Exists(waypoint.m_Waypoint)
+                    || !EntityManager.HasComponent<Position>(waypoint.m_Waypoint))
+                {
+                    continue;
+                }
+                float3 position = EntityManager.GetComponentData<Position>(waypoint.m_Waypoint).m_Position;
+                if (math.distancesq(position.xz, center) <= radiusSq)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static void AddBoundedItem(

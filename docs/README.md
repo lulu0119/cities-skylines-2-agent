@@ -43,6 +43,7 @@ Vocabulary: [`CONTEXT.md`](../CONTEXT.md). Current open work: [`open-work.md`](.
 
 | Doc | Topic |
 | --- | --- |
+| [2026-08-15-windows-game-dll-handoff.md](./ops/2026-08-15-windows-game-dll-handoff.md) | Windows `Game.dll` ILSpy paste-back (LV electricity + optional 8-step cap) |
 | [2026-08-12-tool-surface-audit-and-open-work.md](./ops/2026-08-12-tool-surface-audit-and-open-work.md) | Frozen audit (not current open work) |
 | [2026-08-10-gameplay-capability-backlog.md](./ops/2026-08-10-gameplay-capability-backlog.md) | Superseded post-10k backlog |
 | [2026-08-10-placement-utilities-handoff.md](./ops/2026-08-10-placement-utilities-handoff.md) | 10k handoff evidence |

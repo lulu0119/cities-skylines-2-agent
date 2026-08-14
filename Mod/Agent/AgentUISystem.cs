@@ -35,8 +35,6 @@ namespace CitiesSkylines2Agent.Agent
         {
             base.OnCreate();
 
-            Subscribe(AgentLoop.EnsureCreated());
-
             m_StateBinding = new ValueBinding<string>(
                 Group,
                 "state",
@@ -64,6 +62,7 @@ namespace CitiesSkylines2Agent.Agent
             base.OnGameLoadingComplete(purpose, mode);
             if (mode != GameMode.Game)
             {
+                LeaveGameSession();
                 return;
             }
 
@@ -77,17 +76,42 @@ namespace CitiesSkylines2Agent.Agent
             PushState();
         }
 
+        private void LeaveGameSession()
+        {
+            Unsubscribe();
+            AgentLoop.LeaveCitySession();
+            ContextBlockStore.Clear();
+            while (m_Events.TryDequeue(out _)) { }
+            m_DeferredEvent = null;
+            m_AutoStartSent = false;
+            Interlocked.Exchange(ref m_StateDirty, 1);
+            PushState();
+        }
+
+        private static bool IsInLoadedCity()
+        {
+            GameManager manager = GameManager.instance;
+            return manager != null &&
+                   manager.gameMode == GameMode.Game &&
+                   !manager.isGameLoading;
+        }
+
         private void OnSend(string text)
         {
-            if (!string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) || !IsInLoadedCity())
             {
-                AgentLoop.EnsureCreated().Send(text);
+                return;
             }
+            AgentLoop.Instance?.Send(text);
         }
 
         private void OnInterrupt()
         {
-            AgentLoop.EnsureCreated().Interrupt();
+            if (!IsInLoadedCity())
+            {
+                return;
+            }
+            AgentLoop.Instance?.Interrupt();
         }
 
         private void Subscribe(AgentLoop loop)
@@ -170,8 +194,13 @@ namespace CitiesSkylines2Agent.Agent
             {
                 return;
             }
+            AgentLoop loop = AgentLoop.Instance;
+            if (loop == null)
+            {
+                return;
+            }
             m_AutoStartSent = true;
-            AgentLoop.EnsureCreated().Send(Setting.StaticStartupPrompt);
+            loop.Send(Setting.StaticStartupPrompt);
         }
 
         private bool TryDequeueForUi(out AgentUiEvent agentEvent)

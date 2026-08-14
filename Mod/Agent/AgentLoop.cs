@@ -7,6 +7,8 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Channels;
+using Game;
+using Game.SceneFlow;
 using Microsoft.Extensions.AI;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
@@ -60,13 +62,13 @@ namespace CitiesSkylines2Agent.Agent
         private const string SystemPrompt = @"You are the in-game AI mayor for Cities: Skylines 2.
 
 Working style:
-1. Observe briefly first (game_state / city_overview / demand). The injected problem ledger is the source of truth for city problems; call notifications only for raw icon locations. Then act. Do not repeat the same read tool more than twice without a write.
+1. Observe briefly first via demand and the injected problem ledger. The ledger is the source of truth for city problems; call notifications only for raw icon locations. The first city snapshot (overview fields) comes from wait_simulation. Then act. Do not repeat the same read tool more than twice without a write.
 2. Fix problems that block city growth FIRST: sewage, water, electricity, garbage, road access. Do not zone or expand while a red problem is unresolved.
-3. For infrastructure or service buildings without a player-selected prefab, use find_prefabs with a typed role, choose one unlocked standalone prefab, then call place_building once. For every site you choose yourself, include a reasonable radius and omit rotation so placement can resolve clearance, frontage and orientation. Omit radius or set rotation only when the player or a context block explicitly requires that exact pose. If exact placement fails, retry with a larger radius and no rotation.
+3. For infrastructure or service buildings without a player-selected prefab, use list_prefabs with a typed role, choose one unlocked standalone prefab, then call place_building once. For every site you choose yourself, include a reasonable radius and omit rotation so placement can resolve clearance, frontage and orientation. Omit radius or set rotation only when the player or a context block explicitly requires that exact pose. If exact placement fails, retry with a larger radius and no rotation.
 4. Use zone_area for regular residential / commercial / industrial / office growth. Use place_building only for standalone buildings (service buildings, unique/landmark/signature buildings, special production or extraction facilities).
 5. place_building owns nearby search and native validation in one call. Placement follows prefab data: only RequireRoad buildings need road frontage, shoreline buildings snap to the wet/dry boundary, and off-road water/sewage/low-voltage nodes receive a matching pipe or cable. High-voltage plants are not auto-wired; read utility-networks.
 6. build_road: use short segments (50-250m) on owned tiles near existing nodes. For roads, omit mode and e1/e2 for the default ground mode; it samples the route at roughly 4m or finer intervals for water and local grade, rejecting detected water crossings or grades above 10% (or a stricter prefab limit). Use mode=grade-separated only for an intentional bridge/elevated/tunnel segment; provide both e1/e2 with at least one nonzero. Never pass mode for pipes, cables or other utility networks; their normal burial behavior is separate. If a call fails, change the route instead of repeating the same call.
-7. The simulation clock belongs to the player. Use wait_simulation to advance in-game time: one call advances exactly 1 in-game hour by default (high speed, roughly 20-30 real seconds), then restores the previous speed/pause state. Buildings take game hours to construct, level up and attract residents, so after zoning/placing call wait_simulation once or twice; never poll game_state in a loop.
+7. The simulation clock belongs to the player. Use wait_simulation to advance in-game time: one call advances exactly 1 in-game hour by default (high speed, roughly 20-30 real seconds), then restores the previous speed/pause state. Buildings take game hours to construct, level up and attract residents, so after zoning/placing call wait_simulation once or twice. Never poll; use wait_simulation.
 8. Before demolition, identify the exact target with list_buildings or list_networks. If the demolition tool is available, the player has already granted permission; do not ask for a modal confirmation.
 9. Ask for a player decision only when the desired outcome itself is ambiguous, not for permissions already represented by the available tool surface.
 10. End every turn with a concise summary (what was done, results, next steps).
@@ -105,16 +107,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         public static AgentLoop Instance { get; private set; }
 
-        /// <summary>Idempotent factory so Mod.OnLoad and the UI system agree on one instance.</summary>
-        public static AgentLoop EnsureCreated()
-        {
-            if (Instance == null)
-            {
-                new AgentLoop(); // constructor sets Instance
-            }
-            return Instance;
-        }
-
         /// <summary>
         /// Starts a clean session for a newly loaded city. The previous loop is
         /// cancelled and disposed so pending work, history, the problem ledger
@@ -126,6 +118,20 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             var current = new AgentLoop();
             previous?.Dispose();
             return current;
+        }
+
+        /// <summary>Disposes the current city session and clears <see cref="Instance"/>.</summary>
+        public static void LeaveCitySession()
+        {
+            Instance?.Dispose();
+        }
+
+        private static bool IsInLoadedCity()
+        {
+            GameManager manager = GameManager.instance;
+            return manager != null &&
+                   manager.gameMode == GameMode.Game &&
+                   !manager.isGameLoading;
         }
 
         private readonly Channel<AgentInput> m_Pending = Channel.CreateUnbounded<AgentInput>();
@@ -177,6 +183,15 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         /// <summary>Queue a user message; injected after the current tool round.</summary>
         public void Send(string text)
         {
+            if (!IsInLoadedCity())
+            {
+                Emit(new AgentUiEvent
+                {
+                    Kind = "error",
+                    Text = "仅在已加载的城市中可用，无法发送。",
+                });
+                return;
+            }
             Interlocked.Exchange(ref m_SuppressAutoContinue, 0);
             m_Pending.Writer.TryWrite(new AgentInput { Text = text ?? "" });
             m_Observability.InterleavedQueued(text ?? "");
@@ -186,6 +201,10 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         public void Interrupt()
         {
+            if (!IsInLoadedCity())
+            {
+                return;
+            }
             Interlocked.Exchange(ref m_SuppressAutoContinue, 1);
             m_TurnCts?.Cancel();
             Status = AgentStatus.Interrupted;

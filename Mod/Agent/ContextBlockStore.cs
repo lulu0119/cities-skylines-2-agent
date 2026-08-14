@@ -20,6 +20,8 @@ namespace CitiesSkylines2Agent.Agent
     /// </summary>
     public static class ContextBlockStore
     {
+        public const int MaxDataCharacters = 4000;
+
         private static readonly object s_Lock = new object();
 
         public static List<ContextBlock> Blocks { get; private set; } =
@@ -29,11 +31,17 @@ namespace CitiesSkylines2Agent.Agent
         {
             lock (s_Lock)
             {
+                string normalized = data ?? "{}";
+                if (normalized.Length > MaxDataCharacters)
+                {
+                    throw new ArgumentException(
+                        $"context block data exceeds {MaxDataCharacters} characters");
+                }
                 var block = new ContextBlock
                 {
                     Name = string.IsNullOrWhiteSpace(name) ? "Context " + (Blocks.Count + 1) : name,
                     Kind = string.IsNullOrWhiteSpace(kind) ? "note" : kind,
-                    Data = data ?? "{}",
+                    Data = normalized,
                 };
                 Blocks.Add(block);
                 return block;

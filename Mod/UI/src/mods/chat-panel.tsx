@@ -280,6 +280,20 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   useEffect(() => {
     const parsed = JSON.parse(stateJson) as AgentState;
     if (!parsed.session) {
+      if (store.session) {
+        store.session = "";
+        store.messages = [];
+        store.nextId = 0;
+        store.status = "Idle";
+        store.busy = false;
+        store.pending = 0;
+        setSession("");
+        setStatus("Idle");
+        setBusy(false);
+        setPending(0);
+        setContext(null);
+        syncMessages([]);
+      }
       return;
     }
     if (parsed.session === store.session) {
@@ -309,6 +323,9 @@ export const ChatPanel = ({ children }: { children?: ReactNode }) => {
   const send = () => {
     const text = draft.trim();
     if (!text) {
+      return;
+    }
+    if (!store.session) {
       return;
     }
     trigger(mod.id, "send", text);

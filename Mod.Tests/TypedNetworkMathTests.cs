@@ -151,24 +151,117 @@ namespace CS2MCP
         }
 
         [Fact]
-        public void Kind_filter_parsing_rejects_a_second_taxonomy()
+        public void Isolated_pipe_findings_are_one_per_component()
         {
-            Assert.True(TypedNetworkMath.TryParseKind(null, out TypedNetworkKinds all, out _));
-            Assert.Equal(TypedNetworkMath.ProductKinds, all);
-            Assert.False(TypedNetworkMath.TryParseKind("pipe", out _, out string error));
-            Assert.Contains("low_voltage", error);
+            TypedNetworkEdge[] edges =
+            {
+                Road(1, 10, 11, Xz(0f, 0f), Xz(20f, 0f), outsideEnd: true),
+                Pipe(2, 20, 21, Xz(100f, 100f), Xz(110f, 100f)),
+                Pipe(3, 21, 22, Xz(110f, 100f), Xz(120f, 100f)),
+                Cable(4, 30, 31, Xz(200f, 200f), Xz(210f, 200f)),
+            };
+
+            List<NetworkTopologyFinding> water =
+                TypedNetworkMath.FindUtilityIsolatedFindings(edges, TypedNetworkKinds.Water);
+            List<NetworkTopologyFinding> cables =
+                TypedNetworkMath.FindUtilityIsolatedFindings(edges, TypedNetworkKinds.LowVoltage);
+
+            Assert.Contains(
+                water,
+                f => f.Class == NetworkTopologyClass.IsolatedWater && f.ComponentSize == 2);
+            Assert.Contains(
+                cables,
+                f => f.Class == NetworkTopologyClass.IsolatedLowVoltage && f.ComponentSize == 1);
+            Assert.Empty(
+                TypedNetworkMath.FindUtilityIsolatedFindings(edges, TypedNetworkKinds.Road));
         }
 
         [Fact]
-        public void Network_sort_parsing_rejects_unknown_and_distance_without_center()
+        public void Pipe_sharing_a_road_node_is_not_an_isolated_finding()
         {
-            Assert.True(TypedNetworkMath.TryParseNetworkSort(null, false, out string empty, out _));
+            TypedNetworkEdge[] edges =
+            {
+                Road(1, 10, 11, Xz(0f, 0f), Xz(20f, 0f), outsideEnd: true),
+                Pipe(2, 11, 21, Xz(20f, 0f), Xz(20f, 15f)),
+            };
+
+            Assert.Empty(
+                TypedNetworkMath.FindUtilityIsolatedFindings(edges, TypedNetworkKinds.Water));
+        }
+
+        [Fact]
+        public void Kind_filter_parsing_requires_a_single_kind()
+        {
+            Assert.False(TypedNetworkMath.TryParseKind(null, out _, out string missing));
+            Assert.Contains("required", missing);
+            Assert.False(TypedNetworkMath.TryParseKind("", out _, out string empty));
+            Assert.Contains("required", empty);
+            Assert.True(TypedNetworkMath.TryParseKind("road", out TypedNetworkKinds road, out _));
+            Assert.Equal(TypedNetworkKinds.Road, road);
+            Assert.False(TypedNetworkMath.TryParseKind("pipe", out _, out string error));
+            Assert.Contains("low_voltage", error);
+            Assert.False(TypedNetworkMath.TryParseKind("all", out _, out string all));
+            Assert.Contains("low_voltage", all);
+        }
+
+        [Fact]
+        public void Network_sort_parsing_is_kind_aware()
+        {
+            Assert.True(
+                TypedNetworkMath.TryParseNetworkSort(
+                    null,
+                    TypedNetworkKinds.Road,
+                    false,
+                    out string empty,
+                    out _));
             Assert.Null(empty);
-            Assert.True(TypedNetworkMath.TryParseNetworkSort("traffic_volume", false, out string volume, out _));
+            Assert.True(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "traffic_volume",
+                    TypedNetworkKinds.Road,
+                    false,
+                    out string volume,
+                    out _));
             Assert.Equal("traffic_volume", volume);
-            Assert.False(TypedNetworkMath.TryParseNetworkSort("distance", false, out _, out string distanceError));
+            Assert.False(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "traffic_volume",
+                    TypedNetworkKinds.Water,
+                    false,
+                    out _,
+                    out string waterTraffic));
+            Assert.Contains("kind=road", waterTraffic);
+            Assert.False(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "load",
+                    TypedNetworkKinds.Road,
+                    false,
+                    out _,
+                    out string roadLoad));
+            Assert.Contains("low_voltage", roadLoad);
+            Assert.True(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "load",
+                    TypedNetworkKinds.LowVoltage,
+                    false,
+                    out string load,
+                    out _));
+            Assert.Equal("load", load);
+            Assert.False(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "distance",
+                    TypedNetworkKinds.Sewage,
+                    false,
+                    out _,
+                    out string distanceError));
             Assert.Contains("x and z", distanceError);
-            Assert.False(TypedNetworkMath.TryParseNetworkSort("lanes", true, out _, out string unknown));
+            Assert.False(
+                TypedNetworkMath.TryParseNetworkSort(
+                    "lanes",
+                    TypedNetworkKinds.Road,
+                    true,
+                    out _,
+                    out string unknown));
             Assert.Contains("congestion", unknown);
         }
 
@@ -181,6 +274,9 @@ namespace CS2MCP
             Assert.True(
                 TypedNetworkMath.NetworkListRank("congestion", 10f, 10f, 40f)
                 < TypedNetworkMath.NetworkListRank("congestion", 1f, 80f, 5f));
+            Assert.True(
+                TypedNetworkMath.NetworkListRank("load", 10f, 0f, 0f, 0.9f)
+                < TypedNetworkMath.NetworkListRank("load", 1f, 0f, 0f, 0.2f));
             Assert.True(
                 TypedNetworkMath.NetworkListRank("distance", 3f, 0f, 0f)
                 < TypedNetworkMath.NetworkListRank("distance", 9f, 100f, 100f));
@@ -218,6 +314,20 @@ namespace CS2MCP
                 new[] { a, b },
                 math.distance(a.xz, b.xz),
                 TypedNetworkKinds.Water,
+                false,
+                false);
+        }
+
+        private static TypedNetworkEdge Cable(int id, int start, int end, float3 a, float3 b)
+        {
+            return new TypedNetworkEdge(
+                id,
+                1,
+                start,
+                end,
+                new[] { a, b },
+                math.distance(a.xz, b.xz),
+                TypedNetworkKinds.LowVoltage,
                 false,
                 false);
         }

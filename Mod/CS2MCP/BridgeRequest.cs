@@ -64,11 +64,17 @@ namespace CS2MCP
         public BridgeErrorKind? ErrorKind;
         public byte[] Body = Array.Empty<byte>();
 
+        private static readonly JsonSerializerSettings s_JsonSettings = new JsonSerializerSettings
+        {
+            Formatting = Formatting.None,
+            NullValueHandling = NullValueHandling.Ignore,
+        };
+
         public static BridgeResponse Json(object payload)
         {
             return new BridgeResponse
             {
-                Body = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload, Formatting.None)),
+                Body = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(payload, s_JsonSettings)),
             };
         }
 
@@ -88,7 +94,7 @@ namespace CS2MCP
                 ErrorKind = kind,
                 Body = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(
                     new { error = message, kind = ErrorKindName(kind) },
-                    Formatting.None)),
+                    s_JsonSettings)),
             };
         }
 

@@ -14,6 +14,8 @@ namespace CS2MCP
     public sealed partial class RequestHandlers
     {
         private const int kNetworkFindingCap = 64;
+        private const int kNetworkListDefaultLimit = 16;
+        private const int kNetworkListHardMax = 64;
 
         private BridgeResponse ListNetworks(BridgeRequest request)
         {
@@ -28,13 +30,21 @@ namespace CS2MCP
             }
 
             request.Query.TryGetValue("query", out string search);
-            const int hardMax = 128;
-            int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, hardMax) : hardMax;
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
+            int limit = request.TryGetInt("limit", out int rawLimit)
+                ? math.clamp(rawLimit, 1, kNetworkListHardMax)
+                : kNetworkListDefaultLimit;
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
-            float2 center = new float2(x, z);
             request.Query.TryGetValue("sort", out string sortRaw);
-            if (!TypedNetworkMath.TryParseNetworkSort(sortRaw, hasCenter, out string sort, out string sortError))
+            if (!TypedNetworkMath.TryParseNetworkSort(
+                    sortRaw,
+                    filter,
+                    hasCenter,
+                    out string sort,
+                    out string sortError))
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, sortError);
             }
@@ -43,13 +53,6 @@ namespace CS2MCP
             List<TypedNetworkEdge> snapshot = SnapshotTypedNetworks(
                 hasCenter ? (float2?)center : null,
                 radius);
-            bool[] isolated = TypedNetworkMath.IsolatedFlags(snapshot);
-            int[] roadLabels = TypedNetworkMath.LabelComponents(snapshot, TypedNetworkKinds.Road);
-            int[] waterLabels = TypedNetworkMath.LabelComponents(snapshot, TypedNetworkKinds.Water);
-            int[] sewageLabels = TypedNetworkMath.LabelComponents(snapshot, TypedNetworkKinds.Sewage);
-            int[] lowVoltageLabels = TypedNetworkMath.LabelComponents(
-                snapshot,
-                TypedNetworkKinds.LowVoltage);
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
             var found = new List<(float rank, object item)>();
@@ -70,44 +73,39 @@ namespace CS2MCP
                 }
                 total++;
                 float distance = hasCenter
-                    ? math.distance(edge.Points[0].xz * 0.5f + edge.Points[edge.Points.Length - 1].xz * 0.5f, center)
+                    ? math.distance(
+                        edge.Points[0].xz * 0.5f + edge.Points[edge.Points.Length - 1].xz * 0.5f,
+                        center)
                     : 0f;
-                int componentSize = ComponentSizeFor(
-                    edge,
-                    i,
-                    roadLabels,
-                    waterLabels,
-                    sewageLabels,
-                    lowVoltageLabels);
-                object traffic = null;
                 float volumeIndex = 0f;
                 float congestionIndex = 0f;
-                if ((edge.Kinds & TypedNetworkKinds.Road) != 0)
+                float loadRatio = 0f;
+                object traffic = null;
+                if (filter == TypedNetworkKinds.Road)
                 {
                     traffic = ReadRoadTraffic(entity, out volumeIndex, out congestionIndex);
                 }
-                float rank = TypedNetworkMath.NetworkListRank(sort, distance, volumeIndex, congestionIndex);
-                var item = new
-                {
-                    entity = new { index = edge.EntityIndex, version = edge.EntityVersion },
-                    prefab = name,
-                    kind = TypedNetworkMath.PrimaryKindName(edge.Kinds),
-                    kinds = TypedNetworkMath.KindNames(edge.Kinds),
-                    start = new { x = edge.Points[0].x, z = edge.Points[0].z },
-                    end = new
-                    {
-                        x = edge.Points[edge.Points.Length - 1].x,
-                        z = edge.Points[edge.Points.Length - 1].z,
-                    },
-                    length = edge.Length,
-                    widthM = NetworkWidthM(
+                // TODO(windows): low_voltage electricity{flow,capacity,bottleneck}
+                // — see docs/ops/2026-08-15-windows-game-dll-handoff.md
+                float rank = TypedNetworkMath.NetworkListRank(
+                    sort,
+                    distance,
+                    volumeIndex,
+                    congestionIndex,
+                    loadRatio);
+                float? widthM = filter == TypedNetworkKinds.Road
+                    ? NetworkWidthM(
                         EntityManager,
-                        EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab),
-                    distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null,
-                    isolated = isolated[i],
-                    componentSize,
-                    traffic,
-                };
+                        EntityManager.GetComponentData<PrefabRef>(entity).m_Prefab)
+                    : null;
+                object item = BuildNetworkListItem(
+                    edge,
+                    name,
+                    filter,
+                    hasCenter,
+                    distance,
+                    widthM,
+                    traffic);
                 if (found.Count < limit)
                 {
                     found.Add((rank, item));
@@ -154,13 +152,13 @@ namespace CS2MCP
                 totalMatches = total,
                 returned = results.Count,
                 limit,
-                kind = string.IsNullOrWhiteSpace(kindRaw) ? "all" : kindRaw.Trim().ToLowerInvariant(),
+                kind = TypedNetworkMath.PrimaryKindName(filter),
                 sort,
                 truncated,
                 warning = truncated
-                    ? $"too many results: {total} network edges match, only {results.Count} returned; shrink radius / add kind or query filter."
+                    ? $"too many results: {total} network edges match, only {results.Count} returned; shrink radius or add a query filter."
                     : null,
-                note = "Game.Net edges including isolated components; road-kind rows include native traffic aggregates; demolish accepts these entity ids; hard max 128",
+                note = "inventory only, no topology; demolish accepts entity ids; hard max 64",
                 networks = results,
             });
         }
@@ -176,20 +174,20 @@ namespace CS2MCP
             {
                 return BridgeResponse.Error(BridgeErrorKind.InvalidArguments, kindError);
             }
-            if (filter != TypedNetworkMath.ProductKinds && filter != TypedNetworkKinds.Road)
-            {
-                return BridgeResponse.Error(BridgeErrorKind.InvalidArguments,
-                    "topology QA currently inspects roads; omit kind or pass kind=road");
-            }
 
-            bool hasCenter = request.TryGetFloat("x", out float x) & request.TryGetFloat("z", out float z);
+            if (!TryGetOptionalCenter(request, out bool hasCenter, out float2 center, out BridgeResponse centerError))
+            {
+                return centerError;
+            }
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 500f;
             bool includeDeadEnds = request.TryGetBool("include_dead_ends", out bool rawDeadEnds) && rawDeadEnds;
 
             List<TypedNetworkEdge> snapshot = SnapshotTypedNetworks(
-                hasCenter ? (float2?)new float2(x, z) : null,
+                hasCenter ? (float2?)center : null,
                 radius);
-            List<NetworkTopologyFinding> issues = TypedNetworkMath.FindRoadIssues(snapshot);
+            List<NetworkTopologyFinding> issues = filter == TypedNetworkKinds.Road
+                ? TypedNetworkMath.FindRoadIssues(snapshot)
+                : TypedNetworkMath.FindUtilityIsolatedFindings(snapshot, filter);
             var findings = new List<object>(math.min(issues.Count, kNetworkFindingCap));
             int omitted = 0;
             for (int i = 0; i < issues.Count; i++)
@@ -211,7 +209,7 @@ namespace CS2MCP
             }
 
             object deadEnds = null;
-            if (includeDeadEnds)
+            if (includeDeadEnds && filter == TypedNetworkKinds.Road)
             {
                 List<NetworkDeadEnd> facts = TypedNetworkMath.FindRoadDeadEnds(snapshot);
                 var listed = new List<object>(math.min(facts.Count, kNetworkFindingCap));
@@ -232,17 +230,90 @@ namespace CS2MCP
                 deadEnds = listed;
             }
 
+            string note = filter == TypedNetworkKinds.Road
+                ? "degree-1 dead ends are facts, not automatic errors; near-miss, unnoded crossing, too-close junctions, short stubs and isolated roads are the QA classes"
+                : "utility QA reports isolated components that do not share a node with any road edge";
             return BridgeResponse.Json(new
             {
+                kind = TypedNetworkMath.PrimaryKindName(filter),
                 returned = findings.Count,
                 truncated = omitted > 0,
                 warning = omitted > 0
                     ? $"{omitted} additional findings omitted; shrink radius."
                     : null,
-                note = "degree-1 dead ends are facts, not automatic errors; near-miss, unnoded crossing, too-close junctions, short stubs and isolated roads are the QA classes",
+                note,
                 findings,
                 deadEnds,
             });
+        }
+
+        private static bool TryGetOptionalCenter(
+            BridgeRequest request,
+            out bool hasCenter,
+            out float2 center,
+            out BridgeResponse error)
+        {
+            hasCenter = false;
+            center = default;
+            error = null;
+            bool hasX = request.TryGetFloat("x", out float x);
+            bool hasZ = request.TryGetFloat("z", out float z);
+            if (hasX != hasZ)
+            {
+                error = BridgeResponse.Error(
+                    BridgeErrorKind.InvalidArguments,
+                    "x and z must both be provided");
+                return false;
+            }
+            if (!hasX)
+            {
+                return true;
+            }
+            hasCenter = true;
+            center = new float2(x, z);
+            return true;
+        }
+
+        private static object BuildNetworkListItem(
+            TypedNetworkEdge edge,
+            string prefabName,
+            TypedNetworkKinds filter,
+            bool hasCenter,
+            float distance,
+            float? widthM,
+            object traffic)
+        {
+            var entity = new { index = edge.EntityIndex, version = edge.EntityVersion };
+            var start = new { x = edge.Points[0].x, z = edge.Points[0].z };
+            var end = new
+            {
+                x = edge.Points[edge.Points.Length - 1].x,
+                z = edge.Points[edge.Points.Length - 1].z,
+            };
+            double? distanceM = hasCenter ? (double?)Math.Round(distance, 1) : null;
+            if (filter == TypedNetworkKinds.Road)
+            {
+                return new
+                {
+                    entity,
+                    prefab = prefabName,
+                    start,
+                    end,
+                    length = edge.Length,
+                    widthM,
+                    distanceM,
+                    traffic,
+                };
+            }
+            return new
+            {
+                entity,
+                prefab = prefabName,
+                start,
+                end,
+                length = edge.Length,
+                distanceM,
+            };
         }
 
         private object ReadRoadTraffic(Entity entity, out float volumeIndex, out float congestionIndex)
@@ -275,7 +346,6 @@ namespace CS2MCP
             }
             return new
             {
-                flowPercent = (float)Math.Round(flowPercent, 1),
                 volumeIndex = (float)Math.Round(volumeIndex, 1),
                 congestionIndex = (float)Math.Round(congestionIndex, 1),
                 activeBottlenecks,
@@ -315,33 +385,6 @@ namespace CS2MCP
                 }
             }
             return snapshot;
-        }
-
-        private static int ComponentSizeFor(
-            TypedNetworkEdge edge,
-            int index,
-            int[] roadLabels,
-            int[] waterLabels,
-            int[] sewageLabels,
-            int[] lowVoltageLabels)
-        {
-            if ((edge.Kinds & TypedNetworkKinds.Road) != 0)
-            {
-                return TypedNetworkMath.ComponentSize(roadLabels, roadLabels[index]);
-            }
-            if ((edge.Kinds & TypedNetworkKinds.Water) != 0)
-            {
-                return TypedNetworkMath.ComponentSize(waterLabels, waterLabels[index]);
-            }
-            if ((edge.Kinds & TypedNetworkKinds.Sewage) != 0)
-            {
-                return TypedNetworkMath.ComponentSize(sewageLabels, sewageLabels[index]);
-            }
-            if ((edge.Kinds & TypedNetworkKinds.LowVoltage) != 0)
-            {
-                return TypedNetworkMath.ComponentSize(lowVoltageLabels, lowVoltageLabels[index]);
-            }
-            return 1;
         }
 
         private TypedNetworkKinds ClassifyNetPrefab(Entity prefabEntity)
