@@ -1293,7 +1293,7 @@
     },
     {
       "name": "list_networks",
-      "description": "Inventory of typed network edges for one required kind (road, water, sewage, low_voltage). Zero topology: no isolated/kinds/componentSize. Shared fields: entity, prefab, start, end, length; distanceM when x/z given. Road also returns widthM and traffic{volumeIndex, congestionIndex, activeBottlenecks}. Water and sewage are geometry only; low_voltage electricity{flow,capacity,bottleneck} is deferred pending Windows Game.dll. Sort: distance (with x/z); traffic_volume|congestion for road; load for low_voltage once electricity fields land. Default limit 16, max 64. Use inspect_network_topology for isolation QA.",
+      "description": "Inventory of typed network edges for one required kind (road, water, sewage, low_voltage). Zero topology: no isolated/kinds/componentSize. Shared fields: entity, prefab, start, end, length; distanceM when x/z given. Road also returns widthM and traffic{volumeIndex, congestionIndex, activeBottlenecks}. Water and sewage are geometry only. Low-voltage also returns electricity{flow, capacity, bottleneck}. Sort: distance (with x/z); traffic_volume|congestion for road; load for low_voltage. Default limit 16, max 64. Use inspect_network_topology for isolation QA.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1332,7 +1332,7 @@
           },
           "sort": {
             "type": "string",
-            "description": "Optional ranking: distance (needs x/z); traffic_volume or congestion (kind=road only); load (kind=low_voltage, once electricity fields land)"
+            "description": "Optional ranking: distance (needs x/z); traffic_volume or congestion (kind=road only); load (kind=low_voltage, highest electricity flow/capacity first)"
           }
         },
         "required": [

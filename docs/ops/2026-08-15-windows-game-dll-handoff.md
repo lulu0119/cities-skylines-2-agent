@@ -1,7 +1,7 @@
 # Ops: Windows Game.dll evidence handoff (2026-08-15)
 
 **Audience:** anyone on Windows with an installed Cities: Skylines II who can decompile `Game.dll`.  
-**Status:** open — Mac cannot verify these type/method details from the repo alone.  
+**Status:** frozen — signatures confirmed; `list_networks` electricity fields implemented. Historical task body below; paste-back at the bottom.  
 **Purpose:** gather paste-back evidence for the tool-surface plan (`list_networks` low-voltage electricity fields; optional `SimulationSystem` 8-step cap). Do **not** change product code unless asked.
 
 Vocabulary: [CONTEXT.md](../../CONTEXT.md) — typed-network edge, `list_networks`, `wait_simulation`.
@@ -80,3 +80,32 @@ In the dump, find `OnUpdate` (or the method that consumes the time bucket / adva
 - Do **not** commit decompiled `Game.dll` sources into this repo.
 
 Paste answers into a reply, or append a “Paste-back” section at the bottom of this file.
+
+---
+
+## Paste-back (2026-08-15, this machine)
+
+**Game.dll** SHA-256 `721E7E17BF74299AA2B988C1BD07E90874BB8BC72D263229500C4BF639E7E4EE`  
+**ilspycmd** 10.1.1.8388 (ICSharpCode.Decompiler 10.1.1.8388)
+
+### Electricity types
+
+`Game.Simulation.ElectricityFlowEdge` (`IComponentData`): `m_Index`, `m_Start`, `m_End`, `m_Capacity`, `m_Flow`, `m_Flags`; `direction`; `isBottleneck` / `isBeyondBottleneck` / `isDisconnected` from `ElectricityFlowEdgeFlags` (`Bottleneck = 4`).
+
+`Game.Simulation.ElectricityNodeConnection` (`IComponentData`): `m_ElectricityNode`.
+
+`Game.Simulation.ConnectedFlowEdge` (`IBufferElementData`): `m_Edge`.
+
+**Edge → flow:** `ElectricityEdgeGraphSystem.CreateEdgeConnectionsJob` (created net edges with `Game.Net.ElectricityConnection`). For each net edge it creates a middle flow node, adds `ElectricityNodeConnection` **on the net edge**, then `CreateFlowEdge(startNode, middle)` and `CreateFlowEdge(middle, endNode)` via `ElectricityGraphUtils`. Incident flow is the middle node's `ConnectedFlowEdge` buffer. Net edge does **not** carry `ElectricityFlowEdge` directly.
+
+### SimulationSystem 8-step cap
+
+`Game.Simulation.SimulationSystem.OnUpdate`: after converting the time bucket to a step count `num`,
+
+```text
+int num7 = math.max(1, math.min(8, Mathf.RoundToInt(selectedSpeed * num3 * 2f)));
+num = math.clamp(num, 0, num7);
+```
+
+`selectedSpeed = 8` saturates that cap when pathfinding is not throttling (`num3 == 1`). Product `wait_simulation` keeping run speed 8 matches this build. Loading uses a separate 8-step loop in `UpdateLoadingProgress`.
+

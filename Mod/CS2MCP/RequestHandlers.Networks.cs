@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Game.Prefabs;
+using Game.Simulation;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
@@ -81,12 +82,15 @@ namespace CS2MCP
                 float congestionIndex = 0f;
                 float loadRatio = 0f;
                 object traffic = null;
+                object electricity = null;
                 if (filter == TypedNetworkKinds.Road)
                 {
                     traffic = ReadRoadTraffic(entity, out volumeIndex, out congestionIndex);
                 }
-                // TODO(windows): low_voltage electricity{flow,capacity,bottleneck}
-                // — see docs/ops/2026-08-15-windows-game-dll-handoff.md
+                else if (filter == TypedNetworkKinds.LowVoltage)
+                {
+                    electricity = ReadLowVoltageElectricity(entity, out loadRatio);
+                }
                 float rank = TypedNetworkMath.NetworkListRank(
                     sort,
                     distance,
@@ -105,7 +109,8 @@ namespace CS2MCP
                     hasCenter,
                     distance,
                     widthM,
-                    traffic);
+                    traffic,
+                    electricity);
                 if (found.Count < limit)
                 {
                     found.Add((rank, item));
@@ -281,7 +286,8 @@ namespace CS2MCP
             bool hasCenter,
             float distance,
             float? widthM,
-            object traffic)
+            object traffic,
+            object electricity)
         {
             var entity = new { index = edge.EntityIndex, version = edge.EntityVersion };
             var start = new { x = edge.Points[0].x, z = edge.Points[0].z };
@@ -305,6 +311,19 @@ namespace CS2MCP
                     traffic,
                 };
             }
+            if (filter == TypedNetworkKinds.LowVoltage)
+            {
+                return new
+                {
+                    entity,
+                    prefab = prefabName,
+                    start,
+                    end,
+                    length = edge.Length,
+                    distanceM,
+                    electricity,
+                };
+            }
             return new
             {
                 entity,
@@ -313,6 +332,56 @@ namespace CS2MCP
                 end,
                 length = edge.Length,
                 distanceM,
+            };
+        }
+
+        private object ReadLowVoltageElectricity(Entity entity, out float loadRatio)
+        {
+            loadRatio = 0f;
+            if (!EntityManager.HasComponent<ElectricityNodeConnection>(entity))
+            {
+                return null;
+            }
+            Entity middle = EntityManager.GetComponentData<ElectricityNodeConnection>(entity)
+                .m_ElectricityNode;
+            if (middle == Entity.Null
+                || !EntityManager.HasBuffer<ConnectedFlowEdge>(middle))
+            {
+                return null;
+            }
+            DynamicBuffer<ConnectedFlowEdge> connected =
+                EntityManager.GetBuffer<ConnectedFlowEdge>(middle, isReadOnly: true);
+            int chosenAbsFlow = 0;
+            int chosenCapacity = 0;
+            bool bottleneck = false;
+            float chosenLoad = -1f;
+            foreach (ConnectedFlowEdge item in connected)
+            {
+                if (!EntityManager.HasComponent<ElectricityFlowEdge>(item.m_Edge))
+                {
+                    continue;
+                }
+                ElectricityFlowEdge flowEdge =
+                    EntityManager.GetComponentData<ElectricityFlowEdge>(item.m_Edge);
+                TypedNetworkMath.ConsiderElectricityEdge(
+                    flowEdge.m_Flow,
+                    flowEdge.m_Capacity,
+                    flowEdge.isBottleneck,
+                    ref chosenAbsFlow,
+                    ref chosenCapacity,
+                    ref bottleneck,
+                    ref chosenLoad);
+            }
+            if (chosenLoad < 0f)
+            {
+                return null;
+            }
+            loadRatio = chosenLoad;
+            return new
+            {
+                flow = chosenAbsFlow,
+                capacity = chosenCapacity,
+                bottleneck,
             };
         }
 

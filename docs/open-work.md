@@ -6,8 +6,6 @@ Current inventory. Vocabulary: [CONTEXT.md](../CONTEXT.md). Decisions: [adr/](./
 
 Code still missing.
 
-- `list_networks(kind=low_voltage)` electricity load fields (`flow` / `capacity` / `bottleneck`) and `sort=load` — deferred pending Windows Game.dll ([ops handoff](./ops/2026-08-15-windows-game-dll-handoff.md)).
-
 ## Awaiting live acceptance (new city)
 
 Code exists; do not treat a previous save as the final gate. New city only; close the game before DLL redeploy. Mac cannot `dotnet build` without `CSII_TOOLPATH`; Windows compile is a gate before live acceptance.
@@ -21,7 +19,7 @@ Code exists; do not treat a previous save as the final gate. New city only; clos
 - Traffic governance as a product loop. The mayor skill and tools exist; the live loop is unproven.
 - Agent session only in `GameMode.Game`; main menu cannot Send; dispose the session on leave Game.
 - `wait_simulation` success payload carries city overview; `city_overview` / `game_state` off the model-facing surface; opening turn relies on wait.
-- `list_networks` requires `kind`; list rows carry zero topology; road traffic / water·sewage·low-voltage geometry; topology QA requires `kind` and reports isolated components for water / sewage / low-voltage / road.
+- `list_networks` requires `kind`; list rows carry zero topology; road traffic / low-voltage electricity{flow,capacity,bottleneck} with `sort=load` / water·sewage geometry; topology QA requires `kind` and reports isolated components for water / sewage / low-voltage / road.
 - Default list limit 16 / hard max 64; `list_tiles` defaults to owned with no item cap.
 - Renames on the model-facing surface: `local_map`, `probe_cell_layer`, `list_zone_types`, `count_zone_cells`, `list_prefabs`.
 - Notifications: citywide counts plus optional spatial filter on details.

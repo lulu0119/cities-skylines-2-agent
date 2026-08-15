@@ -282,6 +282,25 @@ namespace CS2MCP
                 < TypedNetworkMath.NetworkListRank("distance", 9f, 100f, 100f));
         }
 
+        [Fact]
+        public void Electricity_load_uses_absolute_flow_and_keeps_the_worst_edge()
+        {
+            Assert.Equal(0f, TypedNetworkMath.ElectricityLoadRatio(10, 0));
+            Assert.Equal(0.5f, TypedNetworkMath.ElectricityLoadRatio(-10, 20), 5);
+
+            int flow = 0;
+            int capacity = 0;
+            bool bottleneck = false;
+            float load = -1f;
+            TypedNetworkMath.ConsiderElectricityEdge(4, 20, false, ref flow, ref capacity, ref bottleneck, ref load);
+            TypedNetworkMath.ConsiderElectricityEdge(-18, 20, true, ref flow, ref capacity, ref bottleneck, ref load);
+            TypedNetworkMath.ConsiderElectricityEdge(5, 5, false, ref flow, ref capacity, ref bottleneck, ref load);
+            Assert.Equal(5, flow);
+            Assert.Equal(5, capacity);
+            Assert.True(bottleneck);
+            Assert.Equal(1f, load, 5);
+        }
+
         private static TypedNetworkEdge Road(
             int id,
             int start,

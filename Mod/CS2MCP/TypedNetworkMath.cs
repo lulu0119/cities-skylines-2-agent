@@ -269,6 +269,40 @@ namespace CS2MCP
             return distance;
         }
 
+        public static float ElectricityLoadRatio(int flow, int capacity)
+        {
+            if (capacity <= 0)
+            {
+                return 0f;
+            }
+            return math.abs(flow) / (float)capacity;
+        }
+
+        /// <summary>
+        /// Keep the worst-loaded incident flow edge. Bottleneck stays true
+        /// once any incident edge is a bottleneck.
+        /// </summary>
+        public static void ConsiderElectricityEdge(
+            int flow,
+            int capacity,
+            bool bottleneck,
+            ref int chosenAbsFlow,
+            ref int chosenCapacity,
+            ref bool anyBottleneck,
+            ref float chosenLoad)
+        {
+            anyBottleneck |= bottleneck;
+            int absFlow = math.abs(flow);
+            float load = ElectricityLoadRatio(flow, capacity);
+            if (load < chosenLoad || (load == chosenLoad && absFlow <= chosenAbsFlow))
+            {
+                return;
+            }
+            chosenLoad = load;
+            chosenAbsFlow = absFlow;
+            chosenCapacity = capacity;
+        }
+
         public static string PrimaryKindName(TypedNetworkKinds kinds)
         {
             if ((kinds & TypedNetworkKinds.Road) != 0)
