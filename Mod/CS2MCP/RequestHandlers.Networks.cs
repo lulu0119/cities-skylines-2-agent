@@ -236,7 +236,7 @@ namespace CS2MCP
             }
 
             string note = filter == TypedNetworkKinds.Road
-                ? "degree-1 dead ends are facts, not automatic errors; near-miss, unnoded crossing, too-close junctions, short stubs and isolated roads are the QA classes"
+                ? "degree-1 dead ends are facts, not automatic errors; near-miss, unnoded crossing, too-close junctions and isolated roads are the QA classes"
                 : "utility QA reports isolated components that do not share a node with any road edge";
             return BridgeResponse.Json(new
             {

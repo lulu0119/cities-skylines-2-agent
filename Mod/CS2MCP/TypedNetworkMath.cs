@@ -19,7 +19,6 @@ namespace CS2MCP
         NearMiss,
         UnnodedCrossing,
         TooCloseJunctions,
-        ShortStub,
         IsolatedRoad,
         IsolatedWater,
         IsolatedSewage,
@@ -121,9 +120,8 @@ namespace CS2MCP
             | TypedNetworkKinds.Sewage
             | TypedNetworkKinds.LowVoltage;
 
-        public const float NearMissMeters = 16f;
-        public const float ShortStubMeters = 8f;
-        public const float CloseJunctionMeters = 12f;
+        public const float NearMissMeters = 32f;
+        public const float CloseJunctionMeters = 32f;
         public const float CrossingHeightMeters = 4f;
         public const float GridMeters = 96f;
 
@@ -334,8 +332,6 @@ namespace CS2MCP
                     return "unnoded_crossing";
                 case NetworkTopologyClass.TooCloseJunctions:
                     return "too_close_junctions";
-                case NetworkTopologyClass.ShortStub:
-                    return "short_stub";
                 case NetworkTopologyClass.IsolatedRoad:
                     return "isolated_road";
                 case NetworkTopologyClass.IsolatedWater:
@@ -564,7 +560,6 @@ namespace CS2MCP
                 TypedNetworkKinds.Road,
                 NetworkTopologyClass.IsolatedRoad,
                 findings);
-            AddShortStubs(edges, degrees, findings);
             AddTooCloseJunctions(edges, degrees, findings);
             AddNearMisses(edges, degrees, findings);
             AddUnnodedCrossings(edges, findings);
@@ -648,36 +643,6 @@ namespace CS2MCP
             }
         }
 
-        private static void AddShortStubs(
-            IReadOnlyList<TypedNetworkEdge> edges,
-            Dictionary<int, int> degrees,
-            List<NetworkTopologyFinding> findings)
-        {
-            for (int i = 0; i < edges.Count; i++)
-            {
-                TypedNetworkEdge edge = edges[i];
-                if ((edge.Kinds & TypedNetworkKinds.Road) == 0
-                    || edge.Length >= ShortStubMeters)
-                {
-                    continue;
-                }
-                int startDegree = DegreeOf(degrees, edge.StartNode);
-                int endDegree = DegreeOf(degrees, edge.EndNode);
-                if (math.min(startDegree, endDegree) > 1)
-                {
-                    continue;
-                }
-                findings.Add(new NetworkTopologyFinding(
-                    NetworkTopologyClass.ShortStub,
-                    i,
-                    -1,
-                    startDegree <= endDegree ? edge.StartNode : edge.EndNode,
-                    startDegree <= endDegree ? edge.EndNode : edge.StartNode,
-                    1,
-                    edge.Length));
-            }
-        }
-
         private static void AddTooCloseJunctions(
             IReadOnlyList<TypedNetworkEdge> edges,
             Dictionary<int, int> degrees,
@@ -702,24 +667,60 @@ namespace CS2MCP
                     junctions[edge.EndNode] = edge.Points[edge.Points.Length - 1];
                 }
             }
-            var nodes = new List<int>(junctions.Keys);
-            for (int i = 0; i < nodes.Count; i++)
+
+            var grid = new Dictionary<long, List<int>>();
+            foreach (KeyValuePair<int, float3> junction in junctions)
             {
-                for (int j = i + 1; j < nodes.Count; j++)
+                int cellX = (int)math.floor(junction.Value.x / CloseJunctionMeters);
+                int cellZ = (int)math.floor(junction.Value.z / CloseJunctionMeters);
+                long key = CellKey(cellX, cellZ);
+                if (!grid.TryGetValue(key, out List<int> list))
                 {
-                    float distance = math.distance(junctions[nodes[i]].xz, junctions[nodes[j]].xz);
-                    if (distance >= CloseJunctionMeters)
+                    list = new List<int>();
+                    grid[key] = list;
+                }
+                list.Add(junction.Key);
+            }
+
+            foreach (List<int> members in grid.Values)
+            {
+                float3 origin = junctions[members[0]];
+                int cellX = (int)math.floor(origin.x / CloseJunctionMeters);
+                int cellZ = (int)math.floor(origin.z / CloseJunctionMeters);
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dz = -1; dz <= 1; dz++)
                     {
-                        continue;
+                        if (!grid.TryGetValue(CellKey(cellX + dx, cellZ + dz), out List<int> neighbors))
+                        {
+                            continue;
+                        }
+                        for (int i = 0; i < members.Count; i++)
+                        {
+                            int nodeA = members[i];
+                            for (int j = 0; j < neighbors.Count; j++)
+                            {
+                                int nodeB = neighbors[j];
+                                if (nodeA >= nodeB)
+                                {
+                                    continue;
+                                }
+                                float distance = math.distance(junctions[nodeA].xz, junctions[nodeB].xz);
+                                if (distance >= CloseJunctionMeters)
+                                {
+                                    continue;
+                                }
+                                findings.Add(new NetworkTopologyFinding(
+                                    NetworkTopologyClass.TooCloseJunctions,
+                                    -1,
+                                    -1,
+                                    nodeA,
+                                    nodeB,
+                                    0,
+                                    distance));
+                            }
+                        }
                     }
-                    findings.Add(new NetworkTopologyFinding(
-                        NetworkTopologyClass.TooCloseJunctions,
-                        -1,
-                        -1,
-                        nodes[i],
-                        nodes[j],
-                        0,
-                        distance));
                 }
             }
         }
@@ -955,6 +956,11 @@ namespace CS2MCP
                 min = math.min(min, points[i].xz);
                 max = math.max(max, points[i].xz);
             }
+        }
+
+        private static long CellKey(int x, int z)
+        {
+            return ((long)x << 32) ^ (uint)z;
         }
 
         private static bool SharesNode(TypedNetworkEdge edge, int node)

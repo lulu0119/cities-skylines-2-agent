@@ -118,25 +118,42 @@ namespace CS2MCP
         }
 
         [Fact]
-        public void Too_close_junctions_are_reported()
+        public void Too_close_junctions_under_thirty_two_meters_are_reported()
+        {
+            TypedNetworkEdge[] edges = TwoJunctions(Xz(31f, 0f), Xz(51f, 0f));
+
+            Assert.Contains(
+                TypedNetworkMath.FindRoadIssues(edges),
+                f => f.Class == NetworkTopologyClass.TooCloseJunctions
+                    && f.DistanceM < TypedNetworkMath.CloseJunctionMeters);
+        }
+
+        [Fact]
+        public void Too_close_junctions_at_thirty_two_meters_are_not_reported()
+        {
+            TypedNetworkEdge[] edges = TwoJunctions(Xz(0f, 0f), Xz(32f, 0f));
+
+            Assert.DoesNotContain(
+                TypedNetworkMath.FindRoadIssues(edges),
+                f => f.Class == NetworkTopologyClass.TooCloseJunctions);
+        }
+
+        [Fact]
+        public void Near_miss_includes_gaps_between_sixteen_and_thirty_two_meters()
         {
             TypedNetworkEdge[] edges =
             {
-                Road(1, 1, 10, Xz(0f, 0f), Xz(-20f, 0f), outsideEnd: true),
-                Road(2, 1, 11, Xz(0f, 0f), Xz(0f, 20f)),
-                Road(3, 1, 12, Xz(0f, 0f), Xz(0f, -20f)),
-                Road(4, 2, 20, Xz(5f, 0f), Xz(25f, 0f), outsideEnd: true),
-                Road(5, 2, 21, Xz(5f, 0f), Xz(5f, 20f)),
-                Road(6, 2, 22, Xz(5f, 0f), Xz(5f, -20f)),
+                Road(1, 10, 11, Xz(0f, 0f), Xz(40f, 0f), outsideStart: true),
+                Road(2, 20, 21, Xz(20f, 24f), Xz(20f, 44f)),
             };
 
             Assert.Contains(
                 TypedNetworkMath.FindRoadIssues(edges),
-                f => f.Class == NetworkTopologyClass.TooCloseJunctions && f.DistanceM < 12f);
+                f => f.Class == NetworkTopologyClass.NearMiss && f.DistanceM > 16f);
         }
 
         [Fact]
-        public void Short_stub_is_a_finding_and_a_long_dead_end_is_not()
+        public void Short_dead_end_is_not_a_topology_finding()
         {
             TypedNetworkEdge[] edges =
             {
@@ -145,9 +162,7 @@ namespace CS2MCP
                 Road(3, 10, 13, Xz(0f, 0f), Xz(0f, 30f), length: 30f),
             };
 
-            List<NetworkTopologyFinding> findings = TypedNetworkMath.FindRoadIssues(edges);
-            Assert.Contains(findings, f => f.Class == NetworkTopologyClass.ShortStub && f.EdgeA == 1);
-            Assert.DoesNotContain(findings, f => f.Class == NetworkTopologyClass.ShortStub && f.EdgeA == 2);
+            Assert.Empty(TypedNetworkMath.FindRoadIssues(edges));
         }
 
         [Fact]
@@ -299,6 +314,21 @@ namespace CS2MCP
             Assert.Equal(5, capacity);
             Assert.True(bottleneck);
             Assert.Equal(1f, load, 5);
+        }
+
+        private static TypedNetworkEdge[] TwoJunctions(float3 first, float3 second)
+        {
+            float3 along = new float3(20f, 0f, 0f);
+            float3 across = new float3(0f, 0f, 20f);
+            return new[]
+            {
+                Road(1, 1, 10, first, first - along, outsideEnd: true),
+                Road(2, 1, 11, first, first + across),
+                Road(3, 1, 12, first, first - across),
+                Road(4, 2, 20, second, second + along, outsideEnd: true),
+                Road(5, 2, 21, second, second + across),
+                Road(6, 2, 22, second, second - across),
+            };
         }
 
         private static TypedNetworkEdge Road(
