@@ -51,6 +51,7 @@ namespace CS2MCP
                 }
 
                 output = captured;
+                bool skipEncode = false;
                 if (request.TryGetInt("width", out int width))
                 {
                     if (width < 320 || width > 1920)
@@ -58,22 +59,25 @@ namespace CS2MCP
                         request.Complete(BridgeResponse.Error(
                             BridgeErrorKind.InvalidArguments,
                             "width must be between 320 and 1920"));
-                        return;
+                        skipEncode = true;
                     }
-                    if (width < captured.width)
+                    else if (width < captured.width)
                     {
                         output = Downscale(captured, width);
                     }
                 }
 
-                byte[] png = ImageConversion.EncodeToPNG(output);
-                if (png == null || png.Length == 0)
+                if (!skipEncode)
                 {
-                    request.Complete(BridgeResponse.Error(BridgeErrorKind.Internal, "PNG encode failed"));
-                }
-                else
-                {
-                    request.Complete(BridgeResponse.Png(png));
+                    byte[] png = ImageConversion.EncodeToPNG(output);
+                    if (png == null || png.Length == 0)
+                    {
+                        request.Complete(BridgeResponse.Error(BridgeErrorKind.Internal, "PNG encode failed"));
+                    }
+                    else
+                    {
+                        request.Complete(BridgeResponse.Png(png));
+                    }
                 }
             }
             catch (Exception e)
