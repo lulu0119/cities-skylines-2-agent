@@ -19,12 +19,12 @@ A playbook the mayor model loads with `agent_read_skill`.
 _Avoid_: engineering skills under `.agents/` or `~/.agents/`
 
 **Traffic governance**:
-The mayor's congestion loop over existing tools: ledger trigger, topology QA plus `list_networks` ranked by congestion or traffic volume, existing road writes, then `wait_simulation` and re-measure.
+The mayor's congestion loop over existing tools: wait digest plus topology QA, `list_networks` ranked by congestion or traffic volume, existing road writes, then `wait_simulation` and re-measure.
 _Avoid_: a new traffic tool, adding lanes to every local street, treating degree-1 dead ends as automatic errors
 
 **Wait simulation**:
-The tool that advances in-game time, then restores the previous speed and pause. The player owns the clock.
-_Avoid_: forced pause as the product runtime, polling wait results incorrectly
+The tool that advances in-game time, then restores the previous speed and pause. The player owns the clock. The model-facing result is a digest: hours/completed/targetReached/note, nested overview, and nested problems (notificationCounts, serviceGaps).
+_Avoid_: forced pause as the product runtime, polling wait results incorrectly, flattened overview, waitedMs, SimWait internals
 
 **Context budget**:
 How many tokens the loop treats as the window. Auto uses the named-model profile; Custom replaces that window with the player setting for every model name.

@@ -25,7 +25,7 @@ description: How electricity, water and sewage networks work in CS2.
 2. Place TransformerStation01 on a road next to the plant, not a long walk away.
 3. build_road High-voltage Ground Cable between them. High-voltage Line is 30m wide: a lot-center to lot-center segment will OverlapExisting. Keep endpoints outside both footprints, on short segments.
 4. Confirm the transformer touches a powered road or add a short Low-voltage Ground Cable to a road node.
-5. wait_simulation(hours=1). If Electricity Notification or Powerline Not Connected remains, the high-voltage side is still open — do not start water or zoning yet.
+5. wait_simulation(hours=1). If Electricity Notification or Powerline Not Connected remains in notificationCounts, the high-voltage side is still open — do not start water or zoning yet.
 
 ## When separate underground networks are needed
 - Off-road facilities need a pipe or cable only when the prefab declares a water, sewage or low-voltage node.
@@ -45,10 +45,10 @@ description: How electricity, water and sewage networks work in CS2.
 - Positive values = elevated/bridge segments (wrong for buried).
 
 ## Sewage is critical
-- If problems[] shows sewage or notifications show "Sewage Notification": BUILD SewageOutlet01 near water immediately.
+- If serviceGaps show sewage or notificationCounts include Sewage Notification: BUILD SewageOutlet01 near water immediately.
 - place_building SewageOutlet01 with x/z + radius snaps to a legal shoreline. The outlet does not need road frontage; place_building connects its sewage node to a nearby sewage network.
-- After building, wait_simulation() once and re-check problems[].
+- After building, wait_simulation() once and re-check serviceGaps.
 - Population cannot grow with sewage backing up.
 
 ## Budget changes need simulation time
-- After raising an electricity, water, or sewage budget, wait_simulation(hours=1) and re-check city_services/notifications. A read taken immediately after the slider can still show the old output.
+- After raising an electricity, water, or sewage budget, wait_simulation(hours=1) and re-check overview/problems. A read taken immediately after the slider can still show the old output.

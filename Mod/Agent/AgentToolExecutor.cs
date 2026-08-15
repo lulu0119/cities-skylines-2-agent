@@ -89,7 +89,7 @@ namespace CitiesSkylines2Agent.Agent
                 if (m_ToolSurface.IsMetaTool(name)) return await InvokeMetaToolAsync(name, argumentsJson, cancellationToken);
                 if (!m_ToolSurface.IsAvailable(name, m_ClientFactory.GetProfile()))
                 {
-                    return Error("tool is not enabled; call agent_enable_tool_group for its domain first, or use a vision-capable model for visual tools");
+                    return Error("tool is not available for this model or current settings");
                 }
                 ToolDefinition tool = ToolCatalog.Find(name);
                 if (tool == null) return Error("unknown tool: " + name);
@@ -114,7 +114,6 @@ namespace CitiesSkylines2Agent.Agent
                 switch (name)
                 {
                     case "agent_list_context_blocks": return Ok(ContextBlockStore.ToJsonString());
-                    case "agent_enable_tool_group": return EnableToolGroup(argumentsJson);
                     case "agent_add_context_block": return AddContextBlock(argumentsJson);
                     case "agent_remove_context_block": return RemoveContextBlock(argumentsJson);
                     case "agent_read_skill": return ReadSkill(argumentsJson);
@@ -129,29 +128,6 @@ namespace CitiesSkylines2Agent.Agent
             {
                 m_Observability.Error("meta-tool", e.ToString());
                 return Error(AgentObservability.RedactSecrets(e.Message));
-            }
-        }
-
-        private ToolInvocationResult EnableToolGroup(string argumentsJson)
-        {
-            using (JsonDocument document = JsonDocument.Parse(argumentsJson))
-            {
-                string group = GetString(document.RootElement, "group", "");
-                bool visionAvailable = m_ClientFactory.GetProfile().VisionAvailable;
-                if (!m_ToolSurface.EnableGroup(group, visionAvailable, out string[] enabledTools))
-                {
-                    string message = string.Equals(group, "visual", StringComparison.OrdinalIgnoreCase) && !visionAvailable
-                        ? "visual tools require a vision-capable model" : "unknown or unavailable tool group: " + group;
-                    return Error(message);
-                }
-                m_Emit(new AgentUiEvent { Kind = "status", Text = "Enabled tool group: " + group });
-                return Ok(JsonSerializer.Serialize(new
-                {
-                    enabled = true,
-                    group,
-                    tools = enabledTools,
-                    instruction = "These tools are available in the next model round of this turn. Continue the current task and call them directly.",
-                }));
             }
         }
 

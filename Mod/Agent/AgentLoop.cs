@@ -62,7 +62,7 @@ namespace CitiesSkylines2Agent.Agent
         private const string SystemPrompt = @"You are the in-game AI mayor for Cities: Skylines 2.
 
 Working style:
-1. Observe briefly first via demand and the injected problem ledger. The ledger is the source of truth for city problems; call notifications only for raw icon locations. The first city snapshot (overview fields) comes from wait_simulation. Then act. Do not repeat the same read tool more than twice without a write.
+1. Observe briefly first via demand. The first city snapshot comes from wait_simulation (nested overview and problems). Call notifications only for raw icon locations. Then act. Do not repeat the same read tool more than twice without a write.
 2. Fix problems that block city growth FIRST: sewage, water, electricity, garbage, road access. Do not zone or expand while a red problem is unresolved.
 3. For infrastructure or service buildings without a player-selected prefab, use list_prefabs with a typed role, choose one unlocked standalone prefab, then call place_building once. For every site you choose yourself, include a reasonable radius and omit rotation so placement can resolve clearance, frontage and orientation. Omit radius or set rotation only when the player or a context block explicitly requires that exact pose. If exact placement fails, retry with a larger radius and no rotation.
 4. Use zone_area for regular residential / commercial / industrial / office growth. Use place_building only for standalone buildings (service buildings, unique/landmark/signature buildings, special production or extraction facilities).
@@ -73,7 +73,7 @@ Working style:
 9. Ask for a player decision only when the desired outcome itself is ambiguous, not for permissions already represented by the available tool surface.
 10. End every turn with a concise summary (what was done, results, next steps).
 
-Skills: call agent_read_skill(""city-building"") for the full playbook. Ledger congestion or Traffic Bottleneck Notification uses that skill's traffic-governance loop.
+Skills: call agent_read_skill(""city-building"") for the full playbook. Traffic Bottleneck Notification or congestion uses that skill's traffic-governance loop.
 
 Context blocks (map pins / selected networks) arrive as system messages and are the player's precise positions or targets; prefer them over guessing.";
 
@@ -109,8 +109,8 @@ stable facts or timeline notes. Keep each list item short and concrete.";
 
         /// <summary>
         /// Starts a clean session for a newly loaded city. The previous loop is
-        /// cancelled and disposed so pending work, history, the problem ledger
-        /// and enabled tool groups cannot leak across saves.
+        /// cancelled and disposed so pending work and history cannot leak across
+        /// saves.
         /// </summary>
         public static AgentLoop StartCitySession()
         {
@@ -141,7 +141,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
         private readonly AgentToolSurface m_ToolSurface = new AgentToolSurface();
         private readonly AgentPromptAssembler m_PromptAssembler;
         private readonly AgentToolExecutor m_ToolExecutor;
-        private readonly ProblemLedger m_ProblemLedger = new ProblemLedger();
 
         private readonly AgentClientFactory m_ClientFactory;
         private Task m_LoopTask;
@@ -357,7 +356,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                 m_TurnUsage = new UsageDetails();
                 m_TurnUsageCoverage = new AgentUsageJson.Coverage();
                 m_TimeoutOccurred = false;
-                m_ToolSurface.Reset();
                 m_ToolExecutor.Reset();
                 Stopwatch turnTimer = Stopwatch.StartNew();
 
@@ -386,7 +384,6 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                             m_Observability.TurnStart(m_TurnId, first.Text);
                         }
 
-                        await RefreshProblemLedgerAsync(m_TurnCts.Token);
                         InjectContextBlocks();
                         var round = await RunModelRoundAsync(m_TurnCts.Token);
                         if (round.IsError)
@@ -469,43 +466,11 @@ stable facts or timeline notes. Keep each list item short and concrete.";
             }
         }
 
-        private async Task RefreshProblemLedgerAsync(CancellationToken cancellationToken)
-        {
-            Task<string> notifications = ReadCoreToolJsonAsync("notifications", cancellationToken);
-            Task<string> services = ReadCoreToolJsonAsync("city_services", cancellationToken);
-            await Task.WhenAll(notifications, services);
-            m_ProblemLedger.Merge(await notifications, await services, DateTimeOffset.UtcNow);
-        }
-
-        private static async Task<string> ReadCoreToolJsonAsync(
-            string name,
-            CancellationToken cancellationToken)
-        {
-            ToolDefinition tool = ToolCatalog.Find(name);
-            if (tool == null)
-            {
-                return null;
-            }
-            try
-            {
-                ToolInvocationResult result = await AgentToolBridge.InvokeAsync(tool, "{}", cancellationToken);
-                return result.Success ? result.Text : null;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
         private void InjectContextBlocks()
         {
             lock (m_Lock)
             {
-                m_PromptAssembler.Apply(m_History, m_ProblemLedger.Render(DateTimeOffset.UtcNow));
+                m_PromptAssembler.Apply(m_History);
             }
         }
 
@@ -752,8 +717,7 @@ stable facts or timeline notes. Keep each list item short and concrete.";
                     m_PromptAssembler.Rebuild(
                         m_History,
                         summary,
-                        keptMessages,
-                        m_ProblemLedger.Render(DateTimeOffset.UtcNow));
+                        keptMessages);
                 }
                 m_EstimatedTokens = budget.Estimate(m_History);
 

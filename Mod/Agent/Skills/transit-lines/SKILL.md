@@ -10,7 +10,7 @@ description: How to list existing transit stops and create or delete a simple pa
 - Stops already exist as station sub-stops (place a Bus Station with place_building) or roadside stop objects. There is no place_building role that creates a stop.
 
 ## Read first
-- Enable the construction tool group, then call list_transit_stops (type=bus near the district) and list_transit_lines.
+- Call list_transit_stops (type=bus near the district) and list_transit_lines.
 - A line needs at least two passenger stops of the same type. Prefer stops that already sit on the roads you want served.
 
 ## Write

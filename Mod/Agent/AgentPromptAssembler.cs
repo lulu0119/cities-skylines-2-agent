@@ -9,8 +9,6 @@ namespace CitiesSkylines2Agent.Agent
     {
         private const string SkillIndexPrefix = "Available skills (call agent_read_skill to load full instructions):";
         private const string ContextBlockPrefix = "Player context blocks:\n";
-        private const string ProblemLedgerPrefix =
-            "Problem ledger (source of truth; notifications is the raw snapshot):\n";
 
         public AgentPromptAssembler(string systemPrompt, string summaryPrefix)
         {
@@ -21,7 +19,7 @@ namespace CitiesSkylines2Agent.Agent
         public string SystemPrompt { get; }
         public string SummaryPrefix { get; }
 
-        public void Apply(List<ChatMessage> history, string problemLedger = null)
+        public void Apply(List<ChatMessage> history)
         {
             if (history == null) return;
             EnsureSystemPrompt(history);
@@ -35,25 +33,20 @@ namespace CitiesSkylines2Agent.Agent
             string contextBlocks = ContextBlockStore.RenderAll();
             if (!string.IsNullOrWhiteSpace(contextBlocks))
             {
-                history.Insert(insertAt++, new ChatMessage(ChatRole.System, ContextBlockPrefix + contextBlocks));
-            }
-            if (!string.IsNullOrWhiteSpace(problemLedger))
-            {
-                history.Insert(insertAt, new ChatMessage(ChatRole.System, ProblemLedgerPrefix + problemLedger));
+                history.Insert(insertAt, new ChatMessage(ChatRole.System, ContextBlockPrefix + contextBlocks));
             }
         }
 
         public void Rebuild(
             List<ChatMessage> history,
             string summary,
-            List<ChatMessage> keptMessages,
-            string problemLedger = null)
+            List<ChatMessage> keptMessages)
         {
             history.Clear();
             history.Add(new ChatMessage(ChatRole.System, SystemPrompt));
             history.Add(new ChatMessage(ChatRole.System, SummaryPrefix + summary));
             history.AddRange(keptMessages);
-            Apply(history, problemLedger);
+            Apply(history);
         }
 
         private void EnsureSystemPrompt(List<ChatMessage> history)
@@ -86,8 +79,7 @@ namespace CitiesSkylines2Agent.Agent
                 if (message.Role != ChatRole.System) continue;
                 string text = message.Text ?? "";
                 if (text.StartsWith(SkillIndexPrefix, StringComparison.Ordinal)
-                    || text.StartsWith(ContextBlockPrefix, StringComparison.Ordinal)
-                    || text.StartsWith(ProblemLedgerPrefix, StringComparison.Ordinal))
+                    || text.StartsWith(ContextBlockPrefix, StringComparison.Ordinal))
                 {
                     history.RemoveAt(index);
                 }

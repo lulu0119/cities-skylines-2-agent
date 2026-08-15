@@ -4,7 +4,6 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -21,8 +20,8 @@ namespace CitiesSkylines2Agent.Agent
     /// <summary>
     /// Translates model tool calls into CS2MCP bridge requests and builds
     /// catalog query strings. Writes are not gated on pause. wait_simulation
-    /// blocks the agent thread until the timed run finishes, then merges a
-    /// city overview into the result.
+    /// blocks the agent thread until the timed run finishes, then replaces the
+    /// HTTP wait payload with a nested overview/problems digest.
     /// </summary>
     public static class AgentToolBridge
     {
@@ -92,7 +91,7 @@ namespace CitiesSkylines2Agent.Agent
         /// <summary>
         /// Waits on the agent thread until BridgeSystem clears
         /// AutoPauseTargetFrame (bounded generously by the requested in-game
-        /// hours), then merges a city overview snapshot into the wait result.
+        /// hours), then fetches snapshot JSON for the model-facing digest.
         /// </summary>
         private static async Task<string> WaitForWaitAsync(
             CS2MCP.BridgeSystem bridge,
@@ -104,8 +103,8 @@ namespace CitiesSkylines2Agent.Agent
             if (query.TryGetValue("hours", out string rawHours) &&
                 int.TryParse(
                     rawHours,
-                    System.Globalization.NumberStyles.Integer,
-                    System.Globalization.CultureInfo.InvariantCulture,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
                     out int parsedHours) &&
                 parsedHours > 0)
             {
@@ -123,99 +122,36 @@ namespace CitiesSkylines2Agent.Agent
                 waited += SimWaitPollMs;
             }
 
-            JsonNode overviewNode = null;
+            Task<string> overview = TryGetJsonAsync(bridge, "/city/overview");
+            Task<string> state = TryGetJsonAsync(bridge, "/state");
+            Task<string> notifications = TryGetJsonAsync(bridge, "/city/notifications");
+            Task<string> services = TryGetJsonAsync(bridge, "/city/services");
+            await Task.WhenAll(overview, state, notifications, services);
+            return WaitSimulationDigest.Build(
+                startJson,
+                await overview,
+                await notifications,
+                await services,
+                await state,
+                bridge.AutoPauseTargetFrame == 0);
+        }
+
+        private static async Task<string> TryGetJsonAsync(CS2MCP.BridgeSystem bridge, string route)
+        {
             try
             {
-                CS2MCP.BridgeResponse overview = await bridge.InvokeAsync("/city/overview");
-                if (overview != null && overview.Success)
+                CS2MCP.BridgeResponse response = await bridge.InvokeAsync(route);
+                if (response != null && response.Success)
                 {
-                    overviewNode = JsonNode.Parse(
-                        Encoding.UTF8.GetString(overview.Body ?? Array.Empty<byte>()));
+                    return Encoding.UTF8.GetString(response.Body ?? Array.Empty<byte>());
                 }
             }
             catch (Exception e)
             {
                 CS2MCP.Mod.Log.Warn(
-                    $"post-wait overview failed: {AgentObservability.RedactSecrets(e.Message)}");
+                    $"post-wait {route} failed: {AgentObservability.RedactSecrets(e.Message)}");
             }
-
-            JsonNode stateNode = null;
-            try
-            {
-                CS2MCP.BridgeResponse state = await bridge.InvokeAsync("/state");
-                if (state != null && state.Success)
-                {
-                    stateNode = JsonNode.Parse(
-                        Encoding.UTF8.GetString(state.Body ?? Array.Empty<byte>()));
-                }
-            }
-            catch (Exception e)
-            {
-                CS2MCP.Mod.Log.Warn(
-                    $"post-wait state failed: {AgentObservability.RedactSecrets(e.Message)}");
-            }
-
-            try
-            {
-                JsonNode root = JsonNode.Parse(string.IsNullOrWhiteSpace(startJson) ? "{}" : startJson)
-                    ?? new JsonObject();
-                bool finished = bridge.AutoPauseTargetFrame == 0;
-                bool targetReached = false;
-                long targetFrame = 0L;
-                if (root["targetFrame"] is JsonNode targetNode &&
-                    long.TryParse(
-                        targetNode.ToString(),
-                        System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out long parsedTarget))
-                {
-                    targetFrame = parsedTarget;
-                }
-                if (stateNode?["simulation"]?["frameIndex"] != null)
-                {
-                    targetReached =
-                        long.TryParse(
-                            stateNode["simulation"]["frameIndex"].ToString(),
-                            System.Globalization.NumberStyles.Integer,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out long finalFrame) &&
-                        finalFrame >= targetFrame;
-                }
-                root["completed"] = finished;
-                root["targetReached"] = targetReached;
-                root["waitedMs"] = waited;
-                if (overviewNode is JsonObject overviewObject)
-                {
-                    foreach (KeyValuePair<string, JsonNode> pair in overviewObject)
-                    {
-                        if (pair.Key == "note")
-                        {
-                            continue;
-                        }
-                        root[pair.Key] = pair.Value?.DeepClone();
-                    }
-                }
-                if (!finished)
-                {
-                    root["note"] =
-                        "wait did not finish in time; retry wait_simulation once";
-                }
-                else if (!targetReached)
-                {
-                    root["note"] =
-                        "wait aborted: simulation did not advance (game paused or a modal overlay is open)";
-                }
-                else
-                {
-                    root["note"] =
-                        "wait finished; simulation restored to its previous speed/pause state";
-                }
-                return root.ToJsonString();
-            }
-            catch
-            {
-                return startJson;
-            }
+            return null;
         }
 
         private static ToolInvocationResult Error(string message)

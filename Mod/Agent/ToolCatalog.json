@@ -62,7 +62,7 @@
     },
     {
       "name": "wait_simulation",
-      "description": "Run the simulation forward by in-game time: default 1 in-game hour (about 20-30 real seconds at the engine 8x speed cap). Resumes if paused, then restores the previous speed/pause state. On success the result includes city overview fields (population, money, xp, happiness, etc.) plus hours/completed/targetReached. Call after zoning or placing buildings so construction and growth can happen; then re-check city_services.problems[]/demand. First turn can wait for the first snapshot. Never poll.",
+      "description": "Run the simulation forward by in-game time: default 1 in-game hour (about 20-30 real seconds at the engine 8x speed cap). Resumes if paused, then restores the previous speed/pause state. On success the result nests hours/completed/targetReached/note, overview (cityName, population, populationWithMoveIn, averageHappiness, averageHealth, money, xp, gameYear, gameDateTime, simulationPaused, simulationSpeed), and problems (notificationCounts from citywide countsByType, serviceGaps from city_services.problems[] id/severity/message). Call after zoning or placing buildings so construction and growth can happen; then re-check demand if needed. First turn can wait for the first snapshot. Never poll.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -1375,7 +1375,7 @@
     },
     {
       "name": "inspect_network_topology",
-      "description": "Topology QA for one required kind. kind=road: near_miss, unnoded_crossing, too_close_junctions, short_stub, isolated_road (optional dead ends with include_dead_ends). kind=water|sewage|low_voltage: only isolated_* components that do not reach a road edge. Findings capped at 64. Optional x/z/radius.",
+      "description": "Topology QA for one required kind. kind=road: near_miss, unnoded_crossing, too_close_junctions, isolated_road (optional dead ends with include_dead_ends). kind=water|sewage|low_voltage: only isolated_* components that do not reach a road edge. Findings capped at 64. Optional x/z/radius.",
       "parameters": {
         "type": "object",
         "properties": {
