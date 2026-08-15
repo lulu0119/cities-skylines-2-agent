@@ -903,20 +903,14 @@ namespace CS2MCP
                         {
                             continue;
                         }
-                        // Kind is on the child lane. Parent CanConnect is the
-                        // native edge-snap test: dedicated pipes pass it;
-                        // road-carried water/sewage/LV fail it and must attach
-                        // at a node, which the net tool still accepts.
+                        // Kind is on the child lane, not the parent road or pipe.
                         Game.Net.Curve laneCurve =
                             EntityManager.GetComponentData<Game.Net.Curve>(lane);
                         context.UtilityPaths.Add(new PlacementUtilityPath(
                             kinds,
                             entity,
                             EntityManager.GetComponentData<Game.Net.EdgeLane>(lane).m_EdgeDelta,
-                            SamplePlacementPath(laneCurve),
-                            !CanConnectUtilityPrefab(
-                                context.Connector,
-                                prefabRef.m_Prefab)));
+                            SamplePlacementPath(laneCurve)));
                     }
                 }
             }
@@ -959,22 +953,6 @@ namespace CS2MCP
             }
 
             return context;
-        }
-
-        private bool CanConnectUtilityPrefab(
-            ConnectorPrefab connector,
-            Entity targetNetPrefab)
-        {
-            if (connector == null
-                || connector.Entity == Entity.Null
-                || !EntityManager.HasComponent<NetData>(connector.Entity)
-                || !EntityManager.HasComponent<NetData>(targetNetPrefab))
-            {
-                return false;
-            }
-            return Game.Net.NetUtils.CanConnect(
-                EntityManager.GetComponentData<NetData>(connector.Entity),
-                EntityManager.GetComponentData<NetData>(targetNetPrefab));
         }
 
         private static float3[] SamplePlacementPath(Game.Net.Curve curve)

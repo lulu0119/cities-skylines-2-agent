@@ -15,26 +15,18 @@ namespace CS2MCP
             TypedNetworkKinds kinds,
             Entity parentEdge,
             float2 edgeDelta,
-            float3[] points,
-            bool nodeSnap = false)
+            float3[] points)
         {
             Kinds = kinds;
             ParentEdge = parentEdge;
             EdgeDelta = edgeDelta;
             Points = points;
-            NodeSnap = nodeSnap;
         }
 
         public TypedNetworkKinds Kinds { get; }
         public Entity ParentEdge { get; }
         public float2 EdgeDelta { get; }
         public float3[] Points { get; }
-
-        /// <summary>
-        /// Native edge-snap is illegal for this parent (roads vs pipes). The
-        /// connector must attach at a node instead of splitting the edge.
-        /// </summary>
-        public bool NodeSnap { get; }
     }
 
     internal readonly struct UtilityConnectionTarget
@@ -197,27 +189,6 @@ namespace CS2MCP
                     continue;
                 }
 
-                if (path.NodeSnap)
-                {
-                    ConsiderNode(
-                        path.Points[0],
-                        SnapSplitToNode(path.EdgeDelta.x),
-                        from,
-                        ref bestDistanceSquared,
-                        ref nearest,
-                        ref found,
-                        path.ParentEdge);
-                    ConsiderNode(
-                        path.Points[path.Points.Length - 1],
-                        SnapSplitToNode(path.EdgeDelta.y),
-                        from,
-                        ref bestDistanceSquared,
-                        ref nearest,
-                        ref found,
-                        path.ParentEdge);
-                    continue;
-                }
-
                 for (int i = 1; i < path.Points.Length; i++)
                 {
                     float amount = ClosestPointAmount(
@@ -325,30 +296,6 @@ namespace CS2MCP
                     segmentEnd,
                     boxCenter - right - forward,
                     expansion);
-        }
-
-        private static float SnapSplitToNode(float split)
-        {
-            return split <= 0.5f ? 0f : 1f;
-        }
-
-        private static void ConsiderNode(
-            float3 position,
-            float parentSplit,
-            float3 from,
-            ref float bestDistanceSquared,
-            ref UtilityConnectionTarget nearest,
-            ref bool found,
-            Entity parentEdge)
-        {
-            float distanceSquared = math.distancesq(from.xz, position.xz);
-            if (distanceSquared <= bestDistanceSquared
-                && (!found || distanceSquared < bestDistanceSquared))
-            {
-                bestDistanceSquared = distanceSquared;
-                nearest = new UtilityConnectionTarget(position, parentEdge, parentSplit);
-                found = true;
-            }
         }
 
         private static bool OverlapsOnAxis(

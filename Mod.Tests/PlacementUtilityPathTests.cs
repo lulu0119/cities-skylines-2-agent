@@ -101,7 +101,7 @@ namespace CS2MCP
         }
 
         [Fact]
-        public void Node_snap_ignores_nearer_interior_and_selects_endpoint()
+        public void Nearest_point_selects_interior_perpendicular_not_endpoint()
         {
             Entity edge = new Entity { Index = 8, Version = 2 };
             PlacementUtilityPath[] paths =
@@ -115,8 +115,7 @@ namespace CS2MCP
                         new float3(0f, 0f, 0f),
                         new float3(0f, 0f, 50f),
                         new float3(0f, 0f, 100f),
-                    },
-                    nodeSnap: true),
+                    }),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
@@ -128,25 +127,25 @@ namespace CS2MCP
 
             Assert.True(found);
             Assert.Equal(edge, nearest.ParentEdge);
-            Assert.Equal(0f, nearest.ParentSplit, 3);
-            Assert.Equal(0f, nearest.Position.z, 3);
+            Assert.Equal(0.5f, nearest.ParentSplit, 3);
+            Assert.Equal(50f, nearest.Position.z, 3);
         }
 
         [Fact]
-        public void Node_snap_rejects_when_only_interior_is_within_range()
+        public void Nearest_point_selects_interior_when_endpoints_are_out_of_range()
         {
+            Entity edge = new Entity { Index = 3, Version = 1 };
             PlacementUtilityPath[] paths =
             {
                 new PlacementUtilityPath(
                     TypedNetworkKinds.Water,
-                    new Entity { Index = 3, Version = 1 },
+                    edge,
                     new float2(0f, 1f),
                     new[]
                     {
                         new float3(0f, 0f, 0f),
                         new float3(0f, 0f, 400f),
-                    },
-                    nodeSnap: true),
+                    }),
             };
 
             bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
@@ -154,38 +153,12 @@ namespace CS2MCP
                 TypedNetworkKinds.Water,
                 new float3(10f, 0f, 200f),
                 150f,
-                out _);
-
-            Assert.False(found);
-        }
-
-        [Fact]
-        public void Node_snap_maps_reversed_lane_end_to_parent_node()
-        {
-            Entity edge = new Entity { Index = 9, Version = 1 };
-            PlacementUtilityPath[] paths =
-            {
-                new PlacementUtilityPath(
-                    TypedNetworkKinds.Sewage,
-                    edge,
-                    new float2(1f, 0f),
-                    new[]
-                    {
-                        new float3(0f, 0f, 100f),
-                        new float3(0f, 0f, 0f),
-                    },
-                    nodeSnap: true),
-            };
-
-            bool found = PlacementSearchMath.TryFindNearestUtilityPoint(
-                paths,
-                TypedNetworkKinds.Sewage,
-                new float3(5f, 0f, 90f),
-                150f,
                 out UtilityConnectionTarget nearest);
 
             Assert.True(found);
-            Assert.Equal(1f, nearest.ParentSplit, 3);
+            Assert.Equal(edge, nearest.ParentEdge);
+            Assert.Equal(0.5f, nearest.ParentSplit, 3);
+            Assert.Equal(200f, nearest.Position.z, 3);
         }
 
         [Fact]
