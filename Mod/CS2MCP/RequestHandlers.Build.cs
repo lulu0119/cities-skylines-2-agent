@@ -924,6 +924,10 @@ namespace CS2MCP
                     {
                         continue;
                     }
+                    if (!IsHardPlacementObstacle(entity, prefabRef.m_Prefab))
+                    {
+                        continue;
+                    }
                     Transform transform = EntityManager.GetComponentData<Transform>(entity);
                     PlacementFootprint footprint = CreatePlacementFootprint(
                         EntityManager.GetComponentData<BuildingData>(prefabRef.m_Prefab),
@@ -953,6 +957,22 @@ namespace CS2MCP
             }
 
             return context;
+        }
+
+        private bool IsHardPlacementObstacle(Entity building, Entity prefab)
+        {
+            Game.Objects.GeometryFlags geometryFlags =
+                EntityManager.HasComponent<ObjectGeometryData>(prefab)
+                    ? EntityManager.GetComponentData<ObjectGeometryData>(prefab).m_Flags
+                    : Game.Objects.GeometryFlags.None;
+            return PlacementObstaclePolicy.IsHardBuildingObstacle(
+                EntityManager.HasComponent<SpawnableBuildingData>(prefab),
+                EntityManager.HasComponent<SignatureBuildingData>(prefab),
+                (geometryFlags & Game.Objects.GeometryFlags.Overridable) != 0,
+                (geometryFlags & Game.Objects.GeometryFlags.DeleteOverridden) != 0,
+                EntityManager.HasComponent<Game.Objects.Attached>(building),
+                EntityManager.HasComponent<Game.Events.OnFire>(building),
+                EntityManager.HasComponent<Game.Common.Overridden>(building));
         }
 
         private static float3[] SamplePlacementPath(Game.Net.Curve curve)

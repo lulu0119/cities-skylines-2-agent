@@ -6,7 +6,7 @@ Current inventory. Vocabulary: [CONTEXT.md](../CONTEXT.md). Decisions: [adr/](./
 
 Code still missing.
 
-- Growable auto-demolish on build_road/place_building — decompile-verify native behavior; implement corridor clearance only if native rejects.
+None.
 
 ## Awaiting live acceptance
 

@@ -21,6 +21,7 @@
     <ItemGroup>
     <Compile Include="..\Mod\CS2MCP\NetworkBuildArguments.cs" Link="Production\NetworkBuildArguments.cs" />
     <Compile Include="..\Mod\CS2MCP\OperationalAreaPlanningMath.cs" Link="Production\OperationalAreaPlanningMath.cs" />
+    <Compile Include="..\Mod\CS2MCP\PlacementObstaclePolicy.cs" Link="Production\PlacementObstaclePolicy.cs" />
     <Compile Include="..\Mod\CS2MCP\PlacementSearchMath.cs" Link="Production\PlacementSearchMath.cs" />
     <Compile Include="..\Mod\CS2MCP\RoadGroundPreflight.cs" Link="Production\RoadGroundPreflight.cs" />
     <Compile Include="..\Mod\CS2MCP\TypedNetworkMath.cs" Link="Production\TypedNetworkMath.cs" />
