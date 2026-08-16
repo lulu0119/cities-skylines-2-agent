@@ -218,6 +218,7 @@ namespace CS2MCP
             int limit = request.TryGetInt("limit", out int rawLimit) ? math.clamp(rawLimit, 1, 64) : 16;
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            var operationalAreas = new PrefabOperationalAreaClassifier(EntityManager);
             var results = new List<object>();
             int total = 0;
             using (NativeArray<Entity> entities = query.ToEntityArray(Allocator.Temp))
@@ -238,7 +239,7 @@ namespace CS2MCP
                     {
                         continue;
                     }
-                    List<string> roles = GetPrefabRoles(entity);
+                    List<string> roles = GetPrefabRoles(entity, operationalAreas);
                     if (!string.IsNullOrEmpty(requestedRole) && !roles.Contains(requestedRole))
                     {
                         continue;
@@ -314,7 +315,9 @@ namespace CS2MCP
             "specialized-industry",
         };
 
-        private List<string> GetPrefabRoles(Entity prefab)
+        private List<string> GetPrefabRoles(
+            Entity prefab,
+            PrefabOperationalAreaClassifier operationalAreas)
         {
             var roles = new List<string>();
             AddPrefabRole<PowerPlantData>(prefab, "power", roles);
@@ -332,7 +335,10 @@ namespace CS2MCP
             AddPrefabRole<TransportStationData>(prefab, "transport", roles);
             AddPrefabRole<PostFacilityData>(prefab, "post", roles);
             AddPrefabRole<TelecomFacilityData>(prefab, "telecom", roles);
-            AddPrefabRole<ExtractorFacilityData>(prefab, "specialized-industry", roles);
+            if (operationalAreas.DeclaresExtractorArea(prefab))
+            {
+                roles.Add("specialized-industry");
+            }
             return roles;
         }
 
@@ -1598,6 +1604,7 @@ namespace CS2MCP
             float radius = request.TryGetFloat("radius", out float rawRadius) ? math.max(rawRadius, 1f) : 250f;
 
             PrefabSystem prefabSystem = World.GetOrCreateSystemManaged<PrefabSystem>();
+            var operationalAreas = new PrefabOperationalAreaClassifier(EntityManager);
             var found = new List<(float distance, object item)>();
             int total = 0;
             using (NativeArray<Entity> entities = PlacedBuildingQuery.ToEntityArray(Allocator.Temp))
@@ -1612,7 +1619,9 @@ namespace CS2MCP
                     {
                         continue;
                     }
-                    List<string> roles = GetPrefabRoles(prefabRef.m_Prefab);
+                    List<string> roles = GetPrefabRoles(
+                        prefabRef.m_Prefab,
+                        operationalAreas);
                     if (!string.IsNullOrEmpty(requestedRole) && !roles.Contains(requestedRole))
                     {
                         continue;

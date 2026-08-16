@@ -80,6 +80,10 @@ _Avoid_: treating every degree-1 dead end as isolated
 An owner-linked lot polygon on a facility (storage or extractor). The current product expands only.
 _Avoid_: district, a standalone area with no owner
 
+**Specialized-industry hub**:
+An independently placeable building prefab that declares an extractor Operational area.
+_Avoid_: extractor facility, decorative or animated equipment inside an extraction site
+
 **Transit stop**:
 An existing passenger or cargo boarding object (station sub-stop or roadside stop). Listed for line tools; not a `place_building` role.
 _Avoid_: inventing a stop by placing a transport building role
