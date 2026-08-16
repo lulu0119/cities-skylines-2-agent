@@ -13,11 +13,6 @@ None.
 Code exists; a previous save is not the final gate. Close the game before DLL redeploy. Mac cannot `dotnet build` without `CSII_TOOLPATH`; Windows compile is a gate before live acceptance.
 
 - `wait_simulation` nested overview/problems digest; ledger injection gone; KV overall/median ≥ 90%.
-- Tool surface persistent from turn 1 (no groups / `enable_group`); schema stable.
-- Road topology QA: 32 m `too_close_junctions` + `near_miss`; no `short_stub` length findings.
 - Auto-connect: road-carried water/sewage/LV attach as short perpendicular on matched lane; utilities work (Windows in-game).
-- Development-node purchase and landfill expansion across save/reload.
 - Specialized-industry loop from hub through extractor area to vehicles and production — not yet proven in a live city.
-- Traffic governance as a product loop. The mayor skill and tools exist; the live loop is unproven.
-- Agent session only in `GameMode.Game`; main menu cannot Send; dispose the session on leave Game.
-- Notifications: optional spatial filter on details.
+- Traffic governance as a product loop. The accepted-run intervention persisted, but traffic notifications stayed at 2 and the same-road congestion/volume aggregates worsened after one simulated hour.
